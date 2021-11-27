@@ -28,6 +28,10 @@ path = "src/server.rs"
 name = "fuc"
 path = "src/client.rs"
 
+[[bin]]
+name = "no-log-fuc"
+path = "src/no-log-client.rs"
+
 [dependencies]
 clap = "3.0.0-beta.5"
 log = {version = "0.4.14"}
