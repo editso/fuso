@@ -49,6 +49,7 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 | 传输加密 (Encrypt)     | ❌                                                                                |
 | Sock5代理 (Socks5)     | ❌                                                                                |
 | UDP支持  (udp support) | ❌                                                                                |
+| 数据传输压缩           | ❌                                                                                |
 
 
 ### 😶部分功能还待完善尽请期待..
