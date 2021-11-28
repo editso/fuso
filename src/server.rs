@@ -2,7 +2,7 @@ use std::process::exit;
 
 use clap::{App, Arg};
 use fuso::parse_addr;
-use fuso_core::{server::Fuso, FusoListener};
+use fuso_core::{server::Fuso, Forward, FusoListener};
 
 fn main() {
     let app = App::new("fuso")
@@ -54,8 +54,9 @@ fn main() {
             Ok(mut fuso) => loop {
                 match fuso.accept().await {
                     Ok((at_client, at_fuso)) => {
-                        smol::spawn(async move { fuso_core::forward(at_client, at_fuso).await })
-                            .detach();
+                        let _ = at_client.spwan_forward(at_fuso);
+                        // smol::spawn(async move { fuso_core::forward(at_client, at_fuso).await })
+                        //     .detach();
                     }
                     Err(e) => {
                         log::warn!("[fuso] Server error {}", e.to_string());

@@ -8,7 +8,7 @@ use smol::net::TcpStream;
 fn main() {
     let app = App::new("fuso")
         .version("1.0")
-        .author("editso ")
+        .author("editso")
         .arg(Arg::new("server-host").default_value("127.0.0.1"))
         .arg(Arg::new("server-port").default_value("9003"))
         .arg(

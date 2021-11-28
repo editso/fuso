@@ -2,7 +2,8 @@ use std::io::Cursor;
 
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use smol::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use futures::AsyncReadExt;
+use smol::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
 use crate::error::{self, Result};
 
@@ -19,7 +20,7 @@ pub struct Packet {
 #[async_trait]
 pub trait FusoPacket {
     async fn recv(&mut self) -> Result<Packet>;
-    async fn send(&mut self, packet: &Packet) -> Result<()>;
+    async fn send(&mut self, packet: Packet) -> Result<()>;
 }
 
 #[async_trait]
@@ -41,6 +42,12 @@ pub trait FusoAuth {
 pub trait FusoListener<Stream> {
     async fn accept(&mut self) -> Result<Stream>;
     async fn close(&mut self) -> Result<()>;
+}
+
+#[async_trait]
+pub trait Forward<To> {
+    async fn forward(self, to: To) -> Result<()>;
+    fn spwan_forward(self, to: To) -> Result<()>;
 }
 
 impl Packet {
@@ -146,18 +153,21 @@ impl Packet {
 impl TryFrom<&[u8]> for Packet {
     type Error = error::Error;
 
+    #[inline]
     fn try_from(data: &[u8]) -> std::result::Result<Self, Self::Error> {
         Self::decode(data)
     }
 }
 
 impl From<Packet> for Bytes {
+    #[inline]
     fn from(packet: Packet) -> Self {
         packet.encode()
     }
 }
 
 impl From<Packet> for Vec<u8> {
+    #[inline]
     fn from(packet: Packet) -> Self {
         let bytes = packet.encode();
         bytes.to_vec()
@@ -165,6 +175,7 @@ impl From<Packet> for Vec<u8> {
 }
 
 impl From<Packet> for BytesMut {
+    #[inline]
     fn from(packet: Packet) -> Self {
         let mut data = BytesMut::new();
         data.put_slice(&packet.encode());
@@ -177,12 +188,13 @@ impl<T> FusoPacket for T
 where
     T: AsyncRead + AsyncWrite + Unpin + Sync + Send + 'static,
 {
+    #[inline]
     async fn recv(&mut self) -> Result<Packet> {
         let mut buffer = Vec::new();
 
         buffer.resize(Packet::size(), 0);
 
-        self.read(&mut buffer)
+        self.read_exact(&mut buffer)
             .await
             .map_err(|e| error::Error::with_io(e))?;
 
@@ -191,25 +203,54 @@ where
         buffer.clear();
         buffer.resize(packet.get_len(), 0);
 
-        if packet.get_len() != 0 {
-            self.read(&mut buffer)
-                .await
-                .map_err(|e| error::Error::with_io(e))?;
-        }
+        self.read_exact(&mut buffer)
+            .await
+            .map_err(|_| error::Error::new(error::ErrorKind::BadPacket))?;
 
-        if buffer.len() != packet.get_len() {
-            Err(error::ErrorKind::BadPacket.into())
-        } else {
-            packet.set_data(buffer);
-            Ok(packet)
-        }
+        packet.set_data(buffer);
+
+        Ok(packet)
     }
 
-    async fn send(&mut self, packet: &Packet) -> Result<()> {
-        let data = packet.clone().encode();
-        self.write(&data)
+    #[inline]
+    async fn send(&mut self, packet: Packet) -> Result<()> {
+        self.write(&packet.encode())
             .await
             .map_err(|e| error::Error::with_io(e))?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl<To> Forward<To> for To
+where
+    To: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
+{
+    #[inline]
+    async fn forward(self, to: To) -> Result<()> {
+        let (reader_s, writer_s) = self.split();
+        let (reader_t, writer_t) = to.split();
+
+        smol::future::race(
+            smol::io::copy(reader_s, writer_t),
+            smol::io::copy(reader_t, writer_s),
+        )
+        .await
+        .map_err(|e| error::Error::with_io(e))?;
+
+        Ok(())
+    }
+
+    #[inline]
+    fn spwan_forward(self, to: To) -> Result<()> {
+        smol::spawn(async move {
+            let ret = Self::forward(self, to).await;
+
+            if ret.is_err() {
+                log::warn!("[fuso] Forward failure {}", ret.unwrap_err());
+            }
+        })
+        .detach();
         Ok(())
     }
 }

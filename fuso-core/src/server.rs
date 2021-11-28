@@ -24,6 +24,7 @@ pub struct Fuso {
     accept_ax: Receiver<(TcpStream, TcpStream)>,
 }
 
+
 impl Fuso {
     async fn handler_at_client(tcp: TcpListener, accept_tx: Sender<TcpStream>) -> Result<()> {
         log::info!("[fus] Actual access address {}", tcp.local_addr().unwrap());
@@ -205,18 +206,17 @@ impl Chief {
         accept_tx: Receiver<TcpStream>,
         accept_ax: Sender<(TcpStream, TcpStream)>,
     ) -> Self {
+        log::debug!("[fus] Start processing {}", self.io.peer_addr().unwrap());
+
         let mut at_fuso = self.io.clone();
         let (produce_que, consume_que) = split_mutex(VecDeque::new());
 
-        log::debug!("[fus] Start processing {}", self.io.peer_addr().unwrap());
-
         let future = smol::future::race(
             async move {
+                let packet = Packet::new(CMD_CREATE, Bytes::new());
                 loop {
                     if let Ok(mut stream) = accept_tx.recv().await {
-                        let packet = Packet::new(CMD_CREATE, Bytes::new());
-
-                        if let Ok(()) = at_fuso.send(&packet).await {
+                        if let Ok(()) = at_fuso.send(packet.clone()).await {
                             produce_que.lock().await.push_back(stream);
                         } else {
                             log::warn!("[fus] No response from client");
@@ -267,6 +267,8 @@ impl Chief {
         self
     }
 }
+
+
 
 #[async_trait]
 impl fuso_api::FusoListener<(TcpStream, TcpStream)> for Fuso {

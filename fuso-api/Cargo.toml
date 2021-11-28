@@ -10,6 +10,7 @@ env_logger = "0.9.0"
 
 
 [dependencies]
+futures = "0.3"
 log = {version = "0.4.14"}
 async-trait = {version = "0.1.51"}
 smol = {version = "1.2.5"}

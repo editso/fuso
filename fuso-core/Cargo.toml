@@ -6,9 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+futures = "0.3"
 fuso-api = {path = "../fuso-api"}
 log = {version = "0.4.14"}
 async-trait = {version = "0.1.51"}
-futures = "0.3"
 smol = {version = "1.2.5"}
 bytes = {version = "1.1.0"}

@@ -26,7 +26,7 @@ impl Fuso {
             .await
             .map_err(|e| Error::with_io(e))?;
 
-        stream.send(&Packet::new(CMD_JOIN, Bytes::new())).await?;
+        stream.send(Packet::new(CMD_JOIN, Bytes::new())).await?;
 
         let (accept_tx, accept_ax) = unbounded();
 
@@ -53,14 +53,13 @@ impl Fuso {
     }
 }
 
-
 impl Reactor {
     pub async fn join(self) -> Result<TcpStream> {
         let mut stream = TcpStream::connect(self.addr)
             .await
             .map_err(|e| Error::with_io(e))?;
 
-        stream.send(&Packet::new(CMD_CREATE, Bytes::new())).await?;
+        stream.send(Packet::new(CMD_CREATE, Bytes::new())).await?;
 
         Ok(stream)
     }
@@ -68,6 +67,7 @@ impl Reactor {
 
 #[async_trait]
 impl FusoListener<Reactor> for Fuso {
+    #[inline]
     async fn accept(&mut self) -> Result<Reactor> {
         Ok(self.accept_ax.recv().await.map_err(|e| {
             Error::with_io(std::io::Error::new(
@@ -77,6 +77,7 @@ impl FusoListener<Reactor> for Fuso {
         })?)
     }
 
+    #[inline]
     async fn close(&mut self) -> Result<()> {
         self.accept_ax.close();
         Ok(())

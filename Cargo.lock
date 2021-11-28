@@ -273,6 +273,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "env_logger",
+ "futures",
  "log",
  "smol",
 ]
