@@ -39,8 +39,7 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
    
 4. 配置  
    `Fuso` 的所有配置都是通过参数传递的方式  
-   打开终端运行 `[fus or fuc] --help` 获取即可帮助信息
-
+   打开终端运行 `[fus or fuc] --help` 即可获取帮助信息
 
 ### Features
 | Name                   | <font color="green">✔(Achieved)</font> / <font color="red">❌(Unrealized)</font>) |
