@@ -21,7 +21,7 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 
 ### 如何使用 (How to use) ❓
 
-1. 你需要先[下载](https://github.com/editso/fuso/releases/latest)或[构建](#Build)Fuso
+1. 你需要先[下载](https://github.com/editso/fuso/releases/latest)或[构建](#Build) **Fuso**
 
 2. 服务端程序为`fus`, 客户端程序为`fuc`
 
