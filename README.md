@@ -1,7 +1,7 @@
 # Fuso :  扶桑
 A fast, stable, cross-platform and efficient intranet penetration and port forwarding tool
 
-一款 快速 稳定 跨平台 高效的内网穿透，端口转发工具
+一款 快速🚀 稳定 跨平台 高效的内网穿透，端口转发工具
 
 [![Author](https://img.shields.io/badge/Author-editso-blueviolet)](https://github.com/editso) 
 [![Daza](https://img.shields.io/badge/Misc-1x2Bytes-blueviolet)](https://github.com/1x2Bytes) 
@@ -21,14 +21,16 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 
 👉 该项目可直接当做库来使用
 
-👉 目前该项目处于开发阶段，欢迎提出功能与意见
+👉 项目保持长期维护
+
+👉 目前该项目还处于初步开发阶段，欢迎提出功能与意见´◡`
 
 ### ✨Demo
 
 ![Demo](demo/demo.gif)
 
 
-### 如何使用 (How to use) ❓
+### 👀如何使用 (How to use) ❓
 
 1. 你需要先[下载](https://github.com/editso/fuso/releases/latest)或[构建](#Build)Fuso
 
@@ -45,7 +47,7 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
    `Fuso` 的所有配置都是通过参数传递的方式  
    打开终端运行 `[fus or fuc] --help` 即可获取帮助信息
 
-### Features
+### 🤔Features
 | Name                   | <font color="green">✔(Achieved)</font> / <font color="red">❌(Unrealized)</font>) |
 | ---------------------- | -------------------------------------------------------------------------------- |
 | 基本转发 (Forward)     | <font color="green">✔</font>                                                     |
