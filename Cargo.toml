@@ -17,7 +17,8 @@ split-debuginfo = '...'
 [workspace]
 members = [
     "./fuso-api",
-    "./fuso-core"
+    "./fuso-core",
+    "./fuso-socks"
 ]
 
 [[bin]]
@@ -36,5 +37,6 @@ path = "src/no-log-client.rs"
 clap = "3.0.0-beta.5"
 log = {version = "0.4.14"}
 env_logger = "0.9.0"
-fuso-core = {path = "./fuso-core"}
 smol = {version = "1.2.5"}
+fuso-core = {path = "./fuso-core"}
+fuso-socks = {path ="./fuso-socks"}

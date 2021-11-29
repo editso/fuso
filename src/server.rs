@@ -7,12 +7,27 @@ use fuso_core::{server::Fuso, Forward, FusoListener};
 fn main() {
     let app = App::new("fuso")
         .version("1.0")
-        .author("editso ")
+        .author("https://github.com/editso/fuso")
         .arg(Arg::new("server-bind-host").default_value("0.0.0.0"))
         .arg(Arg::new("server-bind-port").default_value("9003"))
-        .arg(Arg::new("server-visit-host").default_value("0.0.0.0"))
-        .arg(Arg::new("server-visit-port").default_value("0"))
-        .arg(Arg::new("log").short('l').default_value("debug"));
+        .arg(
+            Arg::new("server-visit-host")
+                .long("host")
+                .short('h')
+                .default_value("0.0.0.0"),
+        )
+        .arg(
+            Arg::new("server-visit-port")
+                .long("port")
+                .short('p')
+                .default_value("0"),
+        )
+        .arg(
+            Arg::new("log")
+                .short('l')
+                .possible_values(["debug", "info", "trace", "error"])
+                .default_value("info"),
+        );
 
     let matches = app.get_matches();
 
@@ -53,10 +68,8 @@ fn main() {
         match Fuso::bind((server_vis_addr, server_bind_addr)).await {
             Ok(mut fuso) => loop {
                 match fuso.accept().await {
-                    Ok((at_client, at_fuso)) => {
-                        let _ = at_client.spwan_forward(at_fuso);
-                        // smol::spawn(async move { fuso_core::forward(at_client, at_fuso).await })
-                        //     .detach();
+                    Ok((from, to)) => {
+                        let _ = to.spwan_forward(from);
                     }
                     Err(e) => {
                         log::warn!("[fuso] Server error {}", e.to_string());

@@ -4,7 +4,7 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 一款 快速 稳定 跨平台 高效的内网穿透，端口转发工具
 
 [![Author](https://img.shields.io/badge/Author-editso-blueviolet)](https://github.com/editso) 
-[![Daza](https://img.shields.io/badge/Misc-1x2Bytes-blueviolet)](https://github.com/1x2Bytes) 
+[![Daza](https://img.shields.io/badge/Misc-1x2Bytes-blueviolet)](https://github.com/B1eed) 
 [![Daza](https://img.shields.io/badge/Misc-ifishzz-blueviolet)](https://github.com/ifishzz) 
 [![Bin](https://img.shields.io/badge/Fuso-Bin-ff69b4)](https://github.com/editso/fuso/releases) 
 [![GitHub issues](https://img.shields.io/github/issues/editso/fuso)](https://github.com/editso/fuso/issues) 
@@ -47,8 +47,10 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 | ---------------------- | -------------------------------------------------------------------------------- |
 | 基本转发 (Forward)     | <font color="green">✔</font>                                                     |
 | 传输加密 (Encrypt)     | ❌                                                                                |
-| Sock5代理 (Socks5)     | ❌                                                                                |
+| Sock5代理 (Socks5)     | <font color="green">✔(Achieved)</font>                                                                                |
 | UDP支持  (udp support) | ❌                                                                                |
+| 多映射                 | ❌                                                                                |
+| 级联代理               | ❌                                                                                |
 | 数据传输压缩           | ❌                                                                                |
 
 

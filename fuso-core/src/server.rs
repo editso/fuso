@@ -24,27 +24,27 @@ pub struct Fuso {
     accept_ax: Receiver<(TcpStream, TcpStream)>,
 }
 
-
 impl Fuso {
     async fn handler_at_client(tcp: TcpListener, accept_tx: Sender<TcpStream>) -> Result<()> {
         log::info!("[fus] Actual access address {}", tcp.local_addr().unwrap());
 
         loop {
-            match tcp.accept().await {
-                Ok((stream, addr)) => {
-                    log::info!("[fus] There is a new connection {}", addr);
-                    if let Err(e) = accept_tx.send(stream).await {
-                        break Err(Error::with_io(std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            e.to_string(),
-                        )));
-                    };
-                }
-                Err(e) => {
-                    log::error!("[fus] An error occurred on the server {}", e);
-                    break Err(e.into());
-                }
+            let stream = tcp.accept().await;
+
+            if stream.is_err() {
+                break Err(stream.unwrap_err().into());
             }
+
+            let (stream, addr) = stream.unwrap();
+
+            log::debug!("[fus] Visitor connections from {}", addr);
+
+            if let Err(e) = accept_tx.send(stream).await {
+                break Err(Error::with_io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    e.to_string(),
+                )));
+            };
         }
     }
 
@@ -62,59 +62,63 @@ impl Fuso {
                 let mutex_sync = mutex_sync.clone();
                 async move {
                     loop {
-                        match accept_ax.recv().await {
-                            Err(e) => {
-                                break Err(std::io::Error::new(
-                                    std::io::ErrorKind::Other,
-                                    e.to_string(),
-                                )
-                                .into())
+                        let stream = accept_ax.recv().await;
+
+                        if stream.is_err() {
+                            break Err(std::io::Error::new(
+                                std::io::ErrorKind::Other,
+                                stream.unwrap_err().to_string(),
+                            )
+                            .into());
+                        }
+
+                        let mut stream = stream.unwrap();
+
+                        let mut mutex_sync = mutex_sync.lock().await;
+                        if let Some(accept_ax) = mutex_sync.as_mut() {
+                            if let Err(_) = accept_ax.send(stream.clone()).await {
+                                accept_ax.close();
+                                let _ = mutex_sync.take();
+                                let _ = stream.close().await;
                             }
-                            Ok(mut stream) => {
-                                let mut mutex_sync = mutex_sync.lock().await;
-                                if let Some(accept_ax) = mutex_sync.as_mut() {
-                                    if let Err(_) = accept_ax.send(stream.clone()).await {
-                                        accept_ax.close();
-                                        let _ = mutex_sync.take();
-                                        let _ = stream.close().await;
-                                    }
-                                } else {
-                                    log::warn!("[fus] Client is not ready");
-                                    let _ = stream.close().await;
-                                }
-                            }
+                        } else {
+                            log::debug!("[fus] Client is not ready");
+                            let _ = stream.close().await;
                         }
                     }
                 }
             },
             async move {
                 loop {
-                    match tcp.accept().await {
-                        Err(e) => break Err(e.into()),
-                        Ok((stream, addr)) => {
-                            log::debug!("[fus] Client connection {}", addr);
+                    let stream = tcp.accept().await;
 
-                            let chief = Chief::auth(stream).await;
+                    if stream.is_err() {
+                        break Err(stream.unwrap_err().into());
+                    }
 
-                            if chief.is_err() {
-                                log::warn!("[fus] Client authentication failed");
-                            } else {
-                                chief
-                                    .unwrap()
-                                    .join(
-                                        tcp.clone(),
-                                        {
-                                            let (accept_ax, accept_tx) = unbounded();
-                                            *mutex_sync.lock().await = Some(accept_ax.clone());
-                                            accept_tx
-                                        },
-                                        accept_tx.clone(),
-                                    )
-                                    .await
-                                    .keep_live()
-                                    .await;
-                            }
-                        }
+                    let (stream, addr) = stream.unwrap();
+
+                    log::debug!("[fus] Client connection {}", addr);
+
+                    let chief = Chief::auth(stream).await;
+
+                    if chief.is_err() {
+                        log::warn!("[fus] Client authentication failed");
+                    } else {
+                        chief
+                            .unwrap()
+                            .join(
+                                tcp.clone(),
+                                {
+                                    let (accept_ax, accept_tx) = unbounded();
+                                    *mutex_sync.lock().await = Some(accept_ax.clone());
+                                    accept_tx
+                                },
+                                accept_tx.clone(),
+                            )
+                            .await
+                            .keep_live()
+                            .await;
                     }
                 }
             },
@@ -179,7 +183,7 @@ impl Chief {
             async move {
                 loop {
                     if let Err(_) = writer
-                        .write(&Packet::new(CMD_PING, Bytes::new()).encode())
+                        .send(Packet::new(CMD_PING, Bytes::new()))
                         .await
                     {
                         log::warn!("[fus] The client does not respond for a long time, the system judges that the connection is invalid");
@@ -267,8 +271,6 @@ impl Chief {
         self
     }
 }
-
-
 
 #[async_trait]
 impl fuso_api::FusoListener<(TcpStream, TcpStream)> for Fuso {

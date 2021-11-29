@@ -262,6 +262,7 @@ dependencies = [
  "clap",
  "env_logger",
  "fuso-core",
+ "fuso-socks",
  "log",
  "smol",
 ]
@@ -285,6 +286,18 @@ dependencies = [
  "async-trait",
  "bytes",
  "fuso-api",
+ "futures",
+ "log",
+ "smol",
+]
+
+[[package]]
+name = "fuso-socks"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "env_logger",
  "futures",
  "log",
  "smol",

@@ -1,0 +1,3 @@
+[submodule "fuso-socks"]
+	path = fuso-socks
+	url = git@github.com:editso/fuso-socks5.git

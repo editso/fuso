@@ -247,7 +247,7 @@ where
             let ret = Self::forward(self, to).await;
 
             if ret.is_err() {
-                log::warn!("[fuso] Forward failure {}", ret.unwrap_err());
+                log::debug!("[fuso] Forward failure {}", ret.unwrap_err());
             }
         })
         .detach();
