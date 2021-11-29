@@ -51,4 +51,4 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 | 数据传输压缩           | ❌                                                                                |
 
 
-### 😶部分功能还待完善尽请期待..
+### 😶部分功能还待完善敬请期待..
