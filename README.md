@@ -1,7 +1,7 @@
 # Fuso :  扶桑
 A fast, stable, cross-platform and efficient intranet penetration and port forwarding tool
 
-一款 快速 稳定 跨平台 高效的内网穿透，端口转发工具
+一款 快速🚀 稳定 跨平台 高效的内网穿透，端口转发工具
 
 [![Author](https://img.shields.io/badge/Author-editso-blueviolet)](https://github.com/editso) 
 [![Daza](https://img.shields.io/badge/Misc-1x2Bytes-blueviolet)](https://github.com/B1eed) 
@@ -13,18 +13,24 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 [![GitHub license](https://img.shields.io/github/license/editso/fuso)](https://github.com/editso/fuso)
 [![Downloads](https://img.shields.io/github/downloads/editso/fuso/total?label=Release%20Download)](https://github.com/editso/fuso/releases/latest)
 
-### Fuso make PortForward & IntranetAccess Easy(😁)
+### Fuso make PortForward & IntranetAccess Easy 😁
 
-这是一款用于内网穿透 端口转发的神器,帮助运维 开发 快速部署与接入内网 同时支持CobaltStrike 一键转发等功能 
+👉 这是一款用于内网穿透 端口转发的神器,帮助运维 开发 快速部署与接入内网 同时支持CobaltStrike 一键转发等功能 
 
-还在因为工具的参数过多而烦恼吗? 我们只实现Socks5 与 端口转发 方便快捷的接入与转发内网流量
+👉 还在因为工具的参数过多，体积大而烦恼吗? 我们只实现Socks5与端口转发，快捷的接入与转发内网流量且体积小方便实用
+
+👉 该项目可直接当做库来使用
+
+👉 项目保持长期维护
+
+👉 目前该项目还处于初步开发阶段，欢迎提出功能与意见´◡`
 
 ### ✨Demo
 
 ![Demo](demo/demo.gif)
 
 
-### 如何使用 (How to use) ❓
+### 👀如何使用 (How to use) ❓
 
 1. 你需要先[下载](https://github.com/editso/fuso/releases/latest)或[构建](#Build)Fuso
 
@@ -39,10 +45,9 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
    
 4. 配置  
    `Fuso` 的所有配置都是通过参数传递的方式  
-   打开终端运行 `[fus or fuc] --help` 获取即可帮助信息
+   打开终端运行 `[fus or fuc] --help` 即可获取帮助信息
 
-
-### Features
+### 🤔Features
 | Name                   | <font color="green">✔(Achieved)</font> / <font color="red">❌(Unrealized)</font>) |
 | ---------------------- | -------------------------------------------------------------------------------- |
 | 基本转发 (Forward)     | <font color="green">✔</font>                                                     |
@@ -54,4 +59,4 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 | 数据传输压缩           | ❌                                                                                |
 
 
-### 😶部分功能还待完善尽请期待..
+### 😶部分功能还待完善敬请期待..
