@@ -13,7 +13,7 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 [![GitHub license](https://img.shields.io/github/license/editso/fuso)](https://github.com/editso/fuso)
 [![Downloads](https://img.shields.io/github/downloads/editso/fuso/total?label=Release%20Download)](https://github.com/editso/fuso/releases/latest)
 
-### Fuso make PortForward & IntranetAccess Easy(😁)
+### Fuso make PortForward & IntranetAccess Easy 😁
 
 👉 这是一款用于内网穿透 端口转发的神器,帮助运维 开发 快速部署与接入内网 同时支持CobaltStrike 一键转发等功能 
 
