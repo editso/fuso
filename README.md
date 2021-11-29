@@ -15,9 +15,13 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 
 ### Fuso make PortForward & IntranetAccess Easy(😁)
 
-这是一款用于内网穿透 端口转发的神器,帮助运维 开发 快速部署与接入内网 同时支持CobaltStrike 一键转发等功能 
+👉 这是一款用于内网穿透 端口转发的神器,帮助运维 开发 快速部署与接入内网 同时支持CobaltStrike 一键转发等功能 
 
-还在因为工具的参数过多而烦恼吗? 我们只实现Socks5 与 端口转发 方便快捷的接入与转发内网流量
+👉 还在因为工具的参数过多，体积大而烦恼吗? 我们只实现Socks5与端口转发，快捷的接入与转发内网流量且体积小方便实用
+
+👉 该项目可直接当做库来使用
+
+👉 目前该项目处于开发阶段，欢迎提出功能与意见
 
 ### ✨Demo
 
