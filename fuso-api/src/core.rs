@@ -2,12 +2,20 @@ use std::io::Cursor;
 
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use futures::AsyncReadExt;
+use futures::{AsyncReadExt, Future};
 use smol::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
 use crate::error::{self, Result};
 
-const MAGIC: u32 = 0xFA;
+const MAGIC: u32 = 0xCC;
+
+#[inline]
+pub fn now_mills() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
 
 #[derive(Debug, Clone)]
 pub struct Packet {
@@ -48,6 +56,16 @@ pub trait FusoListener<Stream> {
 pub trait Forward<To> {
     async fn forward(self, to: To) -> Result<()>;
     fn spwan_forward(self, to: To) -> Result<()>;
+}
+
+#[async_trait]
+pub trait Life<C> {
+    async fn start(&self, cx: C) -> Result<()>;
+    async fn stop(self) -> Result<()>;
+}
+
+pub trait Spwan {
+    fn detach(self);
 }
 
 impl Packet {
@@ -221,9 +239,20 @@ where
     }
 }
 
-#[async_trait]
-impl<To> Forward<To> for To
+impl<T, A> Spwan for T
 where
+    A: Send + 'static,
+    T: Future<Output = A> + Send + 'static,
+{
+    fn detach(self) {
+        smol::spawn(self).detach();
+    }
+}
+
+#[async_trait]
+impl<From, To> Forward<To> for From
+where
+    From: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
     To: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
 {
     #[inline]
@@ -243,14 +272,15 @@ where
 
     #[inline]
     fn spwan_forward(self, to: To) -> Result<()> {
-        smol::spawn(async move {
+        async move {
             let ret = Self::forward(self, to).await;
 
             if ret.is_err() {
                 log::debug!("[fuso] Forward failure {}", ret.unwrap_err());
             }
-        })
+        }
         .detach();
+
         Ok(())
     }
 }

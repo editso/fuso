@@ -88,7 +88,7 @@ async fn poll_stream(mut fuso: Fuso, proxy: Proxy) -> fuso_core::Result<()> {
 
 fn main() {
     let app = App::new("fuso")
-        .version("1.0")
+        .version("v1.0.1")
         .author("https://github.com/editso/fuso")
         .arg(Arg::new("server-host").default_value("127.0.0.1"))
         .arg(Arg::new("server-port").default_value("9003"))
@@ -108,7 +108,8 @@ fn main() {
             Arg::new("forward-type")
                 .short('t')
                 .long("type")
-                .possible_values(["socks", "forward"]),
+                .possible_values(["socks", "forward"])
+                .default_value("forward"),
         );
 
     let matches = app.get_matches();

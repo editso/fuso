@@ -51,8 +51,8 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 | Name                   | <font color="green">✔(Achieved)</font> / <font color="red">❌(Unrealized)</font>) |
 | ---------------------- | -------------------------------------------------------------------------------- |
 | 基本转发 (Forward)     | <font color="green">✔</font>                                                     |
-| 传输加密 (Encrypt)     | ❌                                                                                |
-| Sock5代理 (Socks5)     | <font color="green">✔(Achieved)</font>                                                                                |
+| 传输加密 (Encrypt)     | <font color="green">✔</font>                                                     |
+| Socks5代理 (Socks5)     | <font color="green">✔</font>                                           |
 | UDP支持  (udp support) | ❌                                                                                |
 | 多映射                 | ❌                                                                                |
 | 级联代理               | ❌                                                                                |

@@ -10,6 +10,7 @@ pub struct Error {
 #[derive(Debug)]
 pub enum ErrorKind {
     BadPacket,
+    
 }
 
 #[derive(Debug)]

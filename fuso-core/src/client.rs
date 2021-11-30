@@ -2,13 +2,15 @@ use std::net::SocketAddr;
 
 use bytes::Bytes;
 use fuso_api::{async_trait, Error, FusoListener, FusoPacket, Packet, Result};
+
+use futures::AsyncWriteExt;
 use smol::{
     channel::{unbounded, Receiver},
-    io::AsyncWriteExt,
     net::TcpStream,
 };
 
 use crate::cmd::{CMD_CREATE, CMD_JOIN, CMD_PING};
+use crate::retain::Heartbeat;
 
 #[allow(unused)]
 pub struct Reactor {
@@ -24,7 +26,9 @@ impl Fuso {
     pub async fn bind(addr: SocketAddr) -> Result<Self> {
         let mut stream = TcpStream::connect(addr)
             .await
-            .map_err(|e| Error::with_io(e))?;
+            .map_err(|e| Error::with_io(e))?
+            .guard(5000)
+            .await?;
 
         stream.send(Packet::new(CMD_JOIN, Bytes::new())).await?;
 
@@ -54,6 +58,7 @@ impl Fuso {
 }
 
 impl Reactor {
+    #[inline]
     pub async fn join(self) -> Result<TcpStream> {
         let mut stream = TcpStream::connect(self.addr)
             .await

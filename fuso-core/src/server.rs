@@ -1,30 +1,34 @@
-use std::{collections::VecDeque, net::SocketAddr, sync::Arc, time::Duration};
+use std::{collections::VecDeque, net::SocketAddr, sync::Arc};
 
 use bytes::Bytes;
-use fuso_api::{async_trait, Error, ErrorKind, FusoPacket, Packet, Result};
+use fuso_api::{async_trait, Error, ErrorKind, FusoPacket, Packet, Result, Spwan};
+
 use smol::{
     channel::{unbounded, Receiver, Sender},
+    future::FutureExt,
     io::AsyncWriteExt,
     lock::Mutex,
     net::{TcpListener, TcpStream},
-    Task,
 };
 
 use crate::{
-    cmd::{CMD_CREATE, CMD_JOIN, CMD_PING},
-    split, split_mutex,
+    cmd::{CMD_CREATE, CMD_JOIN},
+    retain::{HeartGuard, Heartbeat},
+    split_mutex,
 };
 
-struct Chief {
-    io: TcpStream,
-    task: Arc<Mutex<Vec<Task<()>>>>,
+struct Chief<IO> {
+    io: IO,
 }
 
 pub struct Fuso {
+    visit_addr: SocketAddr,
+    bind_addr: SocketAddr,
     accept_ax: Receiver<(TcpStream, TcpStream)>,
 }
 
 impl Fuso {
+    #[inline]
     async fn handler_at_client(tcp: TcpListener, accept_tx: Sender<TcpStream>) -> Result<()> {
         log::info!("[fus] Actual access address {}", tcp.local_addr().unwrap());
 
@@ -48,6 +52,7 @@ impl Fuso {
         }
     }
 
+    #[inline]
     async fn handler_fuso_at_client(
         tcp: TcpListener,
         (accept_tx, accept_ax): (Sender<(TcpStream, TcpStream)>, Receiver<TcpStream>),
@@ -105,19 +110,13 @@ impl Fuso {
                     if chief.is_err() {
                         log::warn!("[fus] Client authentication failed");
                     } else {
+                        let (accept_ax, accept_fuso_tx) = unbounded();
+
+                        *mutex_sync.lock().await = Some(accept_ax.clone());
+
                         chief
                             .unwrap()
-                            .join(
-                                tcp.clone(),
-                                {
-                                    let (accept_ax, accept_tx) = unbounded();
-                                    *mutex_sync.lock().await = Some(accept_ax.clone());
-                                    accept_tx
-                                },
-                                accept_tx.clone(),
-                            )
-                            .await
-                            .keep_live()
+                            .join(tcp.clone(), accept_fuso_tx, accept_tx.clone())
                             .await;
                     }
                 }
@@ -138,6 +137,9 @@ impl Fuso {
                 .map_err(|e| Error::with_io(e))?,
         );
 
+        let visit_addr = at_tcp.local_addr().unwrap();
+        let bind_addr = at_fuso_tcp.local_addr().unwrap();
+
         let (accept_tx, accept_ax) = unbounded();
         let (accept_fuso_tx, accept_fuso_ax) = unbounded();
 
@@ -147,61 +149,34 @@ impl Fuso {
         ))
         .detach();
 
-        Ok(Self { accept_ax })
+        Ok(Self {
+            accept_ax,
+            visit_addr,
+            bind_addr,
+        })
+    }
+
+    pub fn visit_addr(&self) -> SocketAddr {
+        self.visit_addr
+    }
+
+    pub fn bind_addr(&self) -> SocketAddr {
+        self.bind_addr
     }
 }
 
-impl Chief {
-    pub async fn auth(mut stream: TcpStream) -> Result<Chief> {
+impl Chief<HeartGuard<TcpStream>> {
+    #[inline]
+    pub async fn auth(mut stream: TcpStream) -> Result<Chief<HeartGuard<TcpStream>>> {
         let packet = stream.recv().await?;
 
         if packet.get_cmd() != CMD_JOIN {
             return Err(ErrorKind::BadPacket.into());
         }
 
-        Ok(Self {
-            io: stream,
-            task: Arc::new(Mutex::new(Vec::new())),
-        })
-    }
+        let guard = stream.guard(5000).await?;
 
-    pub async fn keep_live(self) {
-        let (mut reader, mut writer) = split(self.io.clone());
-
-        smol::future::race(
-            async move {
-                loop {
-                    match reader.recv().await {
-                        Ok(_) => {}
-                        Err(_) => {
-                            log::warn!("[fus] Client disconnected");
-                            break;
-                        }
-                    }
-                }
-            },
-            async move {
-                loop {
-                    if let Err(_) = writer
-                        .send(Packet::new(CMD_PING, Bytes::new()))
-                        .await
-                    {
-                        log::warn!("[fus] The client does not respond for a long time, the system judges that the connection is invalid");
-                        let _ = writer.close().await;
-                        break;
-                    };
-                    smol::Timer::after(Duration::from_secs(5)).await;
-                }
-            },
-        ).await;
-
-        loop {
-            if let Some(task) = self.task.lock().await.pop().take() {
-                task.cancel().await;
-            } else {
-                break;
-            }
-        }
+        Ok(Self { io: guard })
     }
 
     pub async fn join(
@@ -209,66 +184,85 @@ impl Chief {
         tcp: TcpListener,
         accept_tx: Receiver<TcpStream>,
         accept_ax: Sender<(TcpStream, TcpStream)>,
-    ) -> Self {
-        log::debug!("[fus] Start processing {}", self.io.peer_addr().unwrap());
-
-        let mut at_fuso = self.io.clone();
+    ) {
         let (produce_que, consume_que) = split_mutex(VecDeque::new());
 
-        let future = smol::future::race(
+        let client_future = {
+            let mut io = self.io.clone();
+            async move {
+                loop {
+                    match io.recv().await {
+                        Ok(_) => {
+                            // log::debug!("recv {:?}", packet);
+                        }
+                        Err(_) => {
+                            log::warn!("[fus] Client disconnect");
+                            break;
+                        }
+                    }
+                }
+            }
+        };
+
+        let visit_future = {
+            let mut io = self.io.clone();
             async move {
                 let packet = Packet::new(CMD_CREATE, Bytes::new());
                 loop {
                     if let Ok(mut stream) = accept_tx.recv().await {
-                        if let Ok(()) = at_fuso.send(packet.clone()).await {
+                        if let Ok(()) = io.send(packet.clone()).await {
                             produce_que.lock().await.push_back(stream);
                         } else {
                             log::warn!("[fus] No response from client");
 
                             let _ = stream.close().await;
-                            let _ = at_fuso.close().await;
+                            let _ = io.close().await;
                         };
                     }
                 }
-            },
-            async move {
-                loop {
-                    let (mut stream, addr) = tcp
-                        .accept()
-                        .await
-                        .map_err(|e| Error::with_io(e.into()))
-                        .unwrap();
+            }
+        };
 
-                    log::debug!("[fus] Client mapping connection received {}", addr);
+        let fuso_future = async move {
+            loop {
+                let stream = tcp.accept().await;
 
-                    let consume_que = consume_que.clone();
-                    let accept_ax = accept_ax.clone();
+                if stream.is_err() {
+                    log::debug!("[fus] Server error {}", stream.unwrap_err());
+                    break;
+                }
 
-                    smol::spawn(async move {
-                        match stream.recv().await {
-                            Ok(_) => {
-                                if let Some(at_client) = consume_que.lock().await.pop_front() {
-                                    if let Err(e) = accept_ax.send((at_client, stream)).await {
-                                        log::warn!("[fus] Server exception {}", e);
-                                    }
-                                } else {
-                                    log::warn!("[fus] No more connections");
-                                    let _ = stream.close().await;
-                                }
-                            }
-                            Err(e) => {
-                                log::warn!("[fus] Client error {}", e);
+                let (mut stream, addr) = stream.unwrap();
+
+                log::debug!("[fus] Client mapping connection received {}", addr);
+
+                let consume_que = consume_que.clone();
+                let accept_ax = accept_ax.clone();
+
+                let future = async move {
+                    let packet = stream.recv().await;
+
+                    if packet.is_err() {
+                        log::warn!("[fus] Client error {}", packet.unwrap_err());
+                    } else {
+                        let from = consume_que.lock().await.pop_front();
+
+                        if from.is_none() {
+                            let _ = stream.close().await;
+                        } else {
+                            if let Err(e) = accept_ax.send((from.unwrap(), stream.clone())).await {
+                                log::warn!("[fus] Server exception {}", e);
+                                let _ = stream.close().await;
                             }
                         }
-                    })
-                    .detach();
-                }
-            },
-        );
+                    }
+                };
 
-        self.task.lock().await.push(smol::spawn(future));
+                future.detach();
+            }
+        };
 
-        self
+        client_future.race(visit_future.race(fuso_future)).await;
     }
 }
 

@@ -8,12 +8,20 @@ pub use async_trait::*;
 
 #[cfg(test)]
 mod tests {
-    use crate::core::Packet;
+    use crate::{core::Packet, now_mills};
 
     fn init_logger() {
         env_logger::builder()
             .filter_level(log::LevelFilter::Debug)
             .init();
+    }
+
+    #[test]
+    fn test_time(){
+        // let time = std::time::SystemTime::now()
+        // .duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap();
+        
+         println!("{:?}", now_mills())
     }
 
     #[test]

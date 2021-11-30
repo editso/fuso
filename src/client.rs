@@ -2,7 +2,11 @@ use std::{net::SocketAddr, process::exit, time::Duration};
 
 use clap::{App, Arg};
 use fuso::parse_addr;
-use fuso_core::{client::Fuso, Forward, FusoListener};
+use fuso_core::{
+    ciphe::{Cipher, Security, Xor},
+    client::Fuso,
+    Forward, FusoListener,
+};
 use fuso_socks::{DefauleDnsResolve, PasswordAuth, Socks};
 use smol::{
     io::AsyncWriteExt,
@@ -16,10 +20,16 @@ enum Proxy {
 }
 
 #[inline]
-async fn poll_stream(mut fuso: Fuso, proxy: Proxy) -> fuso_core::Result<()> {
+async fn poll_stream<C>(mut fuso: Fuso, proxy: Proxy, ciphe: C) -> fuso_core::Result<()>
+where
+    C: Clone + Cipher + Unpin + Send + Sync + 'static,
+{
     loop {
         let reactor = fuso.accept().await?;
         let stream = reactor.join().await?;
+        let from_addr = stream.peer_addr().unwrap();
+
+        let stream = stream.ciphe(ciphe.clone()).await;
 
         match proxy {
             Proxy::Socks5 => {
@@ -48,9 +58,10 @@ async fn poll_stream(mut fuso: Fuso, proxy: Proxy) -> fuso_core::Result<()> {
 
                                 if to.is_ok() {
                                     let to = to.unwrap();
+
                                     log::info!(
                                         "[fuc] Proxy to {} -> {}",
-                                        from.peer_addr().unwrap(),
+                                        from_addr,
                                         to.local_addr().unwrap()
                                     );
 
@@ -61,7 +72,7 @@ async fn poll_stream(mut fuso: Fuso, proxy: Proxy) -> fuso_core::Result<()> {
                                     log::warn!(
                                         "[fuc] Proxy failure({}) {} -> {}",
                                         to.unwrap_err(),
-                                        from.peer_addr().unwrap(),
+                                        from_addr,
                                         addr
                                     );
 
@@ -82,14 +93,11 @@ async fn poll_stream(mut fuso: Fuso, proxy: Proxy) -> fuso_core::Result<()> {
             Proxy::Port(addr) => {
                 let future = async move {
                     let tcp = TcpStream::connect(addr).await;
+
                     if tcp.is_err() {
                         log::warn!("[fuc] Connection failed {} {}", tcp.unwrap_err(), addr);
                     } else {
-                        log::info!(
-                            "[fuc] Forward to {} -> {}",
-                            addr,
-                            stream.peer_addr().unwrap()
-                        );
+                        log::info!("[fuc] Forward to {} -> {}", addr, from_addr);
 
                         if let Err(e) = stream.forward(tcp.unwrap()).await {
                             log::warn!("[fuc] Forwarding failed {}", e);
@@ -105,7 +113,7 @@ async fn poll_stream(mut fuso: Fuso, proxy: Proxy) -> fuso_core::Result<()> {
 
 fn main() {
     let app = App::new("fuso")
-        .version("1.0")
+        .version("v1.0.1")
         .author("https://github.com/editso/fuso")
         .arg(Arg::new("server-host").default_value("127.0.0.1"))
         .arg(Arg::new("server-port").default_value("9003"))
@@ -127,6 +135,16 @@ fn main() {
                 .long("type")
                 .possible_values(["socks", "forward"])
                 .default_value("forward"),
+        )
+        .arg(
+            Arg::new("xor-secret")
+                .long("xor")
+                .short('x')
+                .default_value("27")
+                .validator(|num| {
+                    num.parse::<u8>()
+                        .map_or(Err(String::from("Invalid number 0-255")), |_| Ok(()))
+                }),
         )
         .arg(
             Arg::new("log")
@@ -162,6 +180,8 @@ fn main() {
     let forward_addr = forward_addr.unwrap();
     let server_addr = server_addr.unwrap();
 
+    let xor_num: u8 = matches.value_of("xor-secret").unwrap().parse().unwrap();
+
     let proxy = match forward_type {
         "socks" => Proxy::Socks5,
         _ => Proxy::Port(forward_addr),
@@ -179,10 +199,11 @@ fn main() {
         .init();
 
     log::info!(
-        "[fuc] server_addr={}, forward_type={}, forward_addr={}",
+        "[fuc] server_addr={}, forward_type={}, forward_addr={}, xor_num={}",
         server_addr,
         forward_type,
-        forward_addr
+        forward_addr,
+        xor_num
     );
 
     smol::block_on(async move {
@@ -190,7 +211,7 @@ fn main() {
             match Fuso::bind(server_addr).await {
                 Ok(fuso) => {
                     log::info!("[fuc] connection succeeded");
-                    let _ = poll_stream(fuso, proxy.clone()).await;
+                    let _ = poll_stream(fuso, proxy.clone(), Xor::new(xor_num)).await;
                 }
                 Err(e) => {
                     log::warn!(
