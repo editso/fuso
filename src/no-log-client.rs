@@ -2,10 +2,14 @@ use std::{net::SocketAddr, process::exit, time::Duration};
 
 use clap::{App, Arg};
 use fuso::parse_addr;
-use fuso_core::{client::Fuso, Forward, FusoListener};
+use fuso_core::{
+    ciphe::{Cipher, Security, Xor},
+    client::Fuso,
+    Forward, FusoListener,
+};
 use fuso_socks::{DefauleDnsResolve, PasswordAuth, Socks};
 use smol::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::AsyncWriteExt,
     net::{TcpStream, UdpSocket},
 };
 
@@ -16,10 +20,16 @@ enum Proxy {
 }
 
 #[inline]
-async fn poll_stream(mut fuso: Fuso, proxy: Proxy) -> fuso_core::Result<()> {
+async fn poll_stream<C>(mut fuso: Fuso, proxy: Proxy, ciphe: C) -> fuso_core::Result<()>
+where
+    C: Clone + Cipher + Unpin + Send + Sync + 'static,
+{
     loop {
         let reactor = fuso.accept().await?;
         let stream = reactor.join().await?;
+        let from_addr = stream.peer_addr().unwrap();
+
+        let stream = stream.ciphe(ciphe.clone()).await;
 
         match proxy {
             Proxy::Socks5 => {
@@ -45,22 +55,34 @@ async fn poll_stream(mut fuso: Fuso, proxy: Proxy) -> fuso_core::Result<()> {
                         match socks {
                             Socks::Tcp(mut from, addr) => {
                                 let to = TcpStream::connect(addr).await;
-                                if let Ok(to) = to {
+
+                                if to.is_ok() {
+                                    let to = to.unwrap();
+
+                                    log::info!(
+                                        "[fuc] Proxy to {} -> {}",
+                                        from_addr,
+                                        to.local_addr().unwrap()
+                                    );
+
                                     if let Err(e) = to.forward(from).await {
-                                        log::debug!("[fuc] Forwarding failed {}", e);
+                                        log::warn!("[fuc] Forwarding failed {}", e);
                                     };
                                 } else {
+                                    log::warn!(
+                                        "[fuc] Proxy failure({}) {} -> {}",
+                                        to.unwrap_err(),
+                                        from_addr,
+                                        addr
+                                    );
+
                                     let _ = from.close().await;
                                 }
                             }
                             Socks::Udp(mut tcp, _) => {
                                 // 伪代码 ...
-                                let mut buf = Vec::new();
-                                buf.resize(1, 0);
-                                if let Err(e) = tcp.read(&mut buf).await {
-                                    let _ = tcp.close().await;
-                                    log::debug!("[fuc] udp forwarding failed {}", e);
-                                }
+                                log::warn!("[fuc] Not support udp forwarding");
+                                let _ = tcp.close().await;
                             }
                         }
                     }
@@ -71,11 +93,14 @@ async fn poll_stream(mut fuso: Fuso, proxy: Proxy) -> fuso_core::Result<()> {
             Proxy::Port(addr) => {
                 let future = async move {
                     let tcp = TcpStream::connect(addr).await;
+
                     if tcp.is_err() {
-                        log::debug!("[fuc] Connection failed {}", tcp.unwrap_err());
+                        log::warn!("[fuc] Connection failed {} {}", tcp.unwrap_err(), addr);
                     } else {
+                        log::info!("[fuc] Forward to {} -> {}", addr, from_addr);
+
                         if let Err(e) = stream.forward(tcp.unwrap()).await {
-                            log::debug!("[fuc] Forwarding failed {}", e);
+                            log::warn!("[fuc] Forwarding failed {}", e);
                         }
                     }
                 };
@@ -110,6 +135,16 @@ fn main() {
                 .long("type")
                 .possible_values(["socks", "forward"])
                 .default_value("forward"),
+        )
+        .arg(
+            Arg::new("xor-secret")
+                .long("xor")
+                .short('x')
+                .default_value("27")
+                .validator(|num| {
+                    num.parse::<u8>()
+                        .map_or(Err(String::from("Invalid number 0-255")), |_| Ok(()))
+                }),
         );
 
     let matches = app.get_matches();
@@ -139,19 +174,27 @@ fn main() {
     let forward_addr = forward_addr.unwrap();
     let server_addr = server_addr.unwrap();
 
+    let xor_num: u8 = matches.value_of("xor-secret").unwrap().parse().unwrap();
+
     let proxy = match forward_type {
         "socks" => Proxy::Socks5,
         _ => Proxy::Port(forward_addr),
     };
 
+    log::info!(
+        "[fuc] server_addr={}, forward_type={}, forward_addr={}, xor_num={}",
+        server_addr,
+        forward_type,
+        forward_addr,
+        xor_num
+    );
+
     smol::block_on(async move {
         loop {
             match Fuso::bind(server_addr).await {
                 Ok(fuso) => {
-                    log::debug!("[fuc] Successfully connected {}", server_addr);
-                    if let Err(e) = poll_stream(fuso, proxy.clone()).await {
-                        log::error!("[fuc] error {}", e);
-                    }
+                    log::info!("[fuc] connection succeeded");
+                    let _ = poll_stream(fuso, proxy.clone(), Xor::new(xor_num)).await;
                 }
                 Err(e) => {
                     log::warn!(
