@@ -1,19 +1,19 @@
+pub mod ciphe;
 pub mod client;
 pub mod cmd;
-pub mod server;
 pub mod core;
+pub mod dispatch;
+pub mod packet;
 pub mod retain;
-pub mod ciphe;
-pub mod buffer;
+pub mod server;
+pub mod handler;
 
 use std::sync::Arc;
+
 
 pub use fuso_api::*;
 use futures::{AsyncRead, AsyncReadExt, AsyncWrite};
 use smol::lock::Mutex;
-
-
-
 
 #[inline]
 pub fn split<T>(o: T) -> (T, T)
@@ -44,4 +44,52 @@ where
     .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use fuso_api::Packet;
+
+    use crate::{core::Config, dispatch::State, packet::Action};
+
+    fn init_logger() {
+        env_logger::builder()
+            .filter_level(log::LevelFilter::Debug)
+            .init();
+    }
+
+    #[test]
+    fn test_packet() {
+        init_logger();
+
+        let action = Action::Bind(Some("127.0.0.1:8080".parse().unwrap()));
+
+        let packet: Packet = action.into();
+
+        log::debug!("{:?}", packet);
+
+        let action: fuso_api::Result<Action> = packet.try_into();
+
+        log::debug!("{:?}", action);
+    }
+
+    fn test_core() {
+        smol::block_on(async move {
+            
+
+            // let io = crate::core::Fuso::bind(Config {
+            //     bind_addr: "0.0.0.0".parse().unwrap(),
+            //     debug: false,
+            //     handler: vec![Arc::new(|cx|{
+            //         async move{
+
+            //             State::Next
+            //         }
+            //     })],
+            // })
+            // .await;
+        });
+    }
 }

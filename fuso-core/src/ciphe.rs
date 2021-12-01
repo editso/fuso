@@ -8,7 +8,8 @@ use std::{
 use async_trait::async_trait;
 use futures::{AsyncRead, AsyncWrite};
 
-use crate::buffer::Buffer;
+use fuso_api::Buffer;
+
 
 #[async_trait]
 pub trait Security<T, O> {
@@ -71,7 +72,6 @@ where
         let mut io_buf = self.buf.lock().unwrap();
 
         if !io_buf.is_empty() {
-            log::info!("....l");
             Pin::new(&mut *io_buf).poll_read(cx, buf)
         } else {
             let mut io = self.target.lock().unwrap();

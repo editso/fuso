@@ -285,6 +285,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "bytes",
+ "env_logger",
  "fuso-api",
  "futures",
  "log",

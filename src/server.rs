@@ -5,7 +5,7 @@ use fuso::parse_addr;
 use fuso_core::{
     ciphe::{Security, Xor},
     server::Fuso,
-    Forward, FusoListener,
+    Forward, FusoListener, Spwan,
 };
 
 fn main() {
@@ -79,11 +79,14 @@ fn main() {
             _ => log::LevelFilter::Info,
         })
         .init();
+    
+
 
     smol::block_on(async move {
         match Fuso::bind((server_vis_addr, server_bind_addr)).await {
             Ok(mut fuso) => {
                 
+
                 log::info!(
                     "[fus] visit_addr={}, bind_addr={}, xor_num={}",
                     fuso.visit_addr(),
@@ -96,7 +99,7 @@ fn main() {
                         Ok((from, to)) => {
                             let to = to.ciphe(Xor::new(xor_num)).await;
 
-                            let _ = to.spwan_forward(from);
+                            to.forward(from).detach();
                         }
                         Err(e) => {
                             log::warn!("[fuso] Server error {}", e.to_string());

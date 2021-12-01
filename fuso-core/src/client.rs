@@ -9,7 +9,7 @@ use smol::{
     net::TcpStream,
 };
 
-use crate::cmd::{CMD_CREATE, CMD_JOIN, CMD_PING};
+use crate::cmd::{CMD_BIND, CMD_CREATE, CMD_PING};
 use crate::retain::Heartbeat;
 
 #[allow(unused)]
@@ -30,7 +30,7 @@ impl Fuso {
             .guard(5000)
             .await?;
 
-        stream.send(Packet::new(CMD_JOIN, Bytes::new())).await?;
+        stream.send(Packet::new(CMD_BIND, Bytes::new())).await?;
 
         let (accept_tx, accept_ax) = unbounded();
 

@@ -11,11 +11,7 @@ use smol::{
     net::{TcpListener, TcpStream},
 };
 
-use crate::{
-    cmd::{CMD_CREATE, CMD_JOIN},
-    retain::{HeartGuard, Heartbeat},
-    split_mutex,
-};
+use crate::{cmd::{CMD_BIND, CMD_CREATE}, retain::{HeartGuard, Heartbeat}, split_mutex};
 
 struct Chief<IO> {
     io: IO,
@@ -170,7 +166,7 @@ impl Chief<HeartGuard<TcpStream>> {
     pub async fn auth(mut stream: TcpStream) -> Result<Chief<HeartGuard<TcpStream>>> {
         let packet = stream.recv().await?;
 
-        if packet.get_cmd() != CMD_JOIN {
+        if packet.get_cmd() != CMD_BIND {
             return Err(ErrorKind::BadPacket.into());
         }
 

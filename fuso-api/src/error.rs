@@ -10,7 +10,8 @@ pub struct Error {
 #[derive(Debug)]
 pub enum ErrorKind {
     BadPacket,
-    
+    UnHandler,
+    Customer(String),
 }
 
 #[derive(Debug)]
@@ -26,7 +27,7 @@ impl Error {
     }
 
     #[inline]
-    pub fn with_io(err: std::io::Error)->Self{
+    pub fn with_io(err: std::io::Error) -> Self {
         err.into()
     }
 }
@@ -57,6 +58,25 @@ impl From<std::io::ErrorKind> for Error {
     fn from(kind: std::io::ErrorKind) -> Self {
         Self {
             repr: Repr::IO(kind.into()),
+        }
+    }
+}
+
+impl From<smol::channel::RecvError> for Error {
+    fn from(e: smol::channel::RecvError) -> Self {
+        Self {
+            repr: Repr::IO(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            )),
+        }
+    }
+}
+
+impl From<&str> for Error {
+    fn from(txt: &str) -> Self {
+        Self {
+            repr: Repr::Fuso(ErrorKind::Customer(txt.into())),
         }
     }
 }
