@@ -1,7 +1,6 @@
 use std::net::SocketAddr;
 
-use bytes::Bytes;
-use fuso_api::{async_trait, Error, FusoListener, FusoPacket, Packet, Result};
+use fuso_api::{async_trait, Error, FusoListener, FusoPacket, Result, Spwan};
 
 use futures::AsyncWriteExt;
 use smol::{
@@ -9,13 +8,15 @@ use smol::{
     net::TcpStream,
 };
 
-use crate::cmd::{CMD_BIND, CMD_CREATE, CMD_PING};
+use crate::packet::Action;
 use crate::retain::Heartbeat;
 
 #[allow(unused)]
+#[derive(Debug)]
 pub struct Reactor {
+    conv: u64,
+    action: Action,
     addr: SocketAddr,
-    packet: Packet,
 }
 
 pub struct Fuso {
@@ -23,35 +24,73 @@ pub struct Fuso {
 }
 
 impl Fuso {
-    pub async fn bind(addr: SocketAddr) -> Result<Self> {
+    pub async fn bind(addr: SocketAddr, bind_port: u16) -> Result<Self> {
+        // let stream = addr.tcp_connect().await?;
+
         let mut stream = TcpStream::connect(addr)
             .await
-            .map_err(|e| Error::with_io(e))?
-            .guard(5000)
+            .map_err(|e| Error::with_io(e))?;
+
+        stream
+            .send(
+                Action::Bind({
+                    if bind_port == 0 {
+                        None
+                    } else {
+                        Some(format!("0.0.0.0:{}", bind_port).parse().unwrap())
+                    }
+                })
+                .into(),
+            )
             .await?;
 
-        stream.send(Packet::new(CMD_BIND, Bytes::new())).await?;
+        let action: Action = stream.recv().await?.try_into()?;
+
+        let mut stream = stream.guard(5000).await?;
 
         let (accept_tx, accept_ax) = unbounded();
 
-        smol::spawn(async move {
-            loop {
-                match stream.recv().await {
-                    Err(e) => {
-                        log::warn!("[fuc] Server disconnect {}", e);
-                        break;
-                    }
-                    Ok(packet) if packet.get_cmd() == CMD_PING => {}
-                    Ok(packet) => {
-                        if let Err(_) = accept_tx.send(Reactor { addr, packet }).await {
-                            let _ = stream.close().await;
-                            break;
-                        };
+        match action {
+            Action::Accept(conv) => {
+                log::debug!("Service binding is successful {}", conv);
+
+                async move {
+                    loop {
+                        match stream.recv().await {
+                            Err(e) => {
+                                log::warn!("[fuc] Server disconnect {}", e);
+                                break;
+                            }
+                            Ok(packet) => {
+                                let action: Result<Action> = packet.try_into();
+                                match action {
+                                    Ok(Action::Ping) => {}
+
+                                    Ok(action) => {
+                                        match accept_tx.send(Reactor { conv, action, addr }).await {
+                                            Err(_) => {
+                                                let _ = stream.close().await;
+                                                break;
+                                            }
+                                            _ => {}
+                                        };
+                                    }
+                                    Err(e) => {
+                                        log::debug!("{}", e);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
+                .detach();
             }
-        })
-        .detach();
+            Action::Err(e) => {
+                log::error!("Server error message {}", e);
+                panic!()
+            }
+            _ => {}
+        }
 
         Ok(Self { accept_ax })
     }
@@ -63,9 +102,7 @@ impl Reactor {
         let mut stream = TcpStream::connect(self.addr)
             .await
             .map_err(|e| Error::with_io(e))?;
-
-        stream.send(Packet::new(CMD_CREATE, Bytes::new())).await?;
-
+        stream.send(Action::Connect(self.conv).into()).await?;
         Ok(stream)
     }
 }

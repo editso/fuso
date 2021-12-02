@@ -113,7 +113,7 @@ where
 
 fn main() {
     let app = App::new("fuso")
-        .version("v1.0.1")
+        .version("v1.0.3")
         .author("https://github.com/editso/fuso")
         .arg(Arg::new("server-host").default_value("127.0.0.1"))
         .arg(Arg::new("server-port").default_value("9003"))
@@ -137,6 +137,17 @@ fn main() {
                 .default_value("forward"),
         )
         .arg(
+            Arg::new("service-bind")
+                .short('b')
+                .long("bind")
+                .validator(|port| {
+                    port.parse::<u16>()
+                        .map_or(Err(format!("Invalid port {}", port)), |_| Ok(()))
+                })
+                .about("Specify the address to be monitored by the server, which will be randomly assigned by default")
+                .default_value("0"),
+        )
+        .arg(
             Arg::new("xor-secret")
                 .long("xor")
                 .short('x')
@@ -158,6 +169,8 @@ fn main() {
         matches.value_of("forward-host").unwrap(),
         matches.value_of("forward-port").unwrap(),
     );
+
+    let service_bind: u16 = matches.value_of("service-bind").unwrap().parse().unwrap();
 
     let forward_type = matches.value_of("forward-type").unwrap();
 
@@ -191,7 +204,7 @@ fn main() {
 
     smol::block_on(async move {
         loop {
-            match Fuso::bind(server_addr).await {
+            match Fuso::bind(server_addr, service_bind).await {
                 Ok(fuso) => {
                     log::info!("[fuc] connection succeeded");
                     let _ = poll_stream(fuso, proxy.clone(), Xor::new(xor_num)).await;

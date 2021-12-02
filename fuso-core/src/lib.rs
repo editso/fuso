@@ -3,13 +3,12 @@ pub mod client;
 pub mod cmd;
 pub mod core;
 pub mod dispatch;
+pub mod handler;
 pub mod packet;
 pub mod retain;
 pub mod server;
-pub mod handler;
 
 use std::sync::Arc;
-
 
 pub use fuso_api::*;
 use futures::{AsyncRead, AsyncReadExt, AsyncWrite};
@@ -47,12 +46,20 @@ where
 }
 
 #[cfg(test)]
+#[allow(unused)]
 mod tests {
     use std::sync::Arc;
 
-    use fuso_api::Packet;
+    use fuso_api::{FusoListener, FusoPacket, Packet};
+    use futures::{AsyncReadExt, AsyncWriteExt};
+    use smol::net::TcpStream;
 
-    use crate::{core::Config, dispatch::State, packet::Action};
+    use crate::{
+        core::{self, Config},
+        dispatch::State,
+        handler::ChainHandler,
+        packet::Action,
+    };
 
     fn init_logger() {
         env_logger::builder()
@@ -75,21 +82,57 @@ mod tests {
         log::debug!("{:?}", action);
     }
 
+    #[test]
+    #[allow(unused)]
     fn test_core() {
+        init_logger();
         smol::block_on(async move {
-            
+            let builder = crate::core::Fuso::builder();
 
-            // let io = crate::core::Fuso::bind(Config {
-            //     bind_addr: "0.0.0.0".parse().unwrap(),
-            //     debug: false,
-            //     handler: vec![Arc::new(|cx|{
-            //         async move{
+            let mut fuso = builder
+                .with_config(Config {
+                    debug: false,
+                    bind_addr: "127.0.0.1:9999".parse().unwrap(),
+                })
+                .with_chain(|chain| {
+                    chain.next(|mut tcp, cx| async move {
+                        let action: Action = tcp.recv().await?.try_into()?;
+                        match action {
+                            Action::Bind(addr) => {
+                                let conv = cx.spwan(tcp.into(), addr).await?;
+                                log::debug!("[fuso] accept {}", conv);
+                                Ok(State::Accept(()))
+                            }
+                            Action::Connect(conv) => {
+                                cx.route(conv, tcp.into()).await?;
+                                Ok(State::Accept(()))
+                            }
+                            _ => Ok(State::Next),
+                        }
+                    })
+                })
+                .chain_strategy(|chain| {
+                    chain
+                        .next(|tcp, cx| async move {
+                            Ok(State::Next)
+                        })
+                        .next(|tcp, cx| async move {
+                            log::debug!("strategy");
+                            Ok(State::Next)
+                        })
+                })
+                .build()
+                .await
+                .unwrap();
 
-            //             State::Next
-            //         }
-            //     })],
-            // })
-            // .await;
+            loop {
+                match fuso.accept().await {
+                    Ok(fuso) => {
+                        log::debug!("mut .... ");
+                    }
+                    Err(_) => {}
+                }
+            }
         });
     }
 }

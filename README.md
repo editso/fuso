@@ -41,20 +41,26 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
    2. 确保服务端端口(`9003`)未被使用
    3. 确保转发的端口(`80`)有服务在运行
    4. 转发成功后需要访问的端口由服务端随机分配
-   5. 服务端出现 **Actual access address 0.0.0.0:xxxx**日志则代表转发服务已准备就绪
+   5. 服务端出现 **New mapping xxxx -> xxxx**日志则代表转发服务已准备就绪
    
 4. 配置  
    `Fuso` 的所有配置都是通过参数传递的方式  
    打开终端运行 `[fus or fuc] --help` 即可获取帮助信息
+
+5. 高级用法 `>1.0.2`  
+   1. 支持从客户端指定服务端要监听的端口(*前提你所指定的端口没有被占用!*) 用法:  
+       `fuc [--bind or -b] 端口`
+   2. 支持多连接
+   
 
 ### 🤔Features
 | Name                   | <font color="green">✔(Achieved)</font> / <font color="red">❌(Unrealized)</font>) |
 | ---------------------- | -------------------------------------------------------------------------------- |
 | 基本转发 (Forward)     | <font color="green">✔</font>                                                     |
 | 传输加密 (Encrypt)     | <font color="green">✔</font>                                                     |
-| Socks5代理 (Socks5)     | <font color="green">✔</font>                                           |
+| Socks5代理 (Socks5)    | <font color="green">✔</font>                                                     |
 | UDP支持  (udp support) | ❌                                                                                |
-| 多映射                 | ❌                                                                                |
+| 多映射                 | <font color="green">✔</font>                                                     |
 | 级联代理               | ❌                                                                                |
 | 数据传输压缩           | ❌                                                                                |
 

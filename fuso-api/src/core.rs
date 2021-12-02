@@ -354,6 +354,7 @@ impl<T, Store> Clone for Rollback<T, Store>
 where
     T: Clone,
 {
+    #[inline]
     fn clone(&self) -> Self {
         Self {
             target: self.target.clone(),
@@ -372,6 +373,13 @@ impl Rollback<TcpStream, Buffer<u8>> {
     #[inline]
     pub fn peer_addr(&self) -> std::io::Result<SocketAddr> {
         self.target.lock().unwrap().peer_addr()
+    }
+}
+
+impl From<Rollback<TcpStream, Buffer<u8>>> for TcpStream {
+    #[inline]
+    fn from(roll: Rollback<TcpStream, Buffer<u8>>) -> Self {
+        roll.target.lock().unwrap().clone()
     }
 }
 
@@ -429,7 +437,7 @@ where
 impl<T> AsyncWrite for Rollback<T, Buffer<u8>>
 where
     T: AsyncWrite + Unpin + Send + Sync + 'static,
-{   
+{
     #[inline]
     fn poll_write(
         self: std::pin::Pin<&mut Self>,

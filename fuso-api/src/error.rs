@@ -73,8 +73,30 @@ impl From<smol::channel::RecvError> for Error {
     }
 }
 
+impl<T> From<smol::channel::SendError<T>> for Error
+where
+    T: Into<String>,
+{
+    fn from(e: smol::channel::SendError<T>) -> Self {
+        Self {
+            repr: Repr::IO(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            )),
+        }
+    }
+}
+
 impl From<&str> for Error {
     fn from(txt: &str) -> Self {
+        Self {
+            repr: Repr::Fuso(ErrorKind::Customer(txt.into())),
+        }
+    }
+}
+
+impl From<String> for Error {
+    fn from(txt: String) -> Self {
         Self {
             repr: Repr::Fuso(ErrorKind::Customer(txt.into())),
         }

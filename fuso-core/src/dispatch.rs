@@ -1,51 +1,109 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use fuso_api::{Buffer, Rollback, RollbackEx};
+use futures::AsyncWriteExt;
 use smol::net::TcpStream;
 
-use crate::{core::SyncContext, split};
+use crate::packet::Action;
 
-pub enum State {
+#[derive(Debug, Clone, Copy)]
+pub enum State<T> {
     Next,
-    Accept,
+    Accept(T),
 }
 
 #[async_trait]
-pub trait Handler<D, C> {
-    async fn dispose(&self, o: D, c: C) -> fuso_api::Result<State>;
+pub trait Handler<D, C, A> {
+    async fn dispose(&self, o: D, c: C) -> fuso_api::Result<State<A>>;
 }
 
 #[async_trait]
-pub trait Dispatch<C> {
-    async fn dispatch(self, cx: C) -> fuso_api::Result<()>;
+pub trait Dispatch<H, C> {
+    async fn dispatch(self, h: H, cx: C) -> fuso_api::Result<()>;
 }
 
+#[async_trait]
+pub trait StrategyEx<R, S, C> {
+    async fn select(self, strategys: S, cx: C) -> fuso_api::Result<R>;
+}
+
+pub type TcpStreamRollback = Rollback<TcpStream, Buffer<u8>>;
+
+pub type DynHandler<C, A> = dyn Handler<TcpStreamRollback, C, A> + Send + Sync + 'static;
 
 #[async_trait]
-impl<IO, H> Dispatch<SyncContext<IO, H>> for TcpStream
+impl<C> Dispatch<Arc<Vec<Arc<Box<DynHandler<C, ()>>>>>, C> for TcpStream
 where
-    H: Handler<Rollback<Self, Buffer<u8>>, SyncContext<IO, H>> + Send + Sync + 'static,
-    IO: Send + Sync + 'static,
+    C: Clone + Send + Sync + 'static,
 {
-    async fn dispatch(self, cx: SyncContext<IO, H>) -> fuso_api::Result<()> {
-        let (cx_1, cx_2) = split(cx);
-        let cx_1 = cx_1.read().await;
-        let handler = &cx_1.config.handler;
-
-        let io = self.roll();
+    #[inline]
+    async fn dispatch(
+        self,
+        handlers: Arc<Vec<Arc<Box<DynHandler<C, ()>>>>>,
+        cx: C,
+    ) -> fuso_api::Result<()> {
+        let mut io = self.roll();
 
         io.begin().await?;
 
-        for handle in handler.iter() {
+        for handle in handlers.iter() {
             let handle = handle.clone();
 
-            match handle.dispose(io.clone(), cx_2.clone()).await? {
-                State::Accept => return Ok(()),
+            match handle.dispose(io.clone(), cx.clone()).await? {
+                State::Accept(()) => return Ok(()),
                 State::Next => {
                     io.back().await?;
                     log::debug!("[dispatch] Next handler, rollback");
                 }
             }
         }
+
+        log::warn!(
+            "Can't find a suitable processor {}",
+            io.peer_addr().unwrap()
+        );
+
+        let _ = io.close().await;
+
+        Err(fuso_api::ErrorKind::UnHandler.into())
+    }
+}
+
+
+#[async_trait]
+impl<C> StrategyEx<Action, Arc<Vec<Arc<Box<DynHandler<C, Action>>>>>, C> for TcpStream
+where
+    C: Clone + Send + Sync + 'static,
+{
+    #[inline]
+    async fn select(
+        self,
+        strategys: Arc<Vec<Arc<Box<DynHandler<C, Action>>>>>,
+        cx: C,
+    ) -> fuso_api::Result<Action> {
+        let mut io = self.roll();
+
+        io.begin().await?;
+
+        for handle in strategys.iter() {
+            let handle = handle.clone();
+
+            match handle.dispose(io.clone(), cx.clone()).await? {
+                State::Accept(action) => return Ok(action),
+                State::Next => {
+                    io.back().await?;
+                    log::debug!("[dispatch] Next handler, rollback");
+                }
+            }
+        }
+
+        log::warn!(
+            "Can't find a suitable processor {}",
+            io.peer_addr().unwrap()
+        );
+
+        let _ = io.close().await;
 
         Err(fuso_api::ErrorKind::UnHandler.into())
     }
