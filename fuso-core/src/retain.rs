@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use fuso_api::{now_mills, FusoPacket, Packet, Spwan};
 use futures::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use smol::Task;
 use std::io::Result;
 use std::{
     ops::Sub,
@@ -15,6 +16,7 @@ use std::{
 pub struct HeartGuard<T> {
     target: Arc<Mutex<T>>,
     last: Arc<RwLock<u64>>,
+    guard: Arc<std::sync::Mutex<Option<Task<()>>>>,
 }
 
 #[async_trait]
@@ -31,41 +33,48 @@ where
 
         Self {
             last: last.clone(),
-            target: {
-                let future = {
-                    let mut io = target.clone();
+            target: Arc::new(Mutex::new(target.clone())),
+            guard: Arc::new(std::sync::Mutex::new(Some(smol::spawn({
+                let mut io = target.clone();
 
-                    async move {
-                        log::info!("Guardian mode is turned on");
+                async move {
+                    log::info!("Guardian mode is turned on");
 
-                        loop {
-                            let time = now_mills();
-                            let last = *last.read().unwrap();
+                    loop {
+                        let time = now_mills();
+                        let last = *last.read().unwrap();
 
-                            if now_mills().sub(last).ge(&interval) {
-                                log::debug!("Client is dead");
+                        if now_mills().sub(last).ge(&interval) {
+                            log::debug!("Client is dead");
+                            let _ = io.close().await;
+                            break;
+                        } else {
+                            let interval = interval - (time - last);
+
+                            log::debug!("Next check interval={}mss", interval);
+
+                            smol::Timer::after(Duration::from_millis(interval)).await;
+
+                            if let Err(_) = io.send(Packet::new(0x10, Bytes::new())).await {
                                 let _ = io.close().await;
                                 break;
-                            } else {
-                                let interval = interval - (time - last);
-
-                                log::debug!("Next check interval={}mss", interval);
-
-                                smol::Timer::after(Duration::from_millis(interval)).await;
-
-                                if let Err(_) = io.send(Packet::new(0x10, Bytes::new())).await {
-                                    let _ = io.close().await;
-                                    break;
-                                }
                             }
                         }
                     }
-                };
+                }
+            })))),
+        }
+    }
+}
 
-                future.detach();
-
-                Arc::new(Mutex::new(target))
-            },
+impl<T> Drop for HeartGuard<T> {
+    fn drop(&mut self) {
+        if let Some(guard) = self.guard.lock().unwrap().take() {
+            async move {
+                guard.cancel().await;
+                log::debug!("Guard is off");
+            }
+            .detach();
         }
     }
 }

@@ -51,7 +51,10 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
    1. 支持从客户端指定服务端要监听的端口(*前提你所指定的端口没有被占用!*) 用法:  
        `fuc [--bind or -b] 端口`
    2. 支持多连接
-   
+   3. 级联代理(`桥接模式`), 支持级联代理, 用法:  
+      开启桥模式 `fuc [--bridge ] 端口` **开启后它既支持桥接也支持穿透互不影响**  
+      使用 `fuc 已开启级桥接模式的地址 端口`其他参数与基本一致
+
 
 ### 🤔Features
 | Name                   | <font color="green">✔(Achieved)</font> / <font color="red">❌(Unrealized)</font>) |
@@ -61,7 +64,7 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 | Socks5代理 (Socks5)    | <font color="green">✔</font>                                                     |
 | UDP支持  (udp support) | ❌                                                                                |
 | 多映射                 | <font color="green">✔</font>                                                     |
-| 级联代理               | ❌                                                                                |
+| 级联代理               | <font color="green">✔</font>                                                     |
 | 数据传输压缩           | ❌                                                                                |
 
 

@@ -175,6 +175,7 @@ impl FusoBuilder<Arc<Context>> {
 }
 
 impl Fuso<FusoStream<TcpStream>> {
+    #[inline]
     pub fn builder() -> FusoBuilder<Arc<Context>> {
         FusoBuilder {
             config: None,
@@ -262,11 +263,11 @@ impl Context {
         let (conv, accept_ax) = self.fork().await;
         let accept_tx = self.accept_ax.clone();
         let clinet_addr = tcp.local_addr().unwrap();
-        let mut core = tcp.guard(5000).await?;
         let bind_addr = addr.unwrap_or("0.0.0.0:0".parse().unwrap());
         let listen = bind_addr.tcp_listen().await?;
         let strategys = self.strategys.clone();
 
+        let mut core = tcp.guard(5000).await?;
         let _ = core.send(Action::Accept(conv).into()).await?;
 
         let channel = Arc::new(Channel {

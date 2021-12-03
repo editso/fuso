@@ -204,7 +204,7 @@ fn main() {
 
     smol::block_on(async move {
         loop {
-            match Fuso::bind(server_addr, service_bind).await {
+            match Fuso::bind(server_addr, service_bind, 0).await {
                 Ok(fuso) => {
                     log::info!("[fuc] connection succeeded");
                     let _ = poll_stream(fuso, proxy.clone(), Xor::new(xor_num)).await;

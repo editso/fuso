@@ -157,6 +157,10 @@ fn main() {
                         .map_or(Err(String::from("Invalid number 0-255")), |_| Ok(()))
                 }),
         )
+        .arg(Arg::new("bridge-bind").long("bridge").default_value("0").validator(|port| {
+            port.parse::<u16>()
+                .map_or(Err(format!("Invalid port {}", port)), |_| Ok(()))
+        }))
         .arg(
             Arg::new("log")
                 .short('l')
@@ -179,6 +183,12 @@ fn main() {
     let service_bind: u16 = matches.value_of("service-bind").unwrap().parse().unwrap();
 
     let forward_type = matches.value_of("forward-type").unwrap();
+
+    let bridge_bind: u16 = matches
+        .value_of("bridge-bind")
+        .unwrap_or("0")
+        .parse()
+        .unwrap();
 
     if server_addr.is_err() {
         println!("Parameter error: {}", server_addr.unwrap_err());
@@ -221,7 +231,7 @@ fn main() {
 
     smol::block_on(async move {
         loop {
-            match Fuso::bind(server_addr, service_bind).await {
+            match Fuso::bind(server_addr, service_bind, bridge_bind).await {
                 Ok(fuso) => {
                     log::info!("[fuc] connection succeeded");
                     let _ = poll_stream(fuso, proxy.clone(), Xor::new(xor_num)).await;

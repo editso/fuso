@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use fuso_api::{async_trait, Error, FusoListener, FusoPacket, Result, Spwan};
+use fuso_api::{async_trait, Error, Forward, FusoListener, FusoPacket, Result, Spwan};
 
 use futures::AsyncWriteExt;
 use smol::{
@@ -8,8 +8,8 @@ use smol::{
     net::TcpStream,
 };
 
-use crate::packet::Action;
 use crate::retain::Heartbeat;
+use crate::{bridge::Bridge, packet::Action};
 
 #[allow(unused)]
 #[derive(Debug)]
@@ -24,7 +24,7 @@ pub struct Fuso {
 }
 
 impl Fuso {
-    pub async fn bind(addr: SocketAddr, bind_port: u16) -> Result<Self> {
+    pub async fn bind(addr: SocketAddr, bind_port: u16, bridge_bind: u16) -> Result<Self> {
         // let stream = addr.tcp_connect().await?;
 
         let mut stream = TcpStream::connect(addr)
@@ -46,13 +46,45 @@ impl Fuso {
 
         let action: Action = stream.recv().await?.try_into()?;
 
-        let mut stream = stream.guard(5000).await?;
-
         let (accept_tx, accept_ax) = unbounded();
 
         match action {
             Action::Accept(conv) => {
                 log::debug!("Service binding is successful {}", conv);
+                let mut stream = stream.guard(5000).await?;
+
+                async move {
+                    if bridge_bind == 0 {
+                        return;
+                    }
+
+                    match Bridge::bind(format!("0.0.0.0:{}", bridge_bind).parse().unwrap(), addr)
+                        .await
+                    {
+                        Ok(mut bridge) => {
+                            log::info!("[bridge] Bridge service opened successfully");
+                            loop {
+                                match bridge.accept().await {
+                                    Ok((from, to)) => {
+                                        log::info!(
+                                            "Bridge to {} -> {}",
+                                            from.peer_addr().unwrap(),
+                                            to.peer_addr().unwrap()
+                                        );
+                                        from.forward(to).detach();
+                                    }
+                                    Err(_) => {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("[bridge] Bridge service failed to open {}", e);
+                        }
+                    };
+                }
+                .detach();
 
                 async move {
                     loop {

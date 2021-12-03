@@ -7,6 +7,7 @@ pub mod handler;
 pub mod packet;
 pub mod retain;
 pub mod server;
+pub mod bridge;
 
 use std::sync::Arc;
 
@@ -112,14 +113,12 @@ mod tests {
                     })
                 })
                 .chain_strategy(|chain| {
-                    chain
-                        .next(|tcp, cx| async move {
-                            Ok(State::Next)
-                        })
-                        .next(|tcp, cx| async move {
+                    chain.next(|tcp, cx| async move { Ok(State::Next) }).next(
+                        |tcp, cx| async move {
                             log::debug!("strategy");
                             Ok(State::Next)
-                        })
+                        },
+                    )
                 })
                 .build()
                 .await
