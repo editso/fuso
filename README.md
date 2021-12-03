@@ -53,7 +53,7 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
    2. 支持多连接
    3. 级联代理(`桥接模式`), 支持级联代理, 用法:  
       开启桥模式 `fuc [--bridge ] 端口` **开启后它既支持桥接也支持穿透互不影响**  
-      使用 `fuc 已开启级桥接模式的地址 端口`其他参数与基本一致
+      使用 `fuc 已开启级桥接模式的地址 端口`其他参数基本一致
 
 
 ### 🤔Features
