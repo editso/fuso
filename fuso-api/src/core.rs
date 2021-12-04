@@ -349,6 +349,14 @@ impl<T> Rollback<T, Buffer<u8>> {
             Ok(())
         }
     }
+
+    #[inline]
+    pub async fn release(&self) -> Result<()> {
+        *self.rollback.write().unwrap() = false;
+        self.store.lock().unwrap().clear();
+
+        Ok(())
+    }
 }
 
 impl Rollback<TcpStream, Buffer<u8>> {

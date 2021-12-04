@@ -23,7 +23,7 @@ pub enum Addr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     Ping,
-    Bind(Option<SocketAddr>),
+    Bind(Option<String>, Option<SocketAddr>),
     Reset(Addr),
     Accept(u64),
     Forward(Addr),
@@ -112,21 +112,42 @@ impl TryFrom<Packet> for Action {
     fn try_from(mut packet: fuso_api::Packet) -> Result<Self, Self::Error> {
         match packet.get_cmd() {
             CMD_PING => Ok(Action::Ping),
-            CMD_BIND if packet.get_len().eq(&0) => Ok(Action::Bind(None)),
-            CMD_BIND => {
-                let addr: Addr = packet.get_data().as_ref().try_into()?;
-                Ok(Action::Bind(Some({
-                    match addr {
-                        Addr::Socket(addr) => addr,
-                        Addr::Domain(_, _) => {
-                            return Err(fuso_api::Error::with_io(std::io::Error::new(
-                                std::io::ErrorKind::Other,
-                                "Does not support domain bind",
-                            )))
-                        }
+            CMD_BIND if packet.get_len().eq(&0) => Ok(Action::Bind(None, None)),
+            CMD_BIND => Ok(Action::Bind(
+                {
+                    let data = packet.get_mut_data();
+
+                    let len = data.get_u8();
+
+                    if len > 0 && data.len() >= len as usize {
+                        let name = Some(String::from_utf8_lossy(&data[..len as usize]).to_string());
+                        data.advance(len as usize);
+                        name
+                    } else {
+                        None
                     }
-                })))
-            }
+                },
+                {
+                    let data = packet.get_data();
+
+                    if data.len() > 0 {
+                        let addr: Addr = packet.get_data().as_ref().try_into()?;
+                        Some({
+                            match addr {
+                                Addr::Socket(addr) => addr,
+                                Addr::Domain(_, _) => {
+                                    return Err(fuso_api::Error::with_io(std::io::Error::new(
+                                        std::io::ErrorKind::Other,
+                                        "Does not support domain bind",
+                                    )))
+                                }
+                            }
+                        })
+                    } else {
+                        None
+                    }
+                },
+            )),
             CMD_ACCEPT if packet.get_len().ge(&8) => {
                 Ok(Action::Accept(packet.get_mut_data().get_u64()))
             }
@@ -149,8 +170,28 @@ impl From<Action> for fuso_api::Packet {
     fn from(packet: Action) -> Self {
         match packet {
             Action::Ping => Packet::new(CMD_PING, Bytes::new()),
-            Action::Bind(Some(addr)) => Packet::new(CMD_BIND, Addr::Socket(addr).to_bytes()),
-            Action::Bind(None) => Packet::new(CMD_BIND, Bytes::new()),
+            Action::Bind(Some(name), Some(addr)) => Packet::new(CMD_BIND, {
+                let mut buf = BytesMut::new();
+                let name = name.as_bytes();
+                buf.put_u8(name.len() as u8);
+                buf.put_slice(name);
+                buf.put_slice(&Addr::Socket(addr).to_bytes());
+                buf.into()
+            }),
+            Action::Bind(Some(name), None) => Packet::new(CMD_BIND, {
+                let mut buf = BytesMut::new();
+                let name = name.as_bytes();
+                buf.put_u8(name.len() as u8);
+                buf.put_slice(name);
+                buf.into()
+            }),
+            Action::Bind(None, Some(addr)) => Packet::new(CMD_BIND, {
+                let mut buf = BytesMut::new();
+                buf.put_u8(0);
+                buf.put_slice(&Addr::Socket(addr).to_bytes());
+                buf.into()
+            }),
+            Action::Bind(None, None) => Packet::new(CMD_BIND, Bytes::new()),
             Action::Reset(addr) => Packet::new(CMD_CONNECT, addr.to_bytes()),
             Action::Accept(conv) => Packet::new(CMD_ACCEPT, {
                 let mut buf = BytesMut::new();

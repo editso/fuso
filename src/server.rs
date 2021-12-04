@@ -16,35 +16,41 @@ fn main() {
     let app = App::new("fuso")
         .version("v1.0.3")
         .author("https://github.com/editso/fuso")
-        .arg(Arg::new("server-bind-host").default_value("0.0.0.0"))
-        .arg(Arg::new("server-bind-port").default_value("9003"))
         .arg(
-            Arg::new("server-visit-host")
+            Arg::new("server-bind-host")
+                .default_value("0.0.0.0")
                 .long("host")
                 .short('h')
-                .default_value("0.0.0.0"),
+                .display_order(1)
+                .about("监听地址"),
         )
         .arg(
-            Arg::new("server-visit-port")
+            Arg::new("server-bind-port")
+                .default_value("9003")
                 .long("port")
                 .short('p')
-                .default_value("0"),
+                .display_order(2)
+                .about("监听端口"),
         )
         .arg(
             Arg::new("xor-secret")
                 .long("xor")
                 .short('x')
                 .default_value("27")
+                .display_order(3)
                 .validator(|num| {
                     num.parse::<u8>()
                         .map_or(Err(String::from("Invalid number 0-255")), |_| Ok(()))
-                }),
+                })
+                .about("传输时使用异或加密的Key"),
         )
         .arg(
             Arg::new("log")
                 .short('l')
+                .display_order(4)
                 .possible_values(["debug", "info", "trace", "error"])
-                .default_value("info"),
+                .default_value("info")
+                .about("日志级别"),
         );
 
     let matches = app.get_matches();
@@ -54,22 +60,11 @@ fn main() {
         matches.value_of("server-bind-port").unwrap(),
     );
 
-    let server_vis_addr = parse_addr(
-        matches.value_of("server-visit-host").unwrap(),
-        matches.value_of("server-visit-port").unwrap(),
-    );
-
     if server_bind_addr.is_err() {
         println!("Parameter error: {}", server_bind_addr.unwrap_err());
         exit(1);
     }
 
-    if server_vis_addr.is_err() {
-        println!("Parameter error: {}", server_vis_addr.unwrap_err());
-        exit(1);
-    }
-
-    let server_vis_addr = server_vis_addr.unwrap();
     let server_bind_addr = server_bind_addr.unwrap();
 
     let xor_num: u8 = matches.value_of("xor-secret").unwrap().parse().unwrap();
@@ -94,9 +89,13 @@ fn main() {
                 chain.next(|mut tcp, cx| async move {
                     let action: Action = tcp.recv().await?.try_into()?;
                     match action {
-                        Action::Bind(addr) => match cx.spwan(tcp.clone().into(), addr).await {
+                        Action::Bind(name, addr) => match cx.spwan(tcp.clone(), addr, name).await {
                             Ok(conv) => {
-                                log::debug!("[fuso] accept {}", conv);
+                                log::debug!(
+                                    "[fuso] accept conv={}, addr={}",
+                                    conv,
+                                    tcp.peer_addr().unwrap(),
+                                );
                                 Ok(State::Accept(()))
                             }
                             Err(e) => {
@@ -115,13 +114,8 @@ fn main() {
             })
             .chain_strategy(|chain| {
                 chain
-                    .next(|_, _| async move {
-                        Ok(State::Accept(Action::Forward(Addr::Socket(
-                            "127.0.0.1:80".parse().unwrap(),
-                        ))))
-                    })
                     .next(|tcp, _| async move {
-                        // 下面是测试性的, 永远都不会执行到这里
+                        let _ = tcp.begin().await;
                         let io = tcp.clone();
                         let socks = Socks::parse(
                             io,
@@ -141,8 +135,8 @@ fn main() {
                         .await;
 
                         if socks.is_err() {
-                            let _ = tcp.back().await;
                             log::debug!("Not a valid socks package");
+                            let _ = tcp.back().await;
                             Ok(State::Next)
                         } else {
                             match socks.unwrap() {
@@ -153,6 +147,11 @@ fn main() {
                             }
                         }
                     })
+                    .next(|_, _| async move {
+                        Ok(State::Accept(Action::Forward(Addr::Socket(
+                            "127.0.0.1:80".parse().unwrap(),
+                        ))))
+                    })
             })
             .build()
             .await;
@@ -161,9 +160,11 @@ fn main() {
             Ok(mut fuso) => loop {
                 match fuso.accept().await {
                     Ok(stream) => {
-                        let to = stream.to.ciphe(Xor::new(xor_num)).await;
+                        let (from, to) = stream.split();
 
-                        to.forward(stream.from).detach();
+                        let to = to.ciphe(Xor::new(xor_num)).await;
+
+                        to.forward(from).detach();
                     }
                     Err(e) => {
                         log::warn!("[fuso] Server error {}", e.to_string());
@@ -173,9 +174,8 @@ fn main() {
             },
             Err(_) => {
                 log::error!(
-                    "[fus] Invalid address or already used . bind={}, visit={}",
-                    server_bind_addr,
-                    server_vis_addr
+                    "[fus] Invalid address or already used . bind={}",
+                    server_bind_addr
                 )
             }
         }

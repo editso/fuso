@@ -1,3 +1,4 @@
+pub mod bridge;
 pub mod ciphe;
 pub mod client;
 pub mod cmd;
@@ -7,7 +8,6 @@ pub mod handler;
 pub mod packet;
 pub mod retain;
 pub mod server;
-pub mod bridge;
 
 use std::sync::Arc;
 
@@ -72,7 +72,10 @@ mod tests {
     fn test_packet() {
         init_logger();
 
-        let action = Action::Bind(Some("127.0.0.1:8080".parse().unwrap()));
+        let action = Action::Bind(
+            Some("hello world".into()),
+            Some("127.0.0.1:80".parse().unwrap()),
+        );
 
         let packet: Packet = action.into();
 
@@ -98,10 +101,17 @@ mod tests {
                 .with_chain(|chain| {
                     chain.next(|mut tcp, cx| async move {
                         let action: Action = tcp.recv().await?.try_into()?;
+
                         match action {
-                            Action::Bind(addr) => {
-                                let conv = cx.spwan(tcp.into(), addr).await?;
-                                log::debug!("[fuso] accept {}", conv);
+                            Action::Bind(name, addr) => {
+                                let client_addr = tcp.peer_addr().unwrap();
+                                let conv = cx.spwan(tcp, addr, name).await?;
+                                log::debug!(
+                                    "[fuso] accept conv={}, addr={}, name={}",
+                                    conv,
+                                    client_addr,
+                                    conv
+                                );
                                 Ok(State::Accept(()))
                             }
                             Action::Connect(conv) => {

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use fuso_api::{Buffer, Rollback, RollbackEx};
+use fuso_api::SafeStreamEx;
 use futures::AsyncWriteExt;
 use smol::net::TcpStream;
 
@@ -28,7 +28,8 @@ pub trait StrategyEx<R, S, C> {
     async fn select(self, strategys: S, cx: C) -> fuso_api::Result<R>;
 }
 
-pub type TcpStreamRollback = Rollback<TcpStream, Buffer<u8>>;
+// pub type TcpStreamRollback = Rollback<TcpStream, Buffer<u8>>;
+pub type TcpStreamRollback = fuso_api::SafeStream<TcpStream>;
 
 pub type DynHandler<C, A> = dyn Handler<TcpStreamRollback, C, A> + Send + Sync + 'static;
 
@@ -43,17 +44,16 @@ where
         handlers: Arc<Vec<Arc<Box<DynHandler<C, ()>>>>>,
         cx: C,
     ) -> fuso_api::Result<()> {
-        let mut io = self.roll();
-
-        io.begin().await?;
+        let mut io = self.as_safe_stream();
 
         for handle in handlers.iter() {
             let handle = handle.clone();
 
             match handle.dispose(io.clone(), cx.clone()).await? {
-                State::Accept(()) => return Ok(()),
+                State::Accept(()) => {
+                    return Ok(());
+                }
                 State::Next => {
-                    io.back().await?;
                     log::debug!("[dispatch] Next handler, rollback");
                 }
             }
@@ -70,9 +70,9 @@ where
     }
 }
 
-
 #[async_trait]
-impl<C> StrategyEx<Action, Arc<Vec<Arc<Box<DynHandler<C, Action>>>>>, C> for TcpStream
+impl<C> StrategyEx<Action, Arc<Vec<Arc<Box<DynHandler<C, Action>>>>>, C>
+    for fuso_api::SafeStream<TcpStream>
 where
     C: Clone + Send + Sync + 'static,
 {
@@ -82,7 +82,8 @@ where
         strategys: Arc<Vec<Arc<Box<DynHandler<C, Action>>>>>,
         cx: C,
     ) -> fuso_api::Result<Action> {
-        let mut io = self.roll();
+        // let mut io = self.roll();
+        let mut io = self;
 
         io.begin().await?;
 
@@ -90,7 +91,9 @@ where
             let handle = handle.clone();
 
             match handle.dispose(io.clone(), cx.clone()).await? {
-                State::Accept(action) => return Ok(action),
+                State::Accept(action) => {
+                    return Ok(action);
+                }
                 State::Next => {
                     io.back().await?;
                     log::debug!("[dispatch] Next handler, rollback");

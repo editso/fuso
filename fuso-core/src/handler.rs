@@ -50,7 +50,6 @@ where
     }
 }
 
-
 #[test]
 fn test_hander() {
     use crate::dispatch::Handler;

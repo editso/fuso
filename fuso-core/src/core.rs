@@ -13,7 +13,10 @@ use smol::{
     net::TcpStream,
 };
 
-use fuso_api::{AsyncTcpSocketEx, FusoPacket, Result, Spwan};
+#[allow(unused)]
+use crate::ciphe::{Security, Xor};
+
+use fuso_api::{AsyncTcpSocketEx, FusoPacket, Result, SafeStreamEx, Spwan};
 
 use crate::retain::Heartbeat;
 use crate::{dispatch::DynHandler, packet::Action};
@@ -41,10 +44,10 @@ pub struct FusoStream<IO> {
 
 pub struct Channel {
     pub conv: u64,
-    pub core: HeartGuard<TcpStream>,
+    pub core: HeartGuard<fuso_api::SafeStream<TcpStream>>,
     pub config: Arc<Config>,
     pub strategys: Arc<Vec<Arc<Box<DynHandler<Arc<Channel>, Action>>>>>,
-    pub wait_queue: Arc<Mutex<VecDeque<TcpStream>>>,
+    pub wait_queue: Arc<Mutex<VecDeque<fuso_api::SafeStream<TcpStream>>>>,
 }
 
 #[derive(Clone)]
@@ -53,8 +56,8 @@ pub struct Context {
     pub config: Arc<Config>,
     pub handlers: Arc<Vec<Arc<Box<DynHandler<Arc<Self>, ()>>>>>,
     pub strategys: Arc<Vec<Arc<Box<DynHandler<Arc<Channel>, Action>>>>>,
-    pub sessions: Arc<RwLock<HashMap<u64, Sender<TcpStream>>>>,
-    pub accept_ax: Sender<FusoStream<TcpStream>>,
+    pub sessions: Arc<RwLock<HashMap<u64, Sender<fuso_api::SafeStream<TcpStream>>>>>,
+    pub accept_ax: Sender<FusoStream<fuso_api::SafeStream<TcpStream>>>,
 }
 
 pub struct Fuso<IO> {
@@ -110,7 +113,9 @@ impl FusoBuilder<Arc<Context>> {
         self
     }
 
-    pub async fn build(self) -> fuso_api::Result<Fuso<FusoStream<TcpStream>>> {
+    pub async fn build(
+        self,
+    ) -> fuso_api::Result<Fuso<FusoStream<fuso_api::SafeStream<TcpStream>>>> {
         let config = Arc::new(self.config.unwrap());
 
         let (accept_ax, accept_tx) = unbounded();
@@ -132,34 +137,33 @@ impl FusoBuilder<Arc<Context>> {
 
         async move {
             log::info!("Service started successfully");
-            log::info!("Bound to {}", bind_addr);
+            log::info!("Bind to {}", bind_addr);
             log::info!("Waiting to connect");
 
             let _ = listen
                 .incoming()
-                .try_fold(cx, |cx, mut stream| async move {
-                    log::debug!("[tcp] accept {}", stream.local_addr().unwrap());
+                .try_fold(cx, |cx, mut tcp| async move {
+                    log::debug!("[tcp] accept {}", tcp.local_addr().unwrap());
 
                     {
                         let handlers = cx.handlers.clone();
                         let cx = cx.clone();
                         async move {
-                            match stream.clone().dispatch(handlers, cx).await {
-                                Ok(_) => {
-                                    log::debug!(
-                                        "[tcp] Successfully processed {}",
-                                        stream.local_addr().unwrap()
-                                    );
-                                }
-                                Err(_) => {
-                                    let _ = stream.close().await;
+                            let process = tcp.clone().dispatch(handlers, cx).await;
 
-                                    log::warn!(
-                                        "[tcp] An illegal connection {}",
-                                        stream.peer_addr().unwrap()
-                                    );
-                                }
-                            };
+                            if process.is_err() {
+                                let _ = tcp.close().await;
+
+                                log::warn!(
+                                    "[tcp] An illegal connection {}",
+                                    tcp.peer_addr().unwrap()
+                                );
+                            } else {
+                                log::debug!(
+                                    "[tcp] Successfully processed {}",
+                                    tcp.local_addr().unwrap()
+                                );
+                            }
                         }
                         .detach();
                     }
@@ -204,7 +208,7 @@ where
 
 impl Channel {
     #[inline]
-    pub async fn try_wake(&self) -> Result<TcpStream> {
+    pub async fn try_wake(&self) -> Result<fuso_api::SafeStream<TcpStream>> {
         match self.wait_queue.lock().await.pop_front() {
             Some(tcp) => Ok(tcp),
             None => Err("No task operation required".into()),
@@ -212,7 +216,7 @@ impl Channel {
     }
 
     #[inline]
-    pub async fn suspend(&self, tcp: TcpStream) -> Result<()> {
+    pub async fn suspend(&self, tcp: fuso_api::SafeStream<TcpStream>) -> Result<()> {
         self.wait_queue.lock().await.push_back(tcp);
         Ok(())
     }
@@ -220,7 +224,7 @@ impl Channel {
 
 impl Context {
     #[inline]
-    pub async fn fork(&self) -> (u64, Receiver<TcpStream>) {
+    pub async fn fork(&self) -> (u64, Receiver<fuso_api::SafeStream<TcpStream>>) {
         let (accept_tx, accept_ax) = unbounded();
 
         let mut sessions = self.sessions.write().await;
@@ -245,7 +249,7 @@ impl Context {
     }
 
     #[inline]
-    pub async fn route(&self, conv: u64, tcp: TcpStream) -> Result<()> {
+    pub async fn route(&self, conv: u64, tcp: fuso_api::SafeStream<TcpStream>) -> Result<()> {
         let sessions = self.sessions.read().await;
 
         if let Some(accept_tx) = sessions.get(&conv) {
@@ -259,7 +263,12 @@ impl Context {
         }
     }
 
-    pub async fn spwan(&self, tcp: TcpStream, addr: Option<SocketAddr>) -> Result<u64> {
+    pub async fn spwan(
+        &self,
+        tcp: fuso_api::SafeStream<TcpStream>,
+        addr: Option<SocketAddr>,
+        name: Option<String>,
+    ) -> Result<u64> {
         let (conv, accept_ax) = self.fork().await;
         let accept_tx = self.accept_ax.clone();
         let clinet_addr = tcp.local_addr().unwrap();
@@ -278,8 +287,11 @@ impl Context {
             wait_queue: Arc::new(Mutex::new(VecDeque::new())),
         });
 
+        let name = name.unwrap_or("anonymous".to_string());
+
         log::info!(
-            "New mapping {} -> {}",
+            "New mapping [{}] {} -> {}",
+            name,
             listen.local_addr().unwrap(),
             clinet_addr
         );
@@ -289,6 +301,7 @@ impl Context {
                 let channel = channel.clone();
                 async move {
                     loop {
+                        // 接收客户端发来的连接
                         let from = accept_ax.recv().await;
 
                         if from.is_err() {
@@ -297,80 +310,98 @@ impl Context {
                         }
 
                         let mut from = from.unwrap();
-                        match channel.try_wake().await {
-                            Ok(to) => {
-                                if let Err(e) = accept_tx.send(FusoStream { from, to }).await {
-                                    log::error!("An unavoidable error occurred {}", &e);
-                                    break;
-                                }
-                            }
-                            Err(e) => {
-                                let _ = from.close().await;
-                                log::warn!("{}", e);
-                            }
+
+                        let to = channel.try_wake().await;
+
+                        if to.is_err() {
+                            let _ = from.close().await;
+                            log::warn!("{}", to.unwrap_err());
+                            continue;
+                        }
+
+                        let to = to.unwrap();
+
+                        log::info!(
+                            "{} -> {}",
+                            from.peer_addr().unwrap(),
+                            to.peer_addr().unwrap()
+                        );
+
+                        // 成功建立映射, 发给下一端处理
+                        let err = accept_tx.send(FusoStream::new(from, to)).await;
+
+                        if err.is_err() {
+                            log::error!("An unavoidable error occurred {}", err.unwrap_err());
+                            break;
                         }
                     }
                 }
             };
 
             let fuso_future = {
-                let mut io = channel.core.clone();
+                let mut core = channel.core.clone();
+                // 服务端与客户端加密,
+                // let mut core = core.ciphe(Xor::new(10)).await;
+
                 async move {
                     loop {
-                        match io.recv().await {
-                            Ok(packet) => {
-                                log::trace!("Client message received {:?}", packet);
-                            }
-                            Err(_) => {
-                                log::warn!("Client session was aborted");
-                                break;
-                            }
+                        // 接收客户端发来的包
+                        let packet = core.recv().await;
+
+                        if packet.is_err() {
+                            log::warn!("Client session was aborted {}", name);
+                            break;
                         }
+
+                        // 暂时不处理该包, 以后可能会用到
+                        let ignore_packet = packet.unwrap();
+
+                        log::trace!("Client message received {:?}", ignore_packet);
                     }
                 }
             };
 
-            let future_listen = {
-                async move {
-                    let _ = listen
-                        .incoming()
-                        .try_fold(channel, |channel, mut tcp| async move {
-                            {
-                                log::debug!("connected {}", tcp.peer_addr().unwrap());
+            let future_listen = async move {
+                let _ = listen
+                    .incoming()
+                    .try_fold(channel, |channel, tcp| async move {
+                        {
+                            log::debug!("connected {}", tcp.peer_addr().unwrap());
+                            let channel = channel.clone();
+                            async move {
+                                let mut tcp = tcp.as_safe_stream();
+                                let mut core = channel.core.clone();
 
-                                let channel = channel.clone();
-                                async move {
-                                    let mut core = channel.core.clone();
+                                let action = {
+                                    let strategys = channel.strategys.clone();
+                                    let tcp = tcp.clone();
+                                    // 选择一个合适的策略
+                                    tcp.select(strategys, channel.clone()).await
+                                };
 
-                                    let action = {
-                                        tcp.clone()
-                                            .select(channel.strategys.clone(), channel.clone())
-                                            .await
-                                    };
-
-                                    match action {
-                                        Ok(action) => {
-                                            log::debug!("action {:?}", action);
-                                            let _ = core.send(action.into()).await;
-                                            let _ = channel.suspend(tcp).await;
-                                        }
-                                        Err(e) => {
-                                            let _ = tcp.close().await;
-                                            log::warn!(
-                                                "Unable to process connection {} {}",
-                                                e,
-                                                tcp.peer_addr().unwrap()
-                                            );
-                                        }
-                                    }
+                                if action.is_err() {
+                                    let _ = tcp.close().await;
+                                    log::warn!(
+                                        "Unable to process connection {} {}",
+                                        action.unwrap_err(),
+                                        tcp.peer_addr().unwrap()
+                                    );
+                                } else {
+                                    let action = action.unwrap();
+                                    log::debug!("action {:?}", action);
+                                    // 通知客户端需执行的方法
+                                    let _ = core.send(action.into()).await;
+                                    // 暂时休眠当前这个连接, 该连接可能会超时,
+                                    // 并且连接数达到一定数量时可能导致连接积累过多导致无法在建立连接,也就是fd用尽
+                                    let _ = channel.suspend(tcp).await;
                                 }
-                                .detach();
                             }
+                            .detach();
+                        }
 
-                            Ok(channel)
-                        })
-                        .await;
-                }
+                        Ok(channel)
+                    })
+                    .await;
             };
 
             accept_future.race(fuso_future.race(future_listen)).await
@@ -378,5 +409,17 @@ impl Context {
         .detach();
 
         Ok(conv)
+    }
+}
+
+impl<T> FusoStream<T> {
+    #[inline]
+    pub fn new(from: T, to: T) -> Self {
+        Self { from, to }
+    }
+
+    #[inline]
+    pub fn split(self) -> (T, T) {
+        (self.from, self.to)
     }
 }

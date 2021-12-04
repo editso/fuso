@@ -1,6 +1,11 @@
-use std::net::SocketAddr;
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    sync::Arc,
+};
 
-use fuso_api::{async_trait, Error, Forward, FusoListener, FusoPacket, Result, Spwan};
+use fuso_api::{
+    async_trait, AsyncTcpSocketEx, Error, Forward, FusoListener, FusoPacket, Result, Spwan,
+};
 
 use futures::AsyncWriteExt;
 use smol::{
@@ -23,21 +28,37 @@ pub struct Fuso {
     accept_ax: Receiver<Reactor>,
 }
 
-impl Fuso {
-    pub async fn bind(addr: SocketAddr, bind_port: u16, bridge_bind: u16) -> Result<Self> {
-        // let stream = addr.tcp_connect().await?;
+pub struct Config {
+    // 名称, 可选的
+    pub name: Option<String>,
+    // 服务端地址
+    pub server_addr: SocketAddr,
+    // 自定义服务绑定的端口, 如果不指定默认为随机分配
+    pub server_bind_port: u16,
+    // 桥接监听的地址
+    pub bridge_addr: Option<SocketAddr>,
+}
 
-        let mut stream = TcpStream::connect(addr)
-            .await
-            .map_err(|e| Error::with_io(e))?;
+impl Fuso {
+    pub async fn bind(config: Config) -> Result<Self> {
+        let cfg = Arc::new(config);
+        let server_addr = cfg.server_addr.clone();
+        let server_bind_port = cfg.server_bind_port.clone();
+        let bridge_addr = cfg.bridge_addr.clone();
+        let name = cfg.name.clone();
+
+        let mut stream = server_addr.tcp_connect().await?;
 
         stream
             .send(
-                Action::Bind({
-                    if bind_port == 0 {
+                Action::Bind(name, {
+                    if cfg.server_bind_port == 0 {
                         None
                     } else {
-                        Some(format!("0.0.0.0:{}", bind_port).parse().unwrap())
+                        Some(SocketAddr::new(
+                            IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+                            server_bind_port,
+                        ))
                     }
                 })
                 .into(),
@@ -54,13 +75,13 @@ impl Fuso {
                 let mut stream = stream.guard(5000).await?;
 
                 async move {
-                    if bridge_bind == 0 {
+                    if bridge_addr.is_none() {
                         return;
                     }
 
-                    match Bridge::bind(format!("0.0.0.0:{}", bridge_bind).parse().unwrap(), addr)
-                        .await
-                    {
+                    let bridge_addr = bridge_addr.unwrap();
+
+                    match Bridge::bind(bridge_addr, server_addr).await {
                         Ok(mut bridge) => {
                             log::info!("[bridge] Bridge service opened successfully");
                             loop {
@@ -99,7 +120,14 @@ impl Fuso {
                                     Ok(Action::Ping) => {}
 
                                     Ok(action) => {
-                                        match accept_tx.send(Reactor { conv, action, addr }).await {
+                                        match accept_tx
+                                            .send(Reactor {
+                                                conv,
+                                                action,
+                                                addr: server_addr,
+                                            })
+                                            .await
+                                        {
                                             Err(_) => {
                                                 let _ = stream.close().await;
                                                 break;
