@@ -16,7 +16,7 @@ use smol::{
 
 use crate::{
     error::{self, Result},
-    Buffer,
+    Buffer, UdpStream,
 };
 
 const MAGIC: u32 = 0xCC;
@@ -81,6 +81,7 @@ pub trait AsyncTcpSocketEx<B, C> {
     async fn tcp_connect(self) -> Result<C>;
 }
 
+#[derive(Debug, Clone)]
 pub struct Rollback<T, Store> {
     target: Arc<Mutex<T>>,
     rollback: Arc<RwLock<bool>>,
@@ -350,21 +351,19 @@ impl<T> Rollback<T, Buffer<u8>> {
     }
 }
 
-impl<T, Store> Clone for Rollback<T, Store>
-where
-    T: Clone,
-{
+impl Rollback<TcpStream, Buffer<u8>> {
     #[inline]
-    fn clone(&self) -> Self {
-        Self {
-            target: self.target.clone(),
-            rollback: self.rollback.clone(),
-            store: self.store.clone(),
-        }
+    pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
+        self.target.lock().unwrap().local_addr()
+    }
+
+    #[inline]
+    pub fn peer_addr(&self) -> std::io::Result<SocketAddr> {
+        self.target.lock().unwrap().peer_addr()
     }
 }
 
-impl Rollback<TcpStream, Buffer<u8>> {
+impl Rollback<UdpStream, Buffer<u8>> {
     #[inline]
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
         self.target.lock().unwrap().local_addr()

@@ -121,7 +121,7 @@ fn main() {
             Arg::new("forward-host")
                 .short('h')
                 .long("host")
-                .default_value("127.0.0.1"),
+                .default_value("127.0.0.1")
         )
         .arg(
             Arg::new("forward-port")

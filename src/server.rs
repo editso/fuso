@@ -156,14 +156,12 @@ fn main() {
             })
             .build()
             .await;
-            
+
         match fuso {
             Ok(mut fuso) => loop {
                 match fuso.accept().await {
                     Ok(stream) => {
                         let to = stream.to.ciphe(Xor::new(xor_num)).await;
-
-                       
 
                         to.forward(stream.from).detach();
                     }

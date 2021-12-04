@@ -60,14 +60,19 @@ impl Buffer<u8> {
 
         loop {
             if remaining == 0 {
-                self.len -= read_len;
+                if self.len != 0 {
+                    self.len -= read_len;
+                }
                 break Ok(read_len);
             }
 
             let data = buf.pop_front();
 
             if data.is_none() {
-                self.len -= read_len;
+                if self.len != 0 {
+                    self.len -= read_len;
+                }
+
                 break Ok(read_len);
             }
 
