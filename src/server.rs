@@ -9,6 +9,7 @@ use fuso_core::{
     packet::{Action, Addr},
     Forward, FusoListener, FusoPacket, Spwan,
 };
+
 use fuso_socks::{DefauleDnsResolve, PasswordAuth, Socks};
 use smol::net::UdpSocket;
 

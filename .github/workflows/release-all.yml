@@ -1,0 +1,133 @@
+name: Release ALL
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-mac-release:
+    runs-on: macos-11
+    strategy:
+      matrix:
+        arch:
+          - x86_64-apple-darwin
+
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.arch }}
+      - uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --target ${{ matrix.arch }}
+
+      - uses: actions/upload-artifact@v2
+        with:
+          name: ${{ matrix.arch }}
+          path: target/${{ matrix.arch }}/release/ac*
+        
+      - run: zip -j ${{ matrix.arch }} ./target/${{ matrix.arch }}/release/ac*
+    
+      - name: Release Drafter
+        id: create_release
+        uses: release-drafter/release-drafter@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}        
+
+      - name: Upload Release Asset
+        id: upload-release-asset 
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} 
+          asset_path: ${{ matrix.arch }}.zip
+          asset_name: ${{ matrix.arch }}.zip
+          asset_content_type: application/zip
+
+  build-windows-release:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        arch:
+          - x86_64-pc-windows-msvc        
+          - i686-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.arch }}
+      - uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --target ${{ matrix.arch }}
+      - uses: actions/upload-artifact@v2
+        with:
+          name: ${{ matrix.arch }}
+          path: target/${{ matrix.arch }}/release/ac*
+        
+      - run: ./zip/zip.exe -j ${{ matrix.arch }} ./target/${{ matrix.arch }}/release/ac*
+    
+      - name: Release Drafter
+        id: create_release
+        uses: release-drafter/release-drafter@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   
+
+      - name: Upload Release Asset
+        id: upload-release-asset 
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} 
+          asset_path: ${{ matrix.arch }}.zip
+          asset_name: ${{ matrix.arch }}.zip
+          asset_content_type: application/zip
+
+  build-linux-release:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch:
+          - x86_64-unknown-linux-musl
+          - i686-unknown-linux-musl
+
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.arch }}
+      - uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --target ${{ matrix.arch }}
+
+      - uses: actions/upload-artifact@v2
+        with:
+          name: ${{ matrix.arch }}
+          path: target/${{ matrix.arch }}/release/ac*
+        
+      - run: zip -j ${{ matrix.arch }} ./target/${{ matrix.arch }}/release/ac*
+    
+      - name: Release Drafter
+        id: create_release
+        uses: release-drafter/release-drafter@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   
+
+      - name: Upload Release Asset
+        id: upload-release-asset 
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} 
+          asset_path: ${{ matrix.arch }}.zip
+          asset_name: ${{ matrix.arch }}.zip
+          asset_content_type: application/zip
+    

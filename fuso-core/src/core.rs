@@ -21,7 +21,7 @@ use fuso_api::{AsyncTcpSocketEx, FusoPacket, Result, SafeStreamEx, Spwan};
 use crate::retain::Heartbeat;
 use crate::{dispatch::DynHandler, packet::Action};
 use crate::{
-    dispatch::{StrategyEx, TcpStreamRollback},
+    dispatch::{StrategyEx, SafeTcpStream},
     retain::HeartGuard,
 };
 
@@ -81,9 +81,9 @@ impl FusoBuilder<Arc<Context>> {
     pub fn with_chain<F>(mut self, with_chain: F) -> Self
     where
         F: FnOnce(
-            ChainHandler<TcpStreamRollback, Arc<Context>, fuso_api::Result<State<()>>>,
+            ChainHandler<SafeTcpStream, Arc<Context>, fuso_api::Result<State<()>>>,
         )
-            -> ChainHandler<TcpStreamRollback, Arc<Context>, fuso_api::Result<State<()>>>,
+            -> ChainHandler<SafeTcpStream, Arc<Context>, fuso_api::Result<State<()>>>,
     {
         self.handelrs
             .push(Arc::new(Box::new(with_chain(ChainHandler::new()))));
@@ -94,9 +94,9 @@ impl FusoBuilder<Arc<Context>> {
     pub fn chain_strategy<F>(mut self, with_chain: F) -> Self
     where
         F: FnOnce(
-            ChainHandler<TcpStreamRollback, Arc<Channel>, fuso_api::Result<State<Action>>>,
+            ChainHandler<SafeTcpStream, Arc<Channel>, fuso_api::Result<State<Action>>>,
         )
-            -> ChainHandler<TcpStreamRollback, Arc<Channel>, fuso_api::Result<State<Action>>>,
+            -> ChainHandler<SafeTcpStream, Arc<Channel>, fuso_api::Result<State<Action>>>,
     {
         self.strategys
             .push(Arc::new(Box::new(with_chain(ChainHandler::new()))));
@@ -107,7 +107,7 @@ impl FusoBuilder<Arc<Context>> {
     #[inline]
     pub fn chain_handler<H>(mut self, handler: H) -> Self
     where
-        H: Handler<TcpStreamRollback, Arc<Context>, ()> + Send + Sync + 'static,
+        H: Handler<SafeTcpStream, Arc<Context>, ()> + Send + Sync + 'static,
     {
         self.handelrs.push(Arc::new(Box::new(handler)));
         self

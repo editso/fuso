@@ -1,5 +1,6 @@
 use std::{
     io::{Cursor, Write},
+    net::SocketAddr,
     pin::Pin,
     sync::{Arc, Mutex},
     task::Poll,
@@ -8,8 +9,8 @@ use std::{
 use async_trait::async_trait;
 use futures::{AsyncRead, AsyncWrite};
 
-use fuso_api::Buffer;
-
+use fuso_api::{Buffer, SafeStream};
+use smol::net::TcpStream;
 
 #[async_trait]
 pub trait Security<T, O> {
@@ -40,6 +41,26 @@ pub struct Crypt<T, C> {
 #[derive(Clone)]
 pub struct Xor {
     num: u8,
+}
+
+impl<C> Crypt<TcpStream, C> {
+    pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
+        self.target.lock().unwrap().local_addr()
+    }
+
+    pub fn peer_addr(&self) -> std::io::Result<SocketAddr> {
+        self.target.lock().unwrap().peer_addr()
+    }
+}
+
+impl<C> Crypt<SafeStream<TcpStream>, C> {
+    pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
+        self.target.lock().unwrap().local_addr()
+    }
+
+    pub fn peer_addr(&self) -> std::io::Result<SocketAddr> {
+        self.target.lock().unwrap().peer_addr()
+    }
 }
 
 #[async_trait]
@@ -108,7 +129,6 @@ where
     }
 }
 
-
 #[async_trait]
 impl<T, C> AsyncWrite for Crypt<T, C>
 where
@@ -135,7 +155,7 @@ where
     }
 
     #[inline]
-    fn poll_flush(  
+    fn poll_flush(
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {

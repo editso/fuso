@@ -38,6 +38,11 @@ pub struct Packet {
 }
 
 #[async_trait]
+pub trait FusoHook<Type, Arg> {
+    async fn hook(&self, t: Type, arg: Arg);
+}
+
+#[async_trait]
 pub trait FusoPacket {
     async fn recv(&mut self) -> Result<Packet>;
     async fn send(&mut self, packet: Packet) -> Result<()>;
@@ -277,6 +282,7 @@ where
     A: Send + 'static,
     T: Future<Output = A> + Send + 'static,
 {
+    #[inline]
     fn detach(self) {
         smol::spawn(self).detach();
     }

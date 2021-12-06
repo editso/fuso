@@ -29,9 +29,9 @@ pub trait StrategyEx<R, S, C> {
 }
 
 // pub type TcpStreamRollback = Rollback<TcpStream, Buffer<u8>>;
-pub type TcpStreamRollback = fuso_api::SafeStream<TcpStream>;
+pub type SafeTcpStream = fuso_api::SafeStream<TcpStream>;
 
-pub type DynHandler<C, A> = dyn Handler<TcpStreamRollback, C, A> + Send + Sync + 'static;
+pub type DynHandler<C, A> = dyn Handler<SafeTcpStream, C, A> + Send + Sync + 'static;
 
 #[async_trait]
 impl<C> Dispatch<Arc<Vec<Arc<Box<DynHandler<C, ()>>>>>, C> for TcpStream
@@ -85,7 +85,7 @@ where
         // let mut io = self.roll();
         let mut io = self;
 
-        io.begin().await?;
+        // io.begin().await?;
 
         for handle in strategys.iter() {
             let handle = handle.clone();
@@ -95,7 +95,7 @@ where
                     return Ok(action);
                 }
                 State::Next => {
-                    io.back().await?;
+                    // io.back().await?;
                     log::debug!("[dispatch] Next handler, rollback");
                 }
             }
