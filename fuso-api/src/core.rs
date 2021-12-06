@@ -114,7 +114,8 @@ impl Packet {
 
     #[inline]
     pub fn size() -> usize {
-        std::mem::size_of::<Self>() - std::mem::size_of::<Bytes>()
+        // std::mem::size_of::<Self>() - std::mem::size_of::<Bytes>()
+        10
     }
 
     #[inline]

@@ -114,7 +114,13 @@ fn main() {
             })
             .chain_strategy(|chain| {
                 chain
+                    .next(|_, _| async move {
+                        Ok(State::Accept(Action::Forward(Addr::Socket(
+                            "0.0.0.0:0".parse().unwrap(),
+                        ))))
+                    })
                     .next(|tcp, _| async move {
+                        // 永远不应该走到这
                         let _ = tcp.begin().await;
                         let io = tcp.clone();
                         let socks = Socks::parse(
@@ -146,11 +152,6 @@ fn main() {
                                 }
                             }
                         }
-                    })
-                    .next(|_, _| async move {
-                        Ok(State::Accept(Action::Forward(Addr::Socket(
-                            "127.0.0.1:80".parse().unwrap(),
-                        ))))
                     })
             })
             .build()
