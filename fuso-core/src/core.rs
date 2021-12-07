@@ -21,7 +21,7 @@ use fuso_api::{AsyncTcpSocketEx, FusoPacket, Result, SafeStreamEx, Spwan};
 use crate::retain::Heartbeat;
 use crate::{dispatch::DynHandler, packet::Action};
 use crate::{
-    dispatch::{StrategyEx, SafeTcpStream},
+    dispatch::{SafeTcpStream, StrategyEx},
     retain::HeartGuard,
 };
 
@@ -44,6 +44,7 @@ pub struct FusoStream<IO> {
 
 pub struct Channel {
     pub conv: u64,
+    pub name: String,
     pub core: HeartGuard<fuso_api::SafeStream<TcpStream>>,
     pub config: Arc<Config>,
     pub strategys: Arc<Vec<Arc<Box<DynHandler<Arc<Channel>, Action>>>>>,
@@ -272,22 +273,23 @@ impl Context {
         let (conv, accept_ax) = self.fork().await;
         let accept_tx = self.accept_ax.clone();
         let clinet_addr = tcp.local_addr().unwrap();
-        let bind_addr = addr.unwrap_or("0.0.0.0:0".parse().unwrap());
+        let bind_addr = addr.unwrap_or(([0, 0, 0, 0], 0).into());
         let listen = bind_addr.tcp_listen().await?;
-        let strategys = self.strategys.clone();
 
         let mut core = tcp.guard(5000).await?;
         let _ = core.send(Action::Accept(conv).into()).await?;
+
+        let strategys = self.strategys.clone();
+        let name = name.unwrap_or("anonymous".to_string());
 
         let channel = Arc::new(Channel {
             conv,
             core,
             strategys,
+            name: name.clone(),
             config: self.config.clone(),
             wait_queue: Arc::new(Mutex::new(VecDeque::new())),
         });
-
-        let name = name.unwrap_or("anonymous".to_string());
 
         log::info!(
             "New mapping [{}] {} -> {}",
@@ -389,11 +391,19 @@ impl Context {
                                 } else {
                                     let action = action.unwrap();
                                     log::debug!("action {:?}", action);
-                                    // 通知客户端需执行的方法
-                                    let _ = core.send(action.into()).await;
-                                    // 暂时休眠当前这个连接, 该连接可能会超时,
-                                    // 并且连接数达到一定数量时可能导致连接积累过多导致无法在建立连接,也就是fd用尽
-                                    let _ = channel.suspend(tcp).await;
+
+                                    match action {
+                                        Action::Nothing => {
+                                            let _ = tcp.close().await;
+                                        }
+                                        _ => {
+                                            // 通知客户端需执行的方法
+                                            let _ = core.send(action.into()).await;
+                                            // 暂时休眠当前这个连接, 该连接可能会超时,
+                                            // 并且连接数达到一定数量时可能导致连接积累过多导致无法在建立连接,也就是fd用尽
+                                            let _ = channel.suspend(tcp).await;
+                                        }
+                                    }
                                 }
                             }
                             .detach();
@@ -411,6 +421,7 @@ impl Context {
         Ok(conv)
     }
 }
+
 
 impl<T> FusoStream<T> {
     #[inline]

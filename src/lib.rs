@@ -18,3 +18,17 @@ pub fn parse_addr(host: &str, port: &str) -> std::result::Result<SocketAddr, Str
         },
     )
 }
+
+#[cfg(test)]
+mod tests {
+
+    #[test]
+    fn test_clap() {
+        use clap::load_yaml;
+        use clap::App;
+
+        let yaml = load_yaml!("assets/client-cfg.yml");
+
+        let _ = App::from(yaml).get_matches();
+    }
+}

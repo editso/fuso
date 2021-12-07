@@ -5,12 +5,7 @@ use fuso::parse_addr;
 use fuso_core::{
     ciphe::{Cipher, Security, Xor},
     client::Fuso,
-    Forward, FusoListener,
-};
-use fuso_socks::{DefauleDnsResolve, PasswordAuth, Socks};
-use smol::{
-    io::AsyncWriteExt,
-    net::{TcpStream, UdpSocket},
+    Forward, FusoListener, Spwan,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -20,94 +15,30 @@ enum Proxy {
 }
 
 #[inline]
-async fn poll_stream<C>(mut fuso: Fuso, proxy: Proxy, ciphe: C) -> fuso_core::Result<()>
+async fn poll_stream<C>(mut fuso: Fuso, ciphe: C) -> fuso_core::Result<()>
 where
     C: Clone + Cipher + Unpin + Send + Sync + 'static,
 {
     loop {
         let reactor = fuso.accept().await?;
-        let stream = reactor.join().await?;
-        let from_addr = stream.peer_addr().unwrap();
 
-        let stream = stream.ciphe(ciphe.clone()).await;
+        let ciphe = ciphe.clone();
 
-        match proxy {
-            Proxy::Socks5 => {
-                let future = async move {
-                    let socks = Socks::parse(
-                        stream,
-                        |_, _| async move {
-                            let udp = UdpSocket::bind("0.0.0.0:0").await;
-                            if udp.is_err() {
-                                Err(udp.unwrap_err())
-                            } else {
-                                // ..... Invalid this is
-                                let udp = udp.unwrap();
-                                Ok((udp.clone(), udp.local_addr().unwrap()))
-                            }
-                        },
-                        &PasswordAuth::default(),
-                        &DefauleDnsResolve::default(),
-                    )
-                    .await;
-
-                    if let Ok(socks) = socks {
-                        match socks {
-                            Socks::Tcp(mut from, addr) => {
-                                let to = TcpStream::connect(addr).await;
-
-                                if to.is_ok() {
-                                    let to = to.unwrap();
-
-                                    log::info!(
-                                        "[fuc] Proxy to {} -> {}",
-                                        from_addr,
-                                        to.local_addr().unwrap()
-                                    );
-
-                                    if let Err(e) = to.forward(from).await {
-                                        log::warn!("[fuc] Forwarding failed {}", e);
-                                    };
-                                } else {
-                                    log::warn!(
-                                        "[fuc] Proxy failure({}) {} -> {}",
-                                        to.unwrap_err(),
-                                        from_addr,
-                                        addr
-                                    );
-
-                                    let _ = from.close().await;
-                                }
-                            }
-                            Socks::Udp(mut tcp, _) => {
-                                // 伪代码 ...
-                                log::warn!("[fuc] Not support udp forwarding");
-                                let _ = tcp.close().await;
-                            }
-                        }
+        async move {
+            match reactor.join().await {
+                Ok((from, to)) => {
+                    let stream = from.ciphe(ciphe).await;
+                    if let Err(e) = stream.forward(to).await {
+                        log::debug!("[fuc] Forwarding failed {}", e);
                     }
-                };
-
-                smol::spawn(future).detach();
-            }
-            Proxy::Port(addr) => {
-                let future = async move {
-                    let tcp = TcpStream::connect(addr).await;
-
-                    if tcp.is_err() {
-                        log::warn!("[fuc] Connection failed {} {}", tcp.unwrap_err(), addr);
-                    } else {
-                        log::info!("[fuc] Forward to {} -> {}", addr, from_addr);
-
-                        if let Err(e) = stream.forward(tcp.unwrap()).await {
-                            log::warn!("[fuc] Forwarding failed {}", e);
-                        }
-                    }
-                };
-
-                smol::spawn(future).detach();
-            }
-        };
+                }
+                Err(e) => {
+                    log::warn!("{}", e);
+                }
+            };
+            // let from_addr = stream.peer_addr().unwrap();
+        }
+        .detach();
     }
 }
 
@@ -314,7 +245,7 @@ fn main() {
             {
                 Ok(fuso) => {
                     log::info!("[fuc] connection succeeded");
-                    let _ = poll_stream(fuso, proxy.clone(), Xor::new(xor_num)).await;
+                    let _ = poll_stream(fuso, Xor::new(xor_num)).await;
                 }
                 Err(e) => {
                     log::warn!(

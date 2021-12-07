@@ -6,3 +6,4 @@ pub const CMD_CREATE: u8 = 0x30;
 pub const CMD_CONNECT: u8 = 0x40;
 pub const CMD_FORWARD: u8 = 0x41;
 pub const CMD_ERROR: u8 = 0x50;
+pub const CMD_NOTHING: u8 = 0x66;

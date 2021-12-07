@@ -10,7 +10,6 @@ pub struct SafeStream<Inner> {
     inner: Rollback<Inner, Buffer<u8>>,
 }
 
-
 pub trait SafeStreamEx<T> {
     fn as_safe_stream(self) -> SafeStream<T>;
 }

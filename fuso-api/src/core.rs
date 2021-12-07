@@ -298,7 +298,7 @@ where
     async fn forward(self, to: To) -> Result<()> {
         let (reader_s, writer_s) = self.split();
         let (reader_t, writer_t) = to.split();
-
+        
         smol::future::race(
             smol::io::copy(reader_s, writer_t),
             smol::io::copy(reader_t, writer_s),

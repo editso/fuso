@@ -42,6 +42,7 @@ where
         for chain in chains.iter() {
             match chain(o.clone(), c.clone()).await? {
                 State::Accept(a) => return Ok(State::Accept(a)),
+                State::Release => return Ok(State::Release),
                 State::Next => {}
             }
         }

@@ -14,7 +14,10 @@ use smol::{
 };
 
 use crate::retain::Heartbeat;
-use crate::{bridge::Bridge, packet::Action};
+use crate::{
+    bridge::Bridge,
+    packet::{Action, Addr},
+};
 
 #[allow(unused)]
 #[derive(Debug)]
@@ -118,7 +121,6 @@ impl Fuso {
                                 let action: Result<Action> = packet.try_into();
                                 match action {
                                     Ok(Action::Ping) => {}
-
                                     Ok(action) => {
                                         match accept_tx
                                             .send(Reactor {
@@ -158,12 +160,31 @@ impl Fuso {
 
 impl Reactor {
     #[inline]
-    pub async fn join(self) -> Result<TcpStream> {
+    pub async fn join(self) -> Result<(TcpStream, TcpStream)> {
+        let to = TcpStream::connect({
+            match self.action {
+                Action::Forward(Addr::Domain(domain, port)) => {
+                    log::info!("connect {}:{}", domain, port);
+                    format!("{}:{}", domain, port)
+                }
+                Action::Forward(Addr::Socket(addr)) => {
+                    log::info!("connect {}", addr);
+                    addr.to_string()
+                }
+                _ => {
+                    return Err("Unsupported operation".into());
+                }
+            }
+        })
+        .await?;
+
         let mut stream = TcpStream::connect(self.addr)
             .await
             .map_err(|e| Error::with_io(e))?;
+
         stream.send(Action::Connect(self.conv).into()).await?;
-        Ok(stream)
+
+        Ok((stream, to))
     }
 }
 

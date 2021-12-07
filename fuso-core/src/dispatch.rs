@@ -10,6 +10,7 @@ use crate::packet::Action;
 #[derive(Debug, Clone, Copy)]
 pub enum State<T> {
     Next,
+    Release,
     Accept(T),
 }
 
@@ -50,9 +51,8 @@ where
             let handle = handle.clone();
 
             match handle.dispose(io.clone(), cx.clone()).await? {
-                State::Accept(()) => {
-                    return Ok(());
-                }
+                State::Accept(()) => return Ok(()),
+                State::Release => return Ok(()),
                 State::Next => {
                     log::debug!("[dispatch] Next handler, rollback");
                 }
@@ -94,6 +94,7 @@ where
                 State::Accept(action) => {
                     return Ok(action);
                 }
+                State::Release => return Ok(Action::Nothing),
                 State::Next => {
                     // io.back().await?;
                     log::debug!("[dispatch] Next handler, rollback");

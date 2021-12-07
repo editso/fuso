@@ -11,8 +11,6 @@ opt-level = 'z'
 codegen-units = 1
 panic = 'abort'
 debug = false
-rpath = true
-split-debuginfo = '...'
 
 [workspace]
 members = [
@@ -30,12 +28,13 @@ name = "fuc"
 path = "src/client.rs"
 
 [[bin]]
-name = "no-log-fuc"
+name = "fuc-no-log"
 path = "src/no-log-client.rs"
+
 
 [dependencies]
 log = {version = "0.4.14"}
-clap = "3.0.0-beta.5"
+clap = {version = "3.0.0-beta.5", features = ["yaml"]}
 smol = {version = "1.2.5"}
 env_logger = "0.9.0"
 fuso-core = {path = "./fuso-core"}

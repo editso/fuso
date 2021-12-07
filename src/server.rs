@@ -10,8 +10,7 @@ use fuso_core::{
     Forward, FusoListener, FusoPacket, Spwan,
 };
 
-use fuso_socks::{DefauleDnsResolve, PasswordAuth, Socks};
-use smol::net::UdpSocket;
+use fuso_socks::{Socks, Socks5Ex};
 
 fn main() {
     let app = App::new("fuso")
@@ -115,44 +114,36 @@ fn main() {
             })
             .chain_strategy(|chain| {
                 chain
+                    .next(|tcp, _| async move {
+                        let _ = tcp.begin().await;
+                        match tcp.clone().authenticate(None).await {
+                            Ok(Socks::Udp(udp)) => {
+                                let _ = udp.reject().await;
+                                Ok(State::Release)
+                            }
+                            Ok(Socks::Tcp(_, addr)) => Ok(State::Accept(Action::Forward({
+                                log::info!("[socks] {}", addr);
+
+                                match addr {
+                                    fuso_socks::Addr::Socket(addr) => {
+                                        fuso_core::packet::Addr::Socket(addr)
+                                    }
+                                    fuso_socks::Addr::Domain(domain, port) => {
+                                        fuso_core::packet::Addr::Domain(domain, port)
+                                    }
+                                }
+                            }))),
+                            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+                                let _ = tcp.back().await;
+                                Ok(State::Next)
+                            }
+                            Err(e) => Err(e.into()),
+                        }
+                    })
                     .next(|_, _| async move {
                         Ok(State::Accept(Action::Forward(Addr::Socket(
-                            "0.0.0.0:0".parse().unwrap(),
+                            ([0, 0, 0, 0], 0).into(),
                         ))))
-                    })
-                    .next(|tcp, _| async move {
-                        // 永远不应该走到这
-                        let _ = tcp.begin().await;
-                        let io = tcp.clone();
-                        let socks = Socks::parse(
-                            io,
-                            |_, _| async move {
-                                let udp = UdpSocket::bind("0.0.0.0:0").await;
-                                if udp.is_err() {
-                                    Err(udp.unwrap_err())
-                                } else {
-                                    // ..... Invalid this is
-                                    let udp = udp.unwrap();
-                                    Ok((udp.clone(), udp.local_addr().unwrap()))
-                                }
-                            },
-                            &PasswordAuth::default(),
-                            &DefauleDnsResolve::default(),
-                        )
-                        .await;
-
-                        if socks.is_err() {
-                            log::debug!("Not a valid socks package");
-                            let _ = tcp.back().await;
-                            Ok(State::Next)
-                        } else {
-                            match socks.unwrap() {
-                                Socks::Udp(_, _) => Err("Does not support udp forwarding".into()),
-                                Socks::Tcp(_, addr) => {
-                                    Ok(State::Accept(Action::Forward(Addr::Socket(addr))))
-                                }
-                            }
-                        }
                     })
             })
             .build()

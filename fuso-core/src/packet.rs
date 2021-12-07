@@ -29,6 +29,7 @@ pub enum Action {
     Forward(Addr),
     Connect(u64),
     Err(String),
+    Nothing,
 }
 
 impl Addr {
@@ -93,7 +94,7 @@ impl TryFrom<&[u8]> for Addr {
                     if buf.len() <= size {
                         return Err(fuso_api::ErrorKind::BadPacket.into());
                     } else {
-                        let domain = String::from_utf8_lossy(&buf[1..size]).into();
+                        let domain = String::from_utf8_lossy(&buf[..size]).into();
                         buf.advance(size);
                         domain
                     }
@@ -205,6 +206,7 @@ impl From<Action> for fuso_api::Packet {
             }),
             Action::Forward(addr) => Packet::new(CMD_FORWARD, addr.to_bytes()),
             Action::Err(e) => Packet::new(CMD_ERROR, e.into()),
+            Action::Nothing => Packet::new(CMD_RESET, Bytes::new()),
         }
     }
 }
