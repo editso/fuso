@@ -13,6 +13,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v2
+        with:
+          submodules: true
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
@@ -25,9 +27,9 @@ jobs:
       - uses: actions/upload-artifact@v2
         with:
           name: ${{ matrix.arch }}
-          path: target/${{ matrix.arch }}/release/ac*
+          path: target/${{ matrix.arch }}/release/fu*
         
-      - run: zip -j ${{ matrix.arch }} ./target/${{ matrix.arch }}/release/ac*
+      - run: zip -j ${{ matrix.arch }} ./target/${{ matrix.arch }}/release/fu*
     
       - name: Release Drafter
         id: create_release
@@ -56,6 +58,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v2
+        with:
+          submodules: true
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
@@ -67,9 +71,9 @@ jobs:
       - uses: actions/upload-artifact@v2
         with:
           name: ${{ matrix.arch }}
-          path: target/${{ matrix.arch }}/release/ac*
+          path: target/${{ matrix.arch }}/release/fu*
         
-      - run: ./zip/zip.exe -j ${{ matrix.arch }} ./target/${{ matrix.arch }}/release/ac*
+      - run: ./zip/zip.exe -j ${{ matrix.arch }} ./target/${{ matrix.arch }}/release/fu*
     
       - name: Release Drafter
         id: create_release
@@ -98,6 +102,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v2
+        with:
+          submodules: true
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
@@ -110,9 +116,9 @@ jobs:
       - uses: actions/upload-artifact@v2
         with:
           name: ${{ matrix.arch }}
-          path: target/${{ matrix.arch }}/release/ac*
+          path: target/${{ matrix.arch }}/release/fu*
         
-      - run: zip -j ${{ matrix.arch }} ./target/${{ matrix.arch }}/release/ac*
+      - run: zip -j ${{ matrix.arch }} ./target/${{ matrix.arch }}/release/fu*
     
       - name: Release Drafter
         id: create_release
