@@ -104,8 +104,8 @@ fn main() {
                                 Ok(State::Accept(()))
                             }
                         },
-                        Action::Connect(conv) => {
-                            cx.route(conv, tcp.into()).await?;
+                        Action::Connect(conv, id) => {
+                            cx.route(conv, id, tcp.into()).await?;
                             Ok(State::Accept(()))
                         }
                         _ => Ok(State::Next),
@@ -121,8 +121,9 @@ fn main() {
                                 let _ = udp.reject().await;
                                 Ok(State::Release)
                             }
-                            Ok(Socks::Tcp(_, addr)) => Ok(State::Accept(Action::Forward({
-                                log::info!("[socks] {}", addr);
+                            Ok(Socks::Tcp(tcp, addr)) => Ok(State::Accept(Action::Forward(0, {
+                                log::debug!("[socks] {}", addr);
+                                let _ = tcp.release().await;
 
                                 match addr {
                                     fuso_socks::Addr::Socket(addr) => {
@@ -141,9 +142,10 @@ fn main() {
                         }
                     })
                     .next(|_, _| async move {
-                        Ok(State::Accept(Action::Forward(Addr::Socket(
-                            ([0, 0, 0, 0], 0).into(),
-                        ))))
+                        Ok(State::Accept(Action::Forward(
+                            0,
+                            Addr::Socket(([0, 0, 0, 0], 0).into()),
+                        )))
                     })
             })
             .build()
@@ -157,7 +159,7 @@ fn main() {
 
                         let to = to.ciphe(Xor::new(xor_num)).await;
 
-                        to.forward(from).detach();
+                        from.forward(to).detach();
                     }
                     Err(e) => {
                         log::warn!("[fuso] Server error {}", e.to_string());

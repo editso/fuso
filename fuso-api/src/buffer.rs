@@ -27,24 +27,29 @@ where
         }
     }
 
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.buf.lock().unwrap().is_empty()
     }
 
+    #[inline]
     pub fn len(&self) -> usize {
         self.len
     }
 
+    #[inline]
     pub fn clear(&mut self) {
         self.buf.lock().unwrap().clear();
         self.len = 0;
     }
 
+    #[inline]
     pub fn push_back(&mut self, data: &[T]) {
         self.buf.lock().unwrap().push_back(data.to_vec());
         self.len += data.len();
     }
 
+    #[inline]
     pub fn push_front(&mut self, data: &[T]) {
         self.buf.lock().unwrap().push_front(data.to_vec());
         self.len += data.len();
@@ -52,6 +57,7 @@ where
 }
 
 impl Buffer<u8> {
+    #[inline]
     pub fn read_to_buffer(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let mut remaining = buf.len();
         let mut read_len = 0;
@@ -98,6 +104,7 @@ impl Buffer<u8> {
 
 #[async_trait]
 impl AsyncRead for Buffer<u8> {
+    #[inline]
     fn poll_read(
         mut self: std::pin::Pin<&mut Self>,
         _: &mut std::task::Context<'_>,
@@ -109,6 +116,7 @@ impl AsyncRead for Buffer<u8> {
 
 #[async_trait]
 impl AsyncWrite for Buffer<u8> {
+    #[inline]
     fn poll_write(
         mut self: std::pin::Pin<&mut Self>,
         _: &mut std::task::Context<'_>,
@@ -118,6 +126,7 @@ impl AsyncWrite for Buffer<u8> {
         Poll::Ready(Ok(buf.len()))
     }
 
+    #[inline]
     fn poll_flush(
         self: std::pin::Pin<&mut Self>,
         _: &mut std::task::Context<'_>,
@@ -125,6 +134,7 @@ impl AsyncWrite for Buffer<u8> {
         Poll::Ready(Ok(()))
     }
 
+    #[inline]
     fn poll_close(
         mut self: std::pin::Pin<&mut Self>,
         _: &mut std::task::Context<'_>,

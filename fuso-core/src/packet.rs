@@ -26,8 +26,10 @@ pub enum Action {
     Bind(Option<String>, Option<SocketAddr>),
     Reset(Addr),
     Accept(u64),
-    Forward(Addr),
-    Connect(u64),
+    // id
+    Forward(u64, Addr),
+    // conv, id
+    Connect(u64, u64),
     Err(String),
     Nothing,
 }
@@ -153,11 +155,13 @@ impl TryFrom<Packet> for Action {
                 Ok(Action::Accept(packet.get_mut_data().get_u64()))
             }
             CMD_RESET => Ok(Action::Reset(packet.get_data().as_ref().try_into()?)),
-            CMD_CONNECT if packet.get_len().ge(&8) => {
-                Ok(Action::Connect(packet.get_mut_data().get_u64()))
+            CMD_CONNECT if packet.get_len().ge(&16) => {
+                let data = packet.get_mut_data();
+                Ok(Action::Connect(data.get_u64(), data.get_u64()))
             }
-            CMD_FORWARD if packet.get_len().ge(&0) => {
-                Ok(Action::Forward(packet.get_data().as_ref().try_into()?))
+            CMD_FORWARD if packet.get_len().ge(&8) => {
+                let data = packet.get_mut_data();
+                Ok(Action::Forward(data.get_u64(), data.as_ref().try_into()?))
             }
             CMD_ERROR => Ok(Action::Err(
                 String::from_utf8_lossy(packet.get_data()).into(),
@@ -199,12 +203,18 @@ impl From<Action> for fuso_api::Packet {
                 buf.put_u64(conv);
                 buf.into()
             }),
-            Action::Connect(conv) => Packet::new(CMD_CONNECT, {
+            Action::Connect(conv, id) => Packet::new(CMD_CONNECT, {
                 let mut buf = BytesMut::new();
-                buf.put_u64(conv);
+                buf.put_u64(conv); // conv
+                buf.put_u64(id); // id
                 buf.into()
             }),
-            Action::Forward(addr) => Packet::new(CMD_FORWARD, addr.to_bytes()),
+            Action::Forward(id, addr) => Packet::new(CMD_FORWARD, {
+                let mut buf = BytesMut::new();
+                buf.put_u64(id);
+                buf.put_slice(&addr.to_bytes());
+                buf.into()
+            }),
             Action::Err(e) => Packet::new(CMD_ERROR, e.into()),
             Action::Nothing => Packet::new(CMD_RESET, Bytes::new()),
         }

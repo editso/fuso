@@ -33,12 +33,14 @@ impl Error {
 }
 
 impl Display for Error {
+    #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Debug::fmt(&self.repr, f)
     }
 }
 
 impl From<std::io::Error> for Error {
+    #[inline]
     fn from(error: std::io::Error) -> Self {
         Self {
             repr: Repr::IO(error),
@@ -47,6 +49,7 @@ impl From<std::io::Error> for Error {
 }
 
 impl From<ErrorKind> for Error {
+    #[inline]
     fn from(kind: ErrorKind) -> Self {
         Self {
             repr: Repr::Fuso(kind),
@@ -55,6 +58,7 @@ impl From<ErrorKind> for Error {
 }
 
 impl From<std::io::ErrorKind> for Error {
+    #[inline]
     fn from(kind: std::io::ErrorKind) -> Self {
         Self {
             repr: Repr::IO(kind.into()),
@@ -63,6 +67,7 @@ impl From<std::io::ErrorKind> for Error {
 }
 
 impl From<smol::channel::RecvError> for Error {
+    #[inline]
     fn from(e: smol::channel::RecvError) -> Self {
         Self {
             repr: Repr::IO(std::io::Error::new(
@@ -77,6 +82,7 @@ impl<T> From<smol::channel::SendError<T>> for Error
 where
     T: Into<String>,
 {
+    #[inline]
     fn from(e: smol::channel::SendError<T>) -> Self {
         Self {
             repr: Repr::IO(std::io::Error::new(
@@ -88,6 +94,7 @@ where
 }
 
 impl From<&str> for Error {
+    #[inline]
     fn from(txt: &str) -> Self {
         Self {
             repr: Repr::Fuso(ErrorKind::Customer(txt.into())),
@@ -96,6 +103,7 @@ impl From<&str> for Error {
 }
 
 impl From<String> for Error {
+    #[inline]
     fn from(txt: String) -> Self {
         Self {
             repr: Repr::Fuso(ErrorKind::Customer(txt.into())),
