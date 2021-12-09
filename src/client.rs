@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, process::exit, time::Duration};
+use std::{process::exit, time::Duration};
 
 use clap::{App, Arg};
 use fuso::parse_addr;
@@ -9,12 +9,6 @@ use fuso_core::{
 };
 use futures::{StreamExt, TryFutureExt};
 use smol::Executor;
-
-#[derive(Debug, Clone, Copy)]
-enum Proxy {
-    Port(SocketAddr),
-    Socks5,
-}
 
 fn main() {
     let app = App::new("fuso")
@@ -45,15 +39,6 @@ fn main() {
                 .default_value("80")
                 .display_order(2)
                 .about("转发的端口 (如果开启了socks代理该参数将无效)"),
-        )
-        .arg(
-            Arg::new("forward-type")
-                .short('t')
-                .long("type")
-                .possible_values(["socks", "forward"])
-                .default_value("forward")
-                .display_order(3)
-                .about("转发类型"),
         )
         .arg(
             Arg::new("service-bind-port")
@@ -137,8 +122,6 @@ fn main() {
         .parse()
         .unwrap();
 
-    let forward_type = matches.value_of("forward-type").unwrap();
-
     if server_addr.is_err() {
         println!("Server address error: {}", server_addr.unwrap_err());
         exit(1);
@@ -149,15 +132,9 @@ fn main() {
         exit(1);
     }
 
-    let forward_addr = forward_addr.unwrap();
     let server_addr = server_addr.unwrap();
 
     let xor_num: u8 = matches.value_of("xor-secret").unwrap().parse().unwrap();
-
-    let proxy = match forward_type {
-        "socks" => Proxy::Socks5,
-        _ => Proxy::Port(forward_addr),
-    };
 
     env_logger::builder()
         .filter_level(match matches.value_of("log").unwrap() {
@@ -188,19 +165,12 @@ fn main() {
     };
 
     log::info!(
-        "\nserver_addr={}\nforward_type={}\n{}\nxor_num={}\n{}\n",
+        "\nserver_addr={}\nxor_num={}\nbridge_listen_addr={}\n",
         server_addr,
-        forward_type,
-        {
-            match proxy {
-                Proxy::Port(_) => format!("forward_addr={}", forward_addr),
-                Proxy::Socks5 => "--".to_string(),
-            }
-        },
         xor_num,
         {
             if bridge_addr.is_some() {
-                format!("bridge_addr={}", bridge_addr.clone().unwrap())
+                bridge_addr.clone().unwrap().to_string()
             } else {
                 "--".to_string()
             }
@@ -229,7 +199,6 @@ fn main() {
                                 if let Err(e) = from.forward(to).await {
                                     log::debug!("[fuc] Forwarding failed {}", e);
                                 }
-                                
                             }
                             .detach()
                         })

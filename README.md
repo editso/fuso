@@ -57,23 +57,19 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 
 
 ### 🤔Features
-| Name                   | <font color="green">✔(Achieved)</font> / <font color="red">❌(Unrealized)</font>) |
-| ---------------------- | -------------------------------------------------------------------------------- |
-| 基本转发 (Forward)     | <font color="green">✔</font>                                                     |
-| 传输加密 (Encrypt)     | <font color="green">✔</font>                                                     |
-| Socks5代理 (Socks5)    | <font color="green">✔</font>                                                     |
-| UDP支持  (udp support) | ❌                                                                                |
-| 多映射                 | <font color="green">✔</font>                                                     |
-| 级联代理               | <font color="green">✔</font>                                                     |
-| 数据传输压缩           | ❌                                                                                |
+| Name           | <font color="green">✔(Achieved)</font> / <font color="red">❌(Unrealized)</font>) |
+| -------------- | -------------------------------------------------------------------------------- |
+| 基本转发       | <font color="green">✔</font>                                                     |
+| 传输加密       | <font color="green">✔</font>                                                     |
+| Socks5代理     | <font color="green">✔</font>                                                     |
+| Socks5 Udp转发 | <font color="green">✔</font>                                                     |
+| UDP支持        | ❌                                                                                |
+| 多映射         | <font color="green">✔</font>                                                     |
+| 级联代理       | <font color="green">✔</font>                                                     |
+| 数据传输压缩   | ❌                                                                                |
 
 
 ### 😶部分功能还待完善敬请期待..
-
-
-### 已知问题
-1. `v1.0.4-beta`版本,由于代码未完善导致`socks5`无法使用(已修复, 重新下载即可)
-2. 64位与32位不兼容(已修复,但未打包)
 
 ### 注意
 - 本项目所用技术**仅用于学习交流**，**请勿直接用于任何商业场合和非法用途**。

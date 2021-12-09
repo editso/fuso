@@ -467,7 +467,7 @@ impl Context {
                                                 core.send(Action::Forward(id, addr).into()).await;
                                         }
                                         _ => {
-                                            log::warn!("{:?}", action)
+                                            log::debug!("{:?}", action)
                                         }
                                     }
                                 }
