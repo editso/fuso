@@ -199,6 +199,7 @@ fn main() {
                                 if let Err(e) = from.forward(to).await {
                                     log::debug!("[fuc] Forwarding failed {}", e);
                                 }
+
                             }
                             .detach()
                         })

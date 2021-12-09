@@ -35,7 +35,7 @@ pub trait Cipher {
 pub struct Crypt<T, C> {
     buf: Arc<Mutex<Buffer<u8>>>,
     target: T,
-    cipher: Arc<Mutex<C>>,
+    cipher: C,
 }
 
 #[derive(Clone)]
@@ -74,7 +74,7 @@ where
         Crypt {
             target: self,
             buf: Arc::new(Mutex::new(Buffer::new())),
-            cipher: Arc::new(Mutex::new(c)),
+            cipher: c,
         }
     }
 }
@@ -95,36 +95,31 @@ where
         let mut io_buf = io_buf.lock().unwrap();
 
         if !io_buf.is_empty() {
-            log::info!("read buffer");
             Pin::new(&mut *io_buf).poll_read(cx, buf)
         } else {
             match Pin::new(&mut self.target).poll_read(cx, buf) {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
                 Poll::Ready(Ok(0)) => Poll::Ready(Ok(0)),
-                Poll::Ready(Ok(n)) => {
-                    let mut cipher = self.cipher.lock().unwrap();
+                Poll::Ready(Ok(n)) => match Pin::new(&mut self.cipher).poll_decode(cx, &buf[..n]) {
+                    Poll::Pending => Poll::Pending,
+                    Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+                    Poll::Ready(Ok(data)) => {
+                        let total = buf.len();
+                        let mut cur = Cursor::new(buf);
 
-                    match Pin::new(&mut *cipher).poll_decode(cx, &buf[..n]) {
-                        Poll::Pending => Poll::Pending,
-                        Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
-                        Poll::Ready(Ok(data)) => {
-                            let total = buf.len();
-                            let mut cur = Cursor::new(buf);
+                        let write_len = if total >= data.len() {
+                            cur.write_all(&data).unwrap();
+                            data.len()
+                        } else {
+                            cur.write_all(&data[..total]).unwrap();
+                            io_buf.push_back(&data[total..]);
+                            total
+                        };
 
-                            let write_len = if total >= data.len() {
-                                cur.write_all(&data).unwrap();
-                                data.len()
-                            } else {
-                                cur.write_all(&data[..total]).unwrap();
-                                io_buf.push_back(&data[total..]);
-                                total
-                            };
-
-                            Poll::Ready(Ok(write_len))
-                        }
+                        Poll::Ready(Ok(write_len))
                     }
-                }
+                },
             }
         }
     }
@@ -142,16 +137,10 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
-        let cipher = self.cipher.clone();
-        let mut cipher = cipher.lock().unwrap();
-
-        match Pin::new(&mut *cipher).poll_encode(cx, buf) {
+        match Pin::new(&mut self.cipher).poll_encode(cx, buf) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
-            Poll::Ready(Ok(data)) => {
-                let _ = Pin::new(&mut self.target).poll_write(cx, &data)?;
-                Poll::Ready(Ok(buf.len()))
-            }
+            Poll::Ready(Ok(data)) => Pin::new(&mut self.target).poll_write(cx, &data),
         }
     }
 

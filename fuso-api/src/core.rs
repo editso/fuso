@@ -30,6 +30,29 @@ pub fn now_mills() -> u64 {
         .as_secs()
 }
 
+#[inline]
+pub async fn copy<R, W>(mut reader: R, mut writer: W) -> std::io::Result<()>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+    W: AsyncWrite + Unpin + Send + 'static,
+{
+    loop {
+        let mut buf = Vec::new();
+        buf.resize(0x2000, 0);
+
+        let n = reader.read(&mut buf).await?;
+
+        if n == 0 {
+            let _ = writer.close().await;
+            break Ok(());
+        }
+
+        buf.truncate(n);
+
+        writer.write_all(&mut buf).await?;
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Packet {
     magic: u32,
@@ -317,12 +340,12 @@ where
         let (reader_s, writer_s) = self.split();
         let (reader_t, writer_t) = to.split();
 
-        smol::future::race(
-            smol::io::copy(reader_t, writer_s),
-            smol::io::copy(reader_s, writer_t),
-        )
-        .await
-        .map_err(|e| error::Error::with_io(e))?;
+        smol::future::race(copy(reader_t, writer_s), copy(reader_s, writer_t))
+            .await
+            .map_err(|e| {
+                log::warn!("{}", e);
+                error::Error::with_io(e)
+            })?;
 
         Ok(())
     }
