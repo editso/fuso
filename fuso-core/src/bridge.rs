@@ -16,6 +16,7 @@ pub struct Bridge {
 }
 
 impl Bridge {
+    #[inline]
     pub async fn bind(bind_addr: SocketAddr, server_addr: SocketAddr) -> Result<Self> {
         let listen = bind_addr.tcp_listen().await?;
 
@@ -55,6 +56,7 @@ impl Bridge {
                         }
                     }
                     .detach();
+
                     Ok(accept_tx)
                 })
                 .await;
@@ -68,6 +70,7 @@ impl Bridge {
 }
 
 impl Drop for Bridge {
+    #[inline]
     fn drop(&mut self) {
         if let Some(task) = self.task.lock().unwrap().take() {
             async move {
@@ -81,6 +84,7 @@ impl Drop for Bridge {
 
 #[async_trait]
 impl FusoListener<(TcpStream, TcpStream)> for Bridge {
+    #[inline]
     async fn accept(&mut self) -> Result<(TcpStream, TcpStream)> {
         Ok(self.accept_ax.recv().await.map_err(|e| {
             Error::with_io(std::io::Error::new(
@@ -90,6 +94,7 @@ impl FusoListener<(TcpStream, TcpStream)> for Bridge {
         })?)
     }
 
+    #[inline]
     async fn close(&mut self) -> Result<()> {
         let _ = self.accept_ax.clone();
         Ok(())

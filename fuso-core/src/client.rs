@@ -1,15 +1,12 @@
-use std::{
-    net::{IpAddr, Ipv4Addr, SocketAddr},
-    sync::Arc,
-};
+use std::{net::SocketAddr, sync::Arc};
 
 use fuso_api::{
     async_trait, AsyncTcpSocketEx, Error, Forward, FusoListener, FusoPacket, Result, Spwan,
 };
 
-use futures::AsyncWriteExt;
 use smol::{
-    channel::{unbounded, Receiver},
+    channel::{unbounded, Receiver, Sender},
+    future::FutureExt,
     net::TcpStream,
 };
 
@@ -25,12 +22,14 @@ pub struct Reactor {
     conv: u64,
     action: Action,
     addr: SocketAddr,
+    config: Arc<Config>,
 }
 
 pub struct Fuso {
     accept_ax: Receiver<Reactor>,
 }
 
+#[derive(Debug)]
 pub struct Config {
     // 名称, 可选的
     pub name: Option<String>,
@@ -40,9 +39,69 @@ pub struct Config {
     pub server_bind_port: u16,
     // 桥接监听的地址
     pub bridge_addr: Option<SocketAddr>,
+    // 转发地址
+    pub forward_addr: String,
 }
 
 impl Fuso {
+    async fn run_core(
+        conv: u64,
+        config: Arc<Config>,
+        core: TcpStream,
+        accept_tx: Sender<Reactor>,
+    ) -> Result<()> {
+        let mut core = core.guard(5000).await?;
+
+        loop {
+            let action: Action = core.recv().await?.try_into()?;
+
+            match action {
+                Action::Ping => {}
+                action => {
+                    let reactor = Reactor {
+                        conv,
+                        action,
+                        addr: core.peer_addr().unwrap(),
+                        config: config.clone(),
+                    };
+
+                    accept_tx.send(reactor).await.map_err(|e| {
+                        let err: fuso_api::Error = e.to_string().into();
+                        err
+                    })?;
+                }
+            }
+        }
+    }
+
+    async fn run_bridge(
+        bridge_bind_addr: SocketAddr,
+        server_connect_addr: SocketAddr,
+    ) -> Result<()> {
+        let mut core = Bridge::bind(bridge_bind_addr, server_connect_addr).await?;
+
+        log::info!("[bridge] Bridge service opened successfully");
+
+        loop {
+            match core.accept().await {
+                Ok((from, to)) => {
+                    log::info!(
+                        "Bridge to {} -> {}",
+                        from.peer_addr().unwrap(),
+                        to.peer_addr().unwrap()
+                    );
+
+                    from.forward(to).detach();
+                }
+                Err(_) => {
+                    break;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     pub async fn bind(config: Config) -> Result<Self> {
         let cfg = Arc::new(config);
         let server_addr = cfg.server_addr.clone();
@@ -52,21 +111,13 @@ impl Fuso {
 
         let mut stream = server_addr.tcp_connect().await?;
 
-        stream
-            .send(
-                Action::Bind(name, {
-                    if cfg.server_bind_port == 0 {
-                        None
-                    } else {
-                        Some(SocketAddr::new(
-                            IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-                            server_bind_port,
-                        ))
-                    }
-                })
-                .into(),
-            )
-            .await?;
+        log::debug!("{}", server_bind_port);
+
+        let bind_addr = server_bind_port
+            .ne(&0)
+            .then(|| SocketAddr::from(([0, 0, 0, 0], server_bind_port)));
+
+        stream.send(Action::Bind(name, bind_addr).into()).await?;
 
         let action: Action = stream.recv().await?.try_into()?;
 
@@ -75,75 +126,21 @@ impl Fuso {
         match action {
             Action::Accept(conv) => {
                 log::debug!("Service binding is successful {}", conv);
-                let mut stream = stream.guard(5000).await?;
+
+                let server_addr = stream.peer_addr()?;
 
                 async move {
-                    if bridge_addr.is_none() {
-                        return;
-                    }
-
-                    let bridge_addr = bridge_addr.unwrap();
-
-                    match Bridge::bind(bridge_addr, server_addr).await {
-                        Ok(mut bridge) => {
-                            log::info!("[bridge] Bridge service opened successfully");
-                            loop {
-                                match bridge.accept().await {
-                                    Ok((from, to)) => {
-                                        log::info!(
-                                            "Bridge to {} -> {}",
-                                            from.peer_addr().unwrap(),
-                                            to.peer_addr().unwrap()
-                                        );
-                                        from.forward(to).detach();
-                                    }
-                                    Err(_) => {
-                                        break;
-                                    }
-                                }
+                    let _ = Self::run_core(conv, cfg, stream, accept_tx)
+                        .race(async move {
+                            if bridge_addr.is_none() {
+                                smol::future::pending::<()>().await;
+                            } else {
+                                let _ = Self::run_bridge(bridge_addr.unwrap(), server_addr).await;
                             }
-                        }
-                        Err(e) => {
-                            log::warn!("[bridge] Bridge service failed to open {}", e);
-                        }
-                    };
-                }
-                .detach();
 
-                async move {
-                    loop {
-                        match stream.recv().await {
-                            Err(e) => {
-                                log::warn!("[fuc] Server disconnect {}", e);
-                                break;
-                            }
-                            Ok(packet) => {
-                                let action: Result<Action> = packet.try_into();
-                                match action {
-                                    Ok(Action::Ping) => {}
-                                    Ok(action) => {
-                                        match accept_tx
-                                            .send(Reactor {
-                                                conv,
-                                                action,
-                                                addr: server_addr,
-                                            })
-                                            .await
-                                        {
-                                            Err(_) => {
-                                                let _ = stream.close().await;
-                                                break;
-                                            }
-                                            _ => {}
-                                        };
-                                    }
-                                    Err(e) => {
-                                        log::debug!("{}", e);
-                                    }
-                                }
-                            }
-                        }
-                    }
+                            Ok(())
+                        })
+                        .await;
                 }
                 .detach();
             }
@@ -161,28 +158,36 @@ impl Fuso {
 impl Reactor {
     #[inline]
     pub async fn join(self) -> Result<(TcpStream, TcpStream)> {
-        let to = TcpStream::connect({
+        let (id, addr) = {
             match self.action {
-                Action::Forward(Addr::Domain(domain, port)) => {
-                    log::info!("connect {}:{}", domain, port);
-                    format!("{}:{}", domain, port)
+                Action::Forward(id, Addr::Domain(domain, port)) => {
+                    log::info!("id={}, addr={}:{}", id, domain, port);
+
+                    (id, format!("{}:{}", domain, port))
                 }
-                Action::Forward(Addr::Socket(addr)) => {
-                    log::info!("connect {}", addr);
-                    addr.to_string()
+                Action::Forward(id, Addr::Socket(addr)) if addr.port() == 0 => {
+                    log::info!("id={}, addr={}", id, addr);
+
+                    (id, self.config.forward_addr.clone())
                 }
-                _ => {
-                    return Err("Unsupported operation".into());
+                Action::Forward(id, Addr::Socket(addr)) => {
+                    log::info!("id={}, addr={}", id, addr);
+
+                    (id, addr.to_string())
+                }
+                action => {
+                    return Err(format!("Unsupported operation {:?}", action).into());
                 }
             }
-        })
-        .await?;
+        };
+
+        let to = TcpStream::connect(addr).await?;
 
         let mut stream = TcpStream::connect(self.addr)
             .await
             .map_err(|e| Error::with_io(e))?;
 
-        stream.send(Action::Connect(self.conv).into()).await?;
+        stream.send(Action::Connect(self.conv, id).into()).await?;
 
         Ok((stream, to))
     }

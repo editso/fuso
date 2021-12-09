@@ -27,8 +27,8 @@ where
         async move {
             match reactor.join().await {
                 Ok((from, to)) => {
-                    let stream = from.ciphe(ciphe).await;
-                    if let Err(e) = stream.forward(to).await {
+                    let from = from.ciphe(ciphe).await;
+                    if let Err(e) = from.forward(to).await {
                         log::debug!("[fuc] Forwarding failed {}", e);
                     }
                 }
@@ -41,6 +41,7 @@ where
         .detach();
     }
 }
+
 
 fn main() {
     let app = App::new("fuso")
@@ -148,10 +149,10 @@ fn main() {
         matches.value_of("server-port").unwrap(),
     );
 
-    let forward_addr = parse_addr(
-        matches.value_of("forward-host").unwrap(),
-        matches.value_of("forward-port").unwrap(),
-    );
+    let forward_host = matches.value_of("forward-host").unwrap();
+    let forward_port = matches.value_of("forward-port").unwrap();
+
+    let forward_addr = parse_addr(forward_host, forward_port);
 
     let name = matches
         .value_of("name")
@@ -240,6 +241,7 @@ fn main() {
                 server_addr,
                 server_bind_port: service_bind_port,
                 bridge_addr: bridge_addr,
+                forward_addr: format!("{}:{}", forward_host, forward_port),
             })
             .await
             {

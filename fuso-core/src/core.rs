@@ -1,8 +1,4 @@
-use std::{
-    collections::{HashMap, VecDeque},
-    net::SocketAddr,
-    sync::Arc,
-};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
 use async_trait::async_trait;
 use futures::{lock::Mutex, AsyncWriteExt, TryStreamExt};
@@ -16,7 +12,7 @@ use smol::{
 #[allow(unused)]
 use crate::ciphe::{Security, Xor};
 
-use fuso_api::{AsyncTcpSocketEx, FusoPacket, Result, SafeStreamEx, Spwan};
+use fuso_api::{AsyncTcpSocketEx, FusoPacket, Result, SafeStream, SafeStreamEx, Spwan};
 
 use crate::retain::Heartbeat;
 use crate::{dispatch::DynHandler, packet::Action};
@@ -44,11 +40,12 @@ pub struct FusoStream<IO> {
 
 pub struct Channel {
     pub conv: u64,
+    pub alloc_id: Arc<Mutex<u64>>,
     pub name: String,
     pub core: HeartGuard<fuso_api::SafeStream<TcpStream>>,
     pub config: Arc<Config>,
     pub strategys: Arc<Vec<Arc<Box<DynHandler<Arc<Channel>, Action>>>>>,
-    pub wait_queue: Arc<Mutex<VecDeque<fuso_api::SafeStream<TcpStream>>>>,
+    pub wait_queue: Arc<Mutex<HashMap<u64, SafeStream<TcpStream>>>>,
 }
 
 #[derive(Clone)]
@@ -57,7 +54,7 @@ pub struct Context {
     pub config: Arc<Config>,
     pub handlers: Arc<Vec<Arc<Box<DynHandler<Arc<Self>, ()>>>>>,
     pub strategys: Arc<Vec<Arc<Box<DynHandler<Arc<Channel>, Action>>>>>,
-    pub sessions: Arc<RwLock<HashMap<u64, Sender<fuso_api::SafeStream<TcpStream>>>>>,
+    pub sessions: Arc<RwLock<HashMap<u64, Sender<(u64, SafeStream<TcpStream>)>>>>,
     pub accept_ax: Sender<FusoStream<fuso_api::SafeStream<TcpStream>>>,
 }
 
@@ -209,23 +206,40 @@ where
 
 impl Channel {
     #[inline]
-    pub async fn try_wake(&self) -> Result<fuso_api::SafeStream<TcpStream>> {
-        match self.wait_queue.lock().await.pop_front() {
+    pub async fn try_wake(&self, id: &u64) -> Result<fuso_api::SafeStream<TcpStream>> {
+        match self.wait_queue.lock().await.remove(id) {
             Some(tcp) => Ok(tcp),
             None => Err("No task operation required".into()),
         }
     }
 
     #[inline]
-    pub async fn suspend(&self, tcp: fuso_api::SafeStream<TcpStream>) -> Result<()> {
-        self.wait_queue.lock().await.push_back(tcp);
+    pub async fn suspend(&self, id: u64, tcp: SafeStream<TcpStream>) -> Result<()> {
+        self.wait_queue.lock().await.insert(id, tcp);
         Ok(())
+    }
+
+    #[inline]
+    pub async fn gen_id(&self) -> u64 {
+        let sessions = self.wait_queue.lock().await;
+
+        loop {
+            let (conv, _) = self.alloc_id.lock().await.overflowing_add(1);
+
+            if sessions.get(&conv).is_some() {
+                continue;
+            }
+
+            *self.alloc_id.lock().await = conv;
+
+            break conv;
+        }
     }
 }
 
 impl Context {
     #[inline]
-    pub async fn fork(&self) -> (u64, Receiver<fuso_api::SafeStream<TcpStream>>) {
+    pub async fn fork(&self) -> (u64, Receiver<(u64, SafeStream<TcpStream>)>) {
         let (accept_tx, accept_ax) = unbounded();
 
         let mut sessions = self.sessions.write().await;
@@ -240,9 +254,9 @@ impl Context {
                 None => break conv,
                 _ => {}
             }
-
-            *self.alloc_conv.lock().await = conv;
         };
+
+        *self.alloc_conv.lock().await = conv;
 
         sessions.insert(conv, accept_tx);
 
@@ -250,11 +264,16 @@ impl Context {
     }
 
     #[inline]
-    pub async fn route(&self, conv: u64, tcp: fuso_api::SafeStream<TcpStream>) -> Result<()> {
+    pub async fn route(
+        &self,
+        conv: u64,
+        id: u64,
+        tcp: fuso_api::SafeStream<TcpStream>,
+    ) -> Result<()> {
         let sessions = self.sessions.read().await;
 
         if let Some(accept_tx) = sessions.get(&conv) {
-            if let Err(e) = accept_tx.send(tcp).await {
+            if let Err(e) = accept_tx.send((id, tcp)).await {
                 Err(e.to_string().into())
             } else {
                 Ok(())
@@ -285,10 +304,11 @@ impl Context {
         let channel = Arc::new(Channel {
             conv,
             core,
+            alloc_id: Arc::new(Mutex::new(0)),
             strategys,
             name: name.clone(),
             config: self.config.clone(),
-            wait_queue: Arc::new(Mutex::new(VecDeque::new())),
+            wait_queue: Arc::new(Mutex::new(HashMap::new())),
         });
 
         log::info!(
@@ -311,9 +331,9 @@ impl Context {
                             break;
                         }
 
-                        let mut from = from.unwrap();
+                        let (id, mut from) = from.unwrap();
 
-                        let to = channel.try_wake().await;
+                        let to = channel.try_wake(&id).await;
 
                         if to.is_err() {
                             let _ = from.close().await;
@@ -368,7 +388,7 @@ impl Context {
                     .incoming()
                     .try_fold(channel, |channel, tcp| async move {
                         {
-                            log::debug!("connected {}", tcp.peer_addr().unwrap());
+                            log::info!("connected {}", tcp.peer_addr().unwrap());
                             let channel = channel.clone();
                             async move {
                                 let mut tcp = tcp.as_safe_stream();
@@ -393,15 +413,23 @@ impl Context {
                                     log::debug!("action {:?}", action);
 
                                     match action {
-                                        Action::Nothing => {
-                                            let _ = tcp.close().await;
+                                        Action::Forward(id, addr) => {
+                                            let id = {
+                                                if id.eq(&0) {
+                                                    channel.gen_id().await
+                                                } else {
+                                                    id
+                                                }
+                                            };
+
+                                            let _ = channel.suspend(id, tcp).await;
+
+                                            // 通知客户端需执行的方法
+                                            let _ =
+                                                core.send(Action::Forward(id, addr).into()).await;
                                         }
                                         _ => {
-                                            // 通知客户端需执行的方法
-                                            let _ = core.send(action.into()).await;
-                                            // 暂时休眠当前这个连接, 该连接可能会超时,
-                                            // 并且连接数达到一定数量时可能导致连接积累过多导致无法在建立连接,也就是fd用尽
-                                            let _ = channel.suspend(tcp).await;
+                                            log::warn!("{:?}", action)
                                         }
                                     }
                                 }

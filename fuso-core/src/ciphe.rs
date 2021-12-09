@@ -34,7 +34,7 @@ pub trait Cipher {
 #[derive(Clone)]
 pub struct Crypt<T, C> {
     buf: Arc<Mutex<Buffer<u8>>>,
-    target: Arc<Mutex<T>>,
+    target: T,
     cipher: Arc<Mutex<C>>,
 }
 
@@ -45,21 +45,21 @@ pub struct Xor {
 
 impl<C> Crypt<TcpStream, C> {
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
-        self.target.lock().unwrap().local_addr()
+        self.target.local_addr()
     }
 
     pub fn peer_addr(&self) -> std::io::Result<SocketAddr> {
-        self.target.lock().unwrap().peer_addr()
+        self.target.peer_addr()
     }
 }
 
 impl<C> Crypt<SafeStream<TcpStream>, C> {
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
-        self.target.lock().unwrap().local_addr()
+        self.target.local_addr()
     }
 
     pub fn peer_addr(&self) -> std::io::Result<SocketAddr> {
-        self.target.lock().unwrap().peer_addr()
+        self.target.peer_addr()
     }
 }
 
@@ -72,8 +72,8 @@ where
     #[inline]
     async fn ciphe(self, c: C) -> Crypt<T, C> {
         Crypt {
+            target: self,
             buf: Arc::new(Mutex::new(Buffer::new())),
-            target: Arc::new(Mutex::new(self)),
             cipher: Arc::new(Mutex::new(c)),
         }
     }
@@ -86,18 +86,19 @@ where
     C: Cipher + Unpin + Send + Sync + 'static,
 {
     fn poll_read(
-        self: std::pin::Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
-        let mut io_buf = self.buf.lock().unwrap();
+        let io_buf = self.buf.clone();
+
+        let mut io_buf = io_buf.lock().unwrap();
 
         if !io_buf.is_empty() {
+            log::info!("read buffer");
             Pin::new(&mut *io_buf).poll_read(cx, buf)
         } else {
-            let mut io = self.target.lock().unwrap();
-
-            match Pin::new(&mut *io).poll_read(cx, buf) {
+            match Pin::new(&mut self.target).poll_read(cx, buf) {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
                 Poll::Ready(Ok(0)) => Poll::Ready(Ok(0)),
@@ -137,18 +138,18 @@ where
 {
     #[inline]
     fn poll_write(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
-        let mut cipher = self.cipher.lock().unwrap();
+        let cipher = self.cipher.clone();
+        let mut cipher = cipher.lock().unwrap();
 
         match Pin::new(&mut *cipher).poll_encode(cx, buf) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
             Poll::Ready(Ok(data)) => {
-                let mut io = self.target.lock().unwrap();
-                let _ = Pin::new(&mut *io).poll_write(cx, &data)?;
+                let _ = Pin::new(&mut self.target).poll_write(cx, &data)?;
                 Poll::Ready(Ok(buf.len()))
             }
         }
@@ -156,20 +157,18 @@ where
 
     #[inline]
     fn poll_flush(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
-        let mut io = self.target.lock().unwrap();
-        Pin::new(&mut *io).poll_flush(cx)
+        Pin::new(&mut self.target).poll_flush(cx)
     }
 
     #[inline]
     fn poll_close(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
-        let mut io = self.target.lock().unwrap();
-        Pin::new(&mut *io).poll_close(cx)
+        Pin::new(&mut self.target).poll_close(cx)
     }
 }
 

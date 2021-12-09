@@ -36,6 +36,7 @@ path = "src/no-log-client.rs"
 log = {version = "0.4.14"}
 clap = {version = "3.0.0-beta.5", features = ["yaml"]}
 smol = {version = "1.2.5"}
+bytes = {version = "1.1.0"}
 env_logger = "0.9.0"
 fuso-core = {path = "./fuso-core"}
 fuso-socks = {path ="./fuso-socks"}

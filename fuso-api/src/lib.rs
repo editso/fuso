@@ -13,7 +13,11 @@ pub use async_trait::*;
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{
+        sync::{Arc, Mutex},
+        task::Poll,
+        time::Duration,
+    };
 
     use futures::AsyncReadExt;
     use smol::{future::FutureExt, io::AsyncWriteExt, net::UdpSocket};
@@ -52,6 +56,49 @@ mod tests {
         let packet = Packet::decode_data(&data).unwrap();
 
         log::debug!("data len: {}, {:?}", packet.get_len(), packet.get_data());
+    }
+
+    #[test]
+    fn test_waker() {
+        init_logger();
+
+        smol::block_on(async move {
+            let (sender, receiver) = std::sync::mpsc::channel();
+
+            let receiver = Arc::new(Mutex::new(receiver));
+
+            {
+                smol::spawn(async move {
+                    loop {
+                        let receiver = receiver.clone();
+                        let msg = smol::unblock(move || receiver.lock().unwrap().recv()).await;
+
+                        println!("msg = {}", msg.unwrap())
+                    }
+                })
+                .detach();
+            }
+
+            println!("test");
+
+            let mut io = smol::Unblock::new(std::io::stdin());
+            
+            loop {
+                let mut buf = Vec::new();
+                buf.resize(1024, 0);
+
+                match io.read(&mut buf).await {
+                    Ok(n) => {
+                        buf.truncate(n);
+
+                        sender.send(String::from_utf8(buf).unwrap()).unwrap();
+                    }
+                    Err(e) => {
+                        log::error!("{}", e);
+                    }
+                }
+            }
+        });
     }
 
     #[test]

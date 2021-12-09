@@ -67,10 +67,9 @@ where
     }
 
     #[inline]
-    pub async fn release(&self) -> crate::Result<()>{
+    pub async fn release(&self) -> crate::Result<()> {
         self.inner.release().await
     }
-
 }
 
 impl<Inner> AsyncRead for SafeStream<Inner>

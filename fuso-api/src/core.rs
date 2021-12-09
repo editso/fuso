@@ -12,6 +12,7 @@ use futures::{AsyncReadExt, Future};
 use smol::{
     io::{AsyncRead, AsyncWrite, AsyncWriteExt},
     net::{TcpListener, TcpStream},
+    Executor,
 };
 
 use crate::{
@@ -88,7 +89,7 @@ pub trait AsyncTcpSocketEx<B, C> {
 
 #[derive(Debug, Clone)]
 pub struct Rollback<T, Store> {
-    target: Arc<Mutex<T>>,
+    target: T,
     rollback: Arc<RwLock<bool>>,
     store: Arc<Mutex<Store>>,
 }
@@ -284,7 +285,24 @@ where
 {
     #[inline]
     fn detach(self) {
-        smol::spawn(self).detach();
+        static GLOBAL: once_cell::sync::Lazy<Executor<'_>> = once_cell::sync::Lazy::new(|| {
+            for n in 1..num_cpus::get() {
+                log::trace!("spwan executor thread fuso-{}", n);
+                std::thread::Builder::new()
+                    .name(format!("fuso-{}", n))
+                    .spawn(|| loop {
+                        std::panic::catch_unwind(|| {
+                            smol::block_on(GLOBAL.run(smol::future::pending::<()>()))
+                        })
+                        .ok();
+                    })
+                    .expect("cannot spawn executor thread");
+            }
+
+            Executor::new()
+        });
+
+        GLOBAL.spawn(self).detach();
     }
 }
 
@@ -298,10 +316,10 @@ where
     async fn forward(self, to: To) -> Result<()> {
         let (reader_s, writer_s) = self.split();
         let (reader_t, writer_t) = to.split();
-        
+
         smol::future::race(
-            smol::io::copy(reader_s, writer_t),
             smol::io::copy(reader_t, writer_s),
+            smol::io::copy(reader_s, writer_t),
         )
         .await
         .map_err(|e| error::Error::with_io(e))?;
@@ -327,9 +345,10 @@ impl<T> RollbackEx<T, Buffer<u8>> for T
 where
     T: AsyncRead + AsyncWrite + Send + Sync + 'static,
 {
+    #[inline]
     fn roll(self) -> Rollback<T, Buffer<u8>> {
         Rollback {
-            target: Arc::new(Mutex::new(self)),
+            target: self,
             rollback: Arc::new(RwLock::new(false)),
             store: Arc::new(Mutex::new(Buffer::new())),
         }
@@ -369,31 +388,31 @@ impl<T> Rollback<T, Buffer<u8>> {
 impl Rollback<TcpStream, Buffer<u8>> {
     #[inline]
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
-        self.target.lock().unwrap().local_addr()
+        self.target.local_addr()
     }
 
     #[inline]
     pub fn peer_addr(&self) -> std::io::Result<SocketAddr> {
-        self.target.lock().unwrap().peer_addr()
+        self.target.peer_addr()
     }
 }
 
 impl Rollback<UdpStream, Buffer<u8>> {
     #[inline]
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
-        self.target.lock().unwrap().local_addr()
+        self.target.local_addr()
     }
 
     #[inline]
     pub fn peer_addr(&self) -> std::io::Result<SocketAddr> {
-        self.target.lock().unwrap().peer_addr()
+        self.target.peer_addr()
     }
 }
 
 impl From<Rollback<TcpStream, Buffer<u8>>> for TcpStream {
     #[inline]
     fn from(roll: Rollback<TcpStream, Buffer<u8>>) -> Self {
-        roll.target.lock().unwrap().clone()
+        roll.target
     }
 }
 
@@ -404,7 +423,7 @@ where
 {
     #[inline]
     fn poll_read(
-        self: std::pin::Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
@@ -423,8 +442,7 @@ where
         if read_len >= buf.len() {
             std::task::Poll::Ready(Ok(read_len))
         } else {
-            let mut io = self.target.lock().unwrap();
-            match Pin::new(&mut *io).poll_read(cx, &mut buf[read_len..])? {
+            match Pin::new(&mut self.target).poll_read(cx, &mut buf[read_len..])? {
                 std::task::Poll::Pending => Poll::Pending,
                 std::task::Poll::Ready(0) => Poll::Ready(Ok(read_len)),
                 std::task::Poll::Ready(n) => {
@@ -454,29 +472,26 @@ where
 {
     #[inline]
     fn poll_write(
-        self: std::pin::Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
-        let mut io = self.target.lock().unwrap();
-        Pin::new(&mut *io).poll_write(cx, buf)
+        Pin::new(&mut self.target).poll_write(cx, buf)
     }
 
     #[inline]
     fn poll_flush(
-        self: std::pin::Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
-        let mut io = self.target.lock().unwrap();
-        Pin::new(&mut *io).poll_flush(cx)
+        Pin::new(&mut self.target).poll_flush(cx)
     }
 
     #[inline]
     fn poll_close(
-        self: std::pin::Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
-        let mut io = self.target.lock().unwrap();
-        Pin::new(&mut *io).poll_close(cx)
+        Pin::new(&mut self.target).poll_close(cx)
     }
 }

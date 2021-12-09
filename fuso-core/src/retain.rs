@@ -1,20 +1,21 @@
 use async_trait::async_trait;
-use bytes::Bytes;
-use fuso_api::{now_mills, FusoPacket, Packet, Spwan};
+use fuso_api::{now_mills, FusoPacket, Spwan};
 use futures::{AsyncRead, AsyncWrite, AsyncWriteExt};
-use smol::Task;
-use std::io::Result;
+use smol::{net::TcpStream, Task};
+use std::{io::Result, net::SocketAddr};
 use std::{
     ops::Sub,
     pin::Pin,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, RwLock},
     task::Poll,
     time::Duration,
 };
 
+use crate::packet::Action;
+
 #[derive(Clone)]
 pub struct HeartGuard<T> {
-    target: Arc<Mutex<T>>,
+    target: T,
     last: Arc<RwLock<u64>>,
     guard: Arc<std::sync::Mutex<Option<Task<()>>>>,
 }
@@ -33,7 +34,7 @@ where
 
         Self {
             last: last.clone(),
-            target: Arc::new(Mutex::new(target.clone())),
+            target: target.clone(),
             guard: Arc::new(std::sync::Mutex::new(Some(smol::spawn({
                 let mut io = target.clone();
 
@@ -55,7 +56,7 @@ where
 
                             smol::Timer::after(Duration::from_millis(interval)).await;
 
-                            if let Err(_) = io.send(Packet::new(0x10, Bytes::new())).await {
+                            if let Err(_) = io.send(Action::Ping.into()).await {
                                 let _ = io.close().await;
                                 break;
                             }
@@ -68,6 +69,7 @@ where
 }
 
 impl<T> Drop for HeartGuard<T> {
+    #[inline]
     fn drop(&mut self) {
         if let Some(guard) = self.guard.lock().unwrap().take() {
             async move {
@@ -96,13 +98,11 @@ where
 {
     #[inline]
     fn poll_read(
-        self: std::pin::Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
-        let mut io = self.target.lock().unwrap();
-
-        match Pin::new(&mut *io).poll_read(cx, buf) {
+        match Pin::new(&mut self.target).poll_read(cx, buf) {
             std::task::Poll::Ready(result) => {
                 if result.is_ok() {
                     *self.last.write().unwrap() = now_mills();
@@ -121,29 +121,36 @@ where
 {
     #[inline]
     fn poll_write(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
-        let mut io = self.target.lock().unwrap();
-        Pin::new(&mut *io).poll_write(cx, buf)
+        Pin::new(&mut self.target).poll_write(cx, buf)
     }
 
     #[inline]
     fn poll_flush(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
-        let mut io = self.target.lock().unwrap();
-        Pin::new(&mut *io).poll_flush(cx)
+        Pin::new(&mut self.target).poll_flush(cx)
     }
 
     #[inline]
     fn poll_close(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
-        let mut io = self.target.lock().unwrap();
-        Pin::new(&mut *io).poll_close(cx)
+        Pin::new(&mut self.target).poll_close(cx)
+    }
+}
+
+impl HeartGuard<TcpStream> {
+    pub fn lock_addr(&self) -> std::io::Result<SocketAddr> {
+        self.target.local_addr()
+    }
+
+    pub fn peer_addr(&self) -> std::io::Result<SocketAddr> {
+        self.target.peer_addr()
     }
 }
