@@ -7,3 +7,5 @@ pub const CMD_CONNECT: u8 = 0x40;
 pub const CMD_FORWARD: u8 = 0x41;
 pub const CMD_ERROR: u8 = 0x50;
 pub const CMD_NOTHING: u8 = 0x66;
+pub const CMD_UDP_REQ: u8 = 0x70;
+pub const CMD_UDP_REP: u8 = 0x71;

@@ -1,28 +1,31 @@
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
 use async_trait::async_trait;
-use futures::{lock::Mutex, AsyncWriteExt, TryStreamExt};
+use futures::{lock::Mutex, AsyncWriteExt, Future, TryStreamExt};
 use smol::{
     channel::{unbounded, Receiver, Sender},
     future::FutureExt,
     lock::RwLock,
     net::TcpStream,
+    stream::StreamExt,
 };
 
 #[allow(unused)]
 use crate::ciphe::{Security, Xor};
 
-use fuso_api::{AsyncTcpSocketEx, FusoPacket, Result, SafeStream, SafeStreamEx, Spwan};
+use fuso_api::{
+    AsyncTcpSocketEx, FusoPacket, Result, SafeStream, SafeStreamEx, Spwan, UdpListener,
+};
 
-use crate::retain::Heartbeat;
 use crate::{dispatch::DynHandler, packet::Action};
 use crate::{
     dispatch::{SafeTcpStream, StrategyEx},
     retain::HeartGuard,
 };
+use crate::{packet::Addr, retain::Heartbeat};
 
 use crate::{
-    dispatch::{Dispatch, Handler, State},
+    dispatch::{Dispatch, State},
     handler::ChainHandler,
 };
 
@@ -46,6 +49,13 @@ pub struct Channel {
     pub config: Arc<Config>,
     pub strategys: Arc<Vec<Arc<Box<DynHandler<Arc<Channel>, Action>>>>>,
     pub wait_queue: Arc<Mutex<HashMap<u64, SafeStream<TcpStream>>>>,
+    pub udp_forward: Arc<Mutex<HashMap<u64, Sender<Vec<u8>>>>>,
+}
+
+pub struct Udp {
+    id: u64,
+    core: HeartGuard<fuso_api::SafeStream<TcpStream>>,
+    forwards: Arc<Mutex<HashMap<u64, Sender<Vec<u8>>>>>,
 }
 
 #[derive(Clone)]
@@ -76,7 +86,7 @@ impl FusoBuilder<Arc<Context>> {
     }
 
     #[inline]
-    pub fn with_chain<F>(mut self, with_chain: F) -> Self
+    pub fn chain_handler<F>(mut self, with_chain: F) -> Self
     where
         F: FnOnce(
             ChainHandler<SafeTcpStream, Arc<Context>, fuso_api::Result<State<()>>>,
@@ -99,15 +109,6 @@ impl FusoBuilder<Arc<Context>> {
         self.strategys
             .push(Arc::new(Box::new(with_chain(ChainHandler::new()))));
 
-        self
-    }
-
-    #[inline]
-    pub fn chain_handler<H>(mut self, handler: H) -> Self
-    where
-        H: Handler<SafeTcpStream, Arc<Context>, ()> + Send + Sync + 'static,
-    {
-        self.handelrs.push(Arc::new(Box::new(handler)));
         self
     }
 
@@ -235,6 +236,22 @@ impl Channel {
             break conv;
         }
     }
+
+    #[inline]
+    pub async fn udp_forward<F, Fut>(&self, forward: F) -> fuso_api::Result<()>
+    where
+        F: FnOnce(UdpListener, Udp) -> Fut,
+        Fut: Future<Output = std::io::Result<()>>,
+    {
+        let udp = UdpListener::bind("0.0.0.0:0").await?;
+        let core = self.core.clone();
+        let forwards = self.udp_forward.clone();
+        let id = self.gen_id().await;
+
+        forward(udp, Udp { id, core, forwards })
+            .await
+            .map_err(|e| e.into())
+    }
 }
 
 impl Context {
@@ -301,6 +318,8 @@ impl Context {
         let strategys = self.strategys.clone();
         let name = name.unwrap_or("anonymous".to_string());
 
+        let udp_forward = Arc::new(Mutex::new(HashMap::new()));
+
         let channel = Arc::new(Channel {
             conv,
             core,
@@ -309,6 +328,7 @@ impl Context {
             name: name.clone(),
             config: self.config.clone(),
             wait_queue: Arc::new(Mutex::new(HashMap::new())),
+            udp_forward: udp_forward.clone(),
         });
 
         log::info!(
@@ -375,10 +395,28 @@ impl Context {
                             break;
                         }
 
-                        // 暂时不处理该包, 以后可能会用到
-                        let ignore_packet = packet.unwrap();
+                        let packet: Result<Action> = packet.unwrap().try_into();
 
-                        log::trace!("Client message received {:?}", ignore_packet);
+                        log::trace!("Client message received {:?}", packet);
+
+                        if packet.is_err() {
+                            log::warn!("recv bad packet");
+                        }
+
+                        let action = packet.unwrap();
+
+                        match action {
+                            Action::UdpRespose(id, data) => {
+                                if let Some(sender) = udp_forward.lock().await.remove(&id) {
+                                    if let Err(e) = sender.send(data).await {
+                                        log::warn!("{}", e);
+                                    };
+                                }
+                            }
+                            _ => {
+                                // 暂时忽略其他包
+                            }
+                        }
                     }
                 }
             };
@@ -450,7 +488,6 @@ impl Context {
     }
 }
 
-
 impl<T> FusoStream<T> {
     #[inline]
     pub fn new(from: T, to: T) -> Self {
@@ -460,5 +497,34 @@ impl<T> FusoStream<T> {
     #[inline]
     pub fn split(self) -> (T, T) {
         (self.from, self.to)
+    }
+}
+
+impl<T> futures::Stream for Fuso<T> {
+    type Item = T;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.accept_tx.poll_next(cx)
+    }
+}
+
+impl Udp {
+    pub async fn call(&mut self, addr: Addr, packet: &[u8]) -> std::io::Result<Vec<u8>> {
+        let (sender, receiver) = unbounded();
+
+        self.forwards.lock().await.insert(self.id, sender);
+
+        self.core
+            .send(Action::UdpRequest(self.id, addr, packet.to_vec()).into())
+            .await
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+
+        receiver
+            .recv()
+            .await
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
     }
 }

@@ -265,6 +265,7 @@ dependencies = [
  "env_logger",
  "fuso-core",
  "fuso-socks",
+ "futures",
  "log",
  "smol",
 ]

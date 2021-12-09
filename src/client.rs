@@ -3,45 +3,18 @@ use std::{net::SocketAddr, process::exit, time::Duration};
 use clap::{App, Arg};
 use fuso::parse_addr;
 use fuso_core::{
-    ciphe::{Cipher, Security, Xor},
+    ciphe::{Security, Xor},
     client::Fuso,
-    Forward, FusoListener, Spwan,
+    Forward, Spwan,
 };
+use futures::{StreamExt, TryFutureExt};
+use smol::Executor;
 
 #[derive(Debug, Clone, Copy)]
 enum Proxy {
     Port(SocketAddr),
     Socks5,
 }
-
-#[inline]
-async fn poll_stream<C>(mut fuso: Fuso, ciphe: C) -> fuso_core::Result<()>
-where
-    C: Clone + Cipher + Unpin + Send + Sync + 'static,
-{
-    loop {
-        let reactor = fuso.accept().await?;
-
-        let ciphe = ciphe.clone();
-
-        async move {
-            match reactor.join().await {
-                Ok((from, to)) => {
-                    let from = from.ciphe(ciphe).await;
-                    if let Err(e) = from.forward(to).await {
-                        log::debug!("[fuc] Forwarding failed {}", e);
-                    }
-                }
-                Err(e) => {
-                    log::warn!("{}", e);
-                }
-            };
-            // let from_addr = stream.peer_addr().unwrap();
-        }
-        .detach();
-    }
-}
-
 
 fn main() {
     let app = App::new("fuso")
@@ -236,27 +209,38 @@ fn main() {
 
     smol::block_on(async move {
         loop {
-            match Fuso::bind(fuso_core::client::Config {
+            Fuso::bind(fuso_core::client::Config {
                 name: name.clone(),
                 server_addr,
                 server_bind_port: service_bind_port,
                 bridge_addr: bridge_addr,
                 forward_addr: format!("{}:{}", forward_host, forward_port),
             })
+            .map_ok(|fuso| {
+                let ex = Executor::new();
+                smol::block_on(ex.run(fuso.for_each(|reactor| async move {
+                    let ciphe = Xor::new(xor_num);
+                    reactor
+                        .join()
+                        .map_ok(|(from, to)| {
+                            async move {
+                                let from = from.ciphe(ciphe).await;
+
+                                if let Err(e) = from.forward(to).await {
+                                    log::debug!("[fuc] Forwarding failed {}", e);
+                                }
+                                
+                            }
+                            .detach()
+                        })
+                        .map_err(|e| log::warn!("{}", e))
+                        .await
+                        .ok();
+                })))
+            })
+            .map_err(|e| log::warn!("{}", e))
             .await
-            {
-                Ok(fuso) => {
-                    log::info!("[fuc] connection succeeded");
-                    let _ = poll_stream(fuso, Xor::new(xor_num)).await;
-                }
-                Err(e) => {
-                    log::warn!(
-                        "[fuc] Unable to connect to the server {} {}",
-                        e,
-                        server_addr
-                    );
-                }
-            }
+            .ok();
 
             smol::Timer::after(Duration::from_secs(2)).await;
 

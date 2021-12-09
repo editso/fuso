@@ -110,3 +110,12 @@ impl From<String> for Error {
         }
     }
 }
+
+impl From<Error> for std::io::Error {
+    fn from(e: Error) -> Self {
+        match e.repr {
+            Repr::IO(e) => e,
+            Repr::Fuso(e) => std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e)),
+        }
+    }
+}

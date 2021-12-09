@@ -7,10 +7,11 @@ use fuso_api::{
 use smol::{
     channel::{unbounded, Receiver, Sender},
     future::FutureExt,
-    net::TcpStream,
+    net::{TcpStream, UdpSocket},
+    stream::StreamExt,
 };
 
-use crate::retain::Heartbeat;
+use crate::retain::{HeartGuard, Heartbeat};
 use crate::{
     bridge::Bridge,
     packet::{Action, Addr},
@@ -44,6 +45,40 @@ pub struct Config {
 }
 
 impl Fuso {
+    async fn udp_forward(
+        mut core: HeartGuard<TcpStream>,
+        id: u64,
+        addr: Addr,
+        packet: Vec<u8>,
+    ) -> std::io::Result<()> {
+        let udp = UdpSocket::bind("0.0.0.0:0").await?;
+
+        let addr = match addr {
+            Addr::Socket(addr) => addr.to_string(),
+            Addr::Domain(domain, port) => {
+                format!("{}:{}", domain, port)
+            }
+        };
+
+        log::info!("[udp_forward] {}", addr);
+
+        udp.connect(addr).await?;
+
+        udp.send(&packet).await?;
+
+        let mut buf = Vec::new();
+
+        buf.resize(1500, 0);
+
+        let n = udp.recv(&mut buf).await?;
+
+        buf.truncate(n);
+
+        let _ = core.send(Action::UdpRespose(id, buf).into()).await;
+
+        Ok(())
+    }
+
     async fn run_core(
         conv: u64,
         config: Arc<Config>,
@@ -57,6 +92,11 @@ impl Fuso {
 
             match action {
                 Action::Ping => {}
+                Action::UdpRequest(id, addr, packet) => {
+                    log::trace!("udp forward {} addr={:?}, packet={:?}", id, addr, packet);
+
+                    Self::udp_forward(core.clone(), id, addr, packet).detach()
+                }
                 action => {
                     let reactor = Reactor {
                         conv,
@@ -209,5 +249,16 @@ impl FusoListener<Reactor> for Fuso {
     async fn close(&mut self) -> Result<()> {
         self.accept_ax.close();
         Ok(())
+    }
+}
+
+impl futures::Stream for Fuso {
+    type Item = Reactor;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.accept_ax.poll_next(cx)
     }
 }

@@ -26,12 +26,13 @@ pub struct UdpListener {
 }
 
 pub struct UdpStream {
-    inner: Arc<Mutex<UdpSocket>>,
-    store: Arc<Mutex<Buffer<u8>>>,
+    inner: UdpSocket,
+    store: Buffer<u8>,
     closed: Arc<Mutex<bool>>,
     core: Arc<Mutex<Option<Task<()>>>>,
     read_waker: Arc<Mutex<Option<Waker>>>,
     addr: SocketAddr,
+    is_server: bool,
 }
 
 pub trait UdpStreamEx {
@@ -44,20 +45,21 @@ impl UdpStream {
         server_stream: Option<(smol::channel::Receiver<Vec<u8>>, SocketAddr)>,
     ) -> Self {
         let closed = Arc::new(Mutex::new(false));
-        let store = Arc::new(Mutex::new(Buffer::new()));
+        let mut store = Buffer::new();
 
-        let (server_stream, addr, _) = server_stream
+        let (server_stream, addr, is_server) = server_stream
             .map(|(server, addr)| (Some(server), addr, true))
             .unwrap_or((None, udp.local_addr().unwrap(), false));
 
         let read_waker = Arc::new(Mutex::new(None));
 
         Self {
-            inner: Arc::new(Mutex::new(udp.clone())),
+            inner: udp.clone(),
             store: store.clone(),
             closed: closed.clone(),
             read_waker: read_waker.clone(),
             addr: addr,
+            is_server,
             core: {
                 let read_future = async move {
                     loop {
@@ -84,7 +86,6 @@ impl UdpStream {
                             buf
                         };
 
-                        let mut store = store.lock().unwrap().clone();
                         let _ = store.write_all(&packet).await;
 
                         if let Some(waker) = read_waker.lock().unwrap().take() {
@@ -166,7 +167,6 @@ impl UdpListener {
     }
 }
 
-
 impl Drop for UdpListener {
     #[inline]
     fn drop(&mut self) {
@@ -186,7 +186,7 @@ impl UdpStreamEx for UdpSocket {
 impl UdpStream {
     #[inline]
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
-        self.inner.lock().unwrap().local_addr()
+        self.inner.local_addr()
     }
 
     #[inline]
@@ -198,7 +198,7 @@ impl UdpStream {
 impl AsyncRead for UdpStream {
     #[inline]
     fn poll_read(
-        self: std::pin::Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
@@ -208,8 +208,7 @@ impl AsyncRead for UdpStream {
                 "Connection has been closed",
             )))
         } else {
-            let mut udp = self.store.lock().unwrap();
-            match Pin::new(&mut *udp).poll_read(cx, buf) {
+            match Pin::new(&mut self.store).poll_read(cx, buf) {
                 Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
                 Poll::Ready(Ok(0)) => {
                     *self.read_waker.lock().unwrap() = Some(cx.waker().clone());
@@ -223,6 +222,7 @@ impl AsyncRead for UdpStream {
 }
 
 impl AsyncWrite for UdpStream {
+    #[inline]
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -236,7 +236,16 @@ impl AsyncWrite for UdpStream {
         } else {
             let udp = self.inner.clone();
             let addr = self.addr.clone();
-            Box::pin(async move { udp.lock().unwrap().send_to(buf, addr).await }).poll(cx)
+            let is_server = self.is_server.clone();
+
+            Box::pin(async move {
+                if is_server {
+                    udp.send_to(buf, addr).await
+                } else {
+                    udp.send(buf).await
+                }
+            })
+            .poll(cx)
         }
     }
 
