@@ -65,8 +65,8 @@ pub trait FusoAuth {
 }
 
 #[async_trait]
-pub trait FusoListener<Stream> {
-    async fn accept(&mut self) -> Result<Stream>;
+pub trait FusoListener<T> {
+    async fn accept(&mut self) -> Result<T>;
     async fn close(&mut self) -> Result<()>;
 }
 
@@ -157,7 +157,7 @@ impl Packet {
     pub fn decode_data(data: &[u8]) -> Result<Self> {
         let mut packet = Self::decode(data)?;
         let data = &data[Self::size()..];
-        if packet.len < data.len() as u32 {
+        if data.len() < packet.len as usize {
             Err(error::ErrorKind::BadPacket.into())
         } else {
             packet.set_data(data[..packet.len as usize].to_vec());

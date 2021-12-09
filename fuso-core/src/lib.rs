@@ -59,7 +59,7 @@ mod tests {
         core::{self, Config},
         dispatch::State,
         handler::ChainHandler,
-        packet::Action,
+        packet::{Action, Addr},
     };
 
     fn init_logger() {
@@ -84,6 +84,34 @@ mod tests {
         let action: fuso_api::Result<Action> = packet.try_into();
 
         log::debug!("{:?}", action);
+
+        let action = Action::UdpRequest(
+            10,
+            Addr::Domain("baidu.com".into(), 80),
+            b"hello world".to_vec(),
+        );
+
+        let packet: Packet = action.into();
+
+        log::debug!("{:?}", packet.encode());
+
+        let bytes = b"\0\0\0\xccp\0\0\0(\0\0\0\0\0\0\0\0\n\0\0\0\r\x03\tbaidu.com\0P\0\0\0\x0bhello world1111";
+
+        let action: Action = Packet::decode_data(bytes).unwrap().try_into().unwrap();
+
+        log::debug!("{:?}", action);
+
+        let action = Action::UdpRespose(10, b"hello world".to_vec());
+
+        let packet: Packet = action.into();
+
+        log::debug!("{:?}", packet.encode());
+
+        let bytes = b"\0\0\0\xccq\0\0\0\x17\0\0\0\0\0\0\0\0\n\0\0\0\x0bhello world11111";
+
+        let action: Action = Packet::decode_data(bytes).unwrap().try_into().unwrap();
+
+        log::debug!("{:?}", action);
     }
 
     #[test]
@@ -98,7 +126,7 @@ mod tests {
                     debug: false,
                     bind_addr: "127.0.0.1:9999".parse().unwrap(),
                 })
-                .with_chain(|chain| {
+                .chain_handler(|chain| {
                     chain.next(|mut tcp, cx| async move {
                         let action: Action = tcp.recv().await?.try_into()?;
 

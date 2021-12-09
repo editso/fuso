@@ -15,7 +15,6 @@ pub use async_trait::*;
 mod tests {
     use std::{
         sync::{Arc, Mutex},
-        task::Poll,
         time::Duration,
     };
 
@@ -82,7 +81,7 @@ mod tests {
             println!("test");
 
             let mut io = smol::Unblock::new(std::io::stdin());
-            
+
             loop {
                 let mut buf = Vec::new();
                 buf.resize(1024, 0);

@@ -3,7 +3,10 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use fuso_api::Packet;
 
-use crate::cmd::{CMD_ACCEPT, CMD_BIND, CMD_CONNECT, CMD_ERROR, CMD_FORWARD, CMD_PING, CMD_RESET};
+use crate::cmd::{
+    CMD_ACCEPT, CMD_BIND, CMD_CONNECT, CMD_ERROR, CMD_FORWARD, CMD_PING, CMD_RESET, CMD_UDP_REP,
+    CMD_UDP_REQ,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Addr {
@@ -30,6 +33,8 @@ pub enum Action {
     Forward(u64, Addr),
     // conv, id
     Connect(u64, u64),
+    UdpRequest(u64, Addr, Vec<u8>),
+    UdpRespose(u64, Vec<u8>),
     Err(String),
     Nothing,
 }
@@ -166,6 +171,34 @@ impl TryFrom<Packet> for Action {
             CMD_ERROR => Ok(Action::Err(
                 String::from_utf8_lossy(packet.get_data()).into(),
             )),
+            CMD_UDP_REQ if packet.get_len().ge(&14) => {
+                let data = packet.get_mut_data();
+
+                let id = data.get_u64();
+                let len = data.get_u32();
+
+                if data.len() < len as usize {
+                    return Err(fuso_api::ErrorKind::BadPacket.into());
+                }
+
+                let addr: Addr = data.as_ref().try_into()?;
+                data.advance(len as usize);
+
+                let len = data.get_u32();
+
+                if data.len() < len as usize {
+                    return Err(fuso_api::ErrorKind::BadPacket.into());
+                }
+
+                Ok(Action::UdpRequest(id, addr, data[..len as usize].to_vec()))
+            }
+            CMD_UDP_REP if packet.get_len().ge(&8) => {
+                let data = packet.get_mut_data();
+                let id = data.get_u64();
+                let len = data.get_u32();
+
+                Ok(Action::UdpRespose(id, data[..len as usize].to_vec()))
+            }
             _ => Err(fuso_api::ErrorKind::BadPacket.into()),
         }
     }
@@ -217,6 +250,23 @@ impl From<Action> for fuso_api::Packet {
             }),
             Action::Err(e) => Packet::new(CMD_ERROR, e.into()),
             Action::Nothing => Packet::new(CMD_RESET, Bytes::new()),
+            Action::UdpRequest(id, addr, data) => Packet::new(CMD_UDP_REQ, {
+                let mut buf = BytesMut::new();
+                let addr = addr.to_bytes();
+                buf.put_u64(id);
+                buf.put_u32(addr.len() as u32);
+                buf.put_slice(&addr);
+                buf.put_u32(data.len() as u32);
+                buf.put_slice(&data);
+                buf.into()
+            }),
+            Action::UdpRespose(id, data) => Packet::new(CMD_UDP_REP, {
+                let mut buf = BytesMut::new();
+                buf.put_u64(id);
+                buf.put_u32(data.len() as u32);
+                buf.put_slice(&data);
+                buf.into()
+            }),
         }
     }
 }
