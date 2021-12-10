@@ -4,8 +4,8 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use fuso_api::Packet;
 
 use crate::cmd::{
-    CMD_ACCEPT, CMD_BIND, CMD_CONNECT, CMD_ERROR, CMD_FORWARD, CMD_PING, CMD_RESET, CMD_UDP_REP,
-    CMD_UDP_REQ,
+    CMD_ACCEPT, CMD_BIND, CMD_CONNECT, CMD_ERROR, CMD_FORWARD, CMD_PING, CMD_RESET, CMD_UDP_BIND,
+    CMD_UDP_REP, CMD_UDP_REQ,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,7 +26,8 @@ pub enum Addr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     Ping,
-    Bind(Option<String>, Option<SocketAddr>),
+    TcpBind(Option<String>, Option<SocketAddr>),
+    UdpBind(u64),
     Reset(Addr),
     Accept(u64),
     // id
@@ -34,7 +35,7 @@ pub enum Action {
     // conv, id
     Connect(u64, u64),
     UdpRequest(u64, Addr, Vec<u8>),
-    UdpRespose(u64, Vec<u8>),
+    UdpResponse(u64, Vec<u8>),
     Err(String),
     Nothing,
 }
@@ -120,8 +121,8 @@ impl TryFrom<Packet> for Action {
     fn try_from(mut packet: fuso_api::Packet) -> Result<Self, Self::Error> {
         match packet.get_cmd() {
             CMD_PING => Ok(Action::Ping),
-            CMD_BIND if packet.get_len().eq(&0) => Ok(Action::Bind(None, None)),
-            CMD_BIND => Ok(Action::Bind(
+            CMD_BIND if packet.get_len().eq(&0) => Ok(Action::TcpBind(None, None)),
+            CMD_BIND => Ok(Action::TcpBind(
                 {
                     let data = packet.get_mut_data();
 
@@ -197,7 +198,10 @@ impl TryFrom<Packet> for Action {
                 let id = data.get_u64();
                 let len = data.get_u32();
 
-                Ok(Action::UdpRespose(id, data[..len as usize].to_vec()))
+                Ok(Action::UdpResponse(id, data[..len as usize].to_vec()))
+            }
+            CMD_UDP_BIND if packet.get_len().ge(&8) => {
+                Ok(Action::UdpBind(packet.get_mut_data().get_u64()))
             }
             _ => Err(fuso_api::ErrorKind::BadPacket.into()),
         }
@@ -208,7 +212,7 @@ impl From<Action> for fuso_api::Packet {
     fn from(packet: Action) -> Self {
         match packet {
             Action::Ping => Packet::new(CMD_PING, Bytes::new()),
-            Action::Bind(Some(name), Some(addr)) => Packet::new(CMD_BIND, {
+            Action::TcpBind(Some(name), Some(addr)) => Packet::new(CMD_BIND, {
                 let mut buf = BytesMut::new();
                 let name = name.as_bytes();
                 buf.put_u8(name.len() as u8);
@@ -216,20 +220,20 @@ impl From<Action> for fuso_api::Packet {
                 buf.put_slice(&Addr::Socket(addr).to_bytes());
                 buf.into()
             }),
-            Action::Bind(Some(name), None) => Packet::new(CMD_BIND, {
+            Action::TcpBind(Some(name), None) => Packet::new(CMD_BIND, {
                 let mut buf = BytesMut::new();
                 let name = name.as_bytes();
                 buf.put_u8(name.len() as u8);
                 buf.put_slice(name);
                 buf.into()
             }),
-            Action::Bind(None, Some(addr)) => Packet::new(CMD_BIND, {
+            Action::TcpBind(None, Some(addr)) => Packet::new(CMD_BIND, {
                 let mut buf = BytesMut::new();
                 buf.put_u8(0);
                 buf.put_slice(&Addr::Socket(addr).to_bytes());
                 buf.into()
             }),
-            Action::Bind(None, None) => Packet::new(CMD_BIND, Bytes::new()),
+            Action::TcpBind(None, None) => Packet::new(CMD_BIND, Bytes::new()),
             Action::Reset(addr) => Packet::new(CMD_CONNECT, addr.to_bytes()),
             Action::Accept(conv) => Packet::new(CMD_ACCEPT, {
                 let mut buf = BytesMut::new();
@@ -260,11 +264,16 @@ impl From<Action> for fuso_api::Packet {
                 buf.put_slice(&data);
                 buf.into()
             }),
-            Action::UdpRespose(id, data) => Packet::new(CMD_UDP_REP, {
+            Action::UdpResponse(id, data) => Packet::new(CMD_UDP_REP, {
                 let mut buf = BytesMut::new();
                 buf.put_u64(id);
                 buf.put_u32(data.len() as u32);
                 buf.put_slice(&data);
+                buf.into()
+            }),
+            Action::UdpBind(conv) => Packet::new(CMD_UDP_BIND, {
+                let mut buf = BytesMut::new();
+                buf.put_u64(conv);
                 buf.into()
             }),
         }

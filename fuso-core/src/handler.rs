@@ -13,6 +13,7 @@ pub struct ChainHandler<D, C, R> {
 }
 
 impl<D, C, R> ChainHandler<D, C, R> {
+    #[inline]
     pub fn new() -> Self {
         Self { chains: Vec::new() }
     }

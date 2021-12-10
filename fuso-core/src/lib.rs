@@ -1,5 +1,5 @@
 pub mod bridge;
-pub mod ciphe;
+pub mod cipher;
 pub mod client;
 pub mod cmd;
 pub mod core;
@@ -72,7 +72,7 @@ mod tests {
     fn test_packet() {
         init_logger();
 
-        let action = Action::Bind(
+        let action = Action::TcpBind(
             Some("hello world".into()),
             Some("127.0.0.1:80".parse().unwrap()),
         );
@@ -101,7 +101,7 @@ mod tests {
 
         log::debug!("{:?}", action);
 
-        let action = Action::UdpRespose(10, b"hello world".to_vec());
+        let action = Action::UdpResponse(10, b"hello world".to_vec());
 
         let packet: Packet = action.into();
 
@@ -131,9 +131,9 @@ mod tests {
                         let action: Action = tcp.recv().await?.try_into()?;
 
                         match action {
-                            Action::Bind(name, addr) => {
+                            Action::TcpBind(name, addr) => {
                                 let client_addr = tcp.peer_addr().unwrap();
-                                let conv = cx.spwan(tcp, addr, name).await?;
+                                let conv = cx.spawn(tcp, addr, name).await?;
                                 log::debug!(
                                     "[fuso] accept conv={}, addr={}, name={}",
                                     conv,
@@ -143,7 +143,7 @@ mod tests {
                                 Ok(State::Accept(()))
                             }
                             Action::Connect(conv, id) => {
-                                cx.route(conv, id, tcp.into()).await?;
+                                cx.route(conv, action, tcp.into()).await?;
                                 Ok(State::Accept(()))
                             }
                             _ => Ok(State::Next),
