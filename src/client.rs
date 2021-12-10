@@ -3,9 +3,9 @@ use std::{process::exit, time::Duration};
 use clap::{App, Arg};
 use fuso::parse_addr;
 use fuso_core::{
-    ciphe::{Security, Xor},
+    cipher::{Security, Xor},
     client::Fuso,
-    Forward, Spwan,
+    Forward, Spawn,
 };
 use futures::{StreamExt, TryFutureExt};
 use smol::Executor;
@@ -189,12 +189,12 @@ fn main() {
             .map_ok(|fuso| {
                 let ex = Executor::new();
                 smol::block_on(ex.run(fuso.for_each(|reactor| async move {
-                    let ciphe = Xor::new(xor_num);
+                    let cipher = Xor::new(xor_num);
                     reactor
                         .join()
                         .map_ok(|(from, to)| {
                             async move {
-                                let from = from.ciphe(ciphe).await;
+                                let from = from.cipher(cipher).await;
 
                                 if let Err(e) = from.forward(to).await {
                                     log::debug!("[fuc] Forwarding failed {}", e);

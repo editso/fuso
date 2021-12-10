@@ -14,7 +14,7 @@ use smol::net::TcpStream;
 
 #[async_trait]
 pub trait Security<T, O> {
-    async fn ciphe(self, t: O) -> Crypt<T, O>;
+    async fn cipher(self, t: O) -> Crypt<T, O>;
 }
 
 pub trait Cipher {
@@ -70,7 +70,7 @@ where
     C: Cipher + Send + Sync + 'static,
 {
     #[inline]
-    async fn ciphe(self, c: C) -> Crypt<T, C> {
+    async fn cipher(self, c: C) -> Crypt<T, C> {
         Crypt {
             target: self,
             buf: Arc::new(Mutex::new(Buffer::new())),
@@ -177,7 +177,7 @@ impl Cipher for Xor {
     ) -> Poll<std::io::Result<Vec<u8>>> {
         log::debug!("[cipher] decrypt {}", data.len());
 
-        Poll::Ready(Ok(data.iter().map(|e| *e ^ self.num).collect()))
+        Poll::Ready(Ok(data.into_iter().map(|e| e ^ self.num).collect()))
     }
 
     #[inline]
@@ -188,6 +188,6 @@ impl Cipher for Xor {
     ) -> Poll<std::io::Result<Vec<u8>>> {
         log::debug!("[cipher] encrypt {}", data.len());
 
-        Poll::Ready(Ok(data.iter().map(|e| *e ^ self.num).collect()))
+        Poll::Ready(Ok(data.into_iter().map(|e| e ^ self.num).collect()))
     }
 }

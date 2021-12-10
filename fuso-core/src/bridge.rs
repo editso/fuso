@@ -8,7 +8,7 @@ use smol::{
 };
 
 use async_trait::async_trait;
-use fuso_api::{AsyncTcpSocketEx, Error, FusoListener, Result, Spwan};
+use fuso_api::{AsyncTcpSocketEx, Error, FusoListener, Result, Spawn};
 
 pub struct Bridge {
     accept_ax: Receiver<(TcpStream, TcpStream)>,

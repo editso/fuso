@@ -3,11 +3,11 @@ use std::process::exit;
 use clap::{App, Arg};
 use fuso::parse_addr;
 use fuso_core::{
-    ciphe::{Security, Xor},
+    cipher::{Security, Xor},
     core::{Config, Fuso},
     dispatch::State,
     packet::{Action, Addr},
-    Forward, FusoPacket, Spwan,
+    Forward, FusoPacket, Spawn,
 };
 
 use fuso_socks::{AsyncUdpForward, Socks, Socks5Ex};
@@ -92,23 +92,32 @@ fn main() {
                 chain.next(|mut tcp, cx| async move {
                     let action: Action = tcp.recv().await?.try_into()?;
                     match action {
-                        Action::Bind(name, addr) => match cx.spwan(tcp.clone(), addr, name).await {
-                            Ok(conv) => {
-                                log::debug!(
-                                    "[fuso] accept conv={}, addr={}",
-                                    conv,
-                                    tcp.peer_addr().unwrap(),
-                                );
-                                Ok(State::Accept(()))
+                        Action::TcpBind(name, addr) => {
+                            match cx.spawn(tcp.clone(), addr, name).await {
+                                Ok(conv) => {
+                                    log::debug!(
+                                        "[fuso] accept conv={}, addr={}",
+                                        conv,
+                                        tcp.peer_addr().unwrap(),
+                                    );
+                                    Ok(State::Accept(()))
+                                }
+                                Err(e) => {
+                                    log::warn!(
+                                        "[fuso] Failed to open the mapping {}",
+                                        e.to_string()
+                                    );
+                                    let _ = tcp.send(Action::Err(e.to_string()).into()).await?;
+                                    Ok(State::Accept(()))
+                                }
                             }
-                            Err(e) => {
-                                log::warn!("[fuso] Failed to open the mapping {}", e.to_string());
-                                let _ = tcp.send(Action::Err(e.to_string()).into()).await?;
-                                Ok(State::Accept(()))
-                            }
-                        },
-                        Action::Connect(conv, id) => {
-                            cx.route(conv, id, tcp.into()).await?;
+                        }
+                        Action::UdpBind(conv) => {
+                            cx.route(conv, action, tcp).await?;
+                            Ok(State::Accept(()))
+                        }
+                        Action::Connect(conv, _) => {
+                            cx.route(conv, action, tcp).await?;
                             Ok(State::Accept(()))
                         }
                         _ => Ok(State::Next),
@@ -121,6 +130,8 @@ fn main() {
                         let _ = tcp.begin().await;
                         match tcp.clone().authenticate(None).await {
                             Ok(Socks::Udp(forward)) => {
+                                log::info!("[udp_forward] {}", tcp.peer_addr().unwrap());
+
                                 core.udp_forward(|listen, mut udp| {
                                     forward.resolve(listen.local_addr(), || async move {
                                         let mut stream = listen.accept().await?;
@@ -178,7 +189,7 @@ fn main() {
                     let xor = Xor::new(xor_num);
                     let (from, to) = stream.split();
 
-                    let to = to.ciphe(xor.clone()).await;
+                    let to = to.cipher(xor.clone()).await;
 
                     from.forward(to).detach();
                 })));

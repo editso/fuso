@@ -17,7 +17,9 @@ use smol::{
 
 use std::sync::Mutex;
 
-use crate::{Buffer, Spwan};
+use crate::{Buffer, Spawn};
+
+pub const MTU_BUF_SIZE: usize = 1400;
 
 pub struct UdpListener {
     addr: SocketAddr,
@@ -73,7 +75,7 @@ impl UdpStream {
                             packet.unwrap()
                         } else {
                             let mut buf = Vec::new();
-                            buf.resize(1350, 0);
+                            buf.resize(MTU_BUF_SIZE, 0);
 
                             let packet = udp.recv(&mut buf).await;
                             if packet.is_err() {

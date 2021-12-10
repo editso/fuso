@@ -1,12 +1,11 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use fuso_api::{
-    async_trait, AsyncTcpSocketEx, Error, Forward, FusoListener, FusoPacket, Result, Spwan,
+    async_trait, AsyncTcpSocketEx, Error, Forward, FusoListener, FusoPacket, Result, Spawn,
 };
 
 use smol::{
     channel::{unbounded, Receiver, Sender},
-    future::FutureExt,
     net::{TcpStream, UdpSocket},
     stream::StreamExt,
 };
@@ -74,9 +73,39 @@ impl Fuso {
 
         buf.truncate(n);
 
-        let _ = core.send(Action::UdpRespose(id, buf).into()).await;
+        let _ = core.send(Action::UdpResponse(id, buf).into()).await;
 
         Ok(())
+    }
+
+    async fn run_udp_forward(conv: u64, server_addr: SocketAddr) -> Result<()> {
+        let mut udp_bind = TcpStream::connect(server_addr).await?;
+
+        udp_bind.send(Action::UdpBind(conv).into()).await?;
+
+        let action: Action = udp_bind.recv().await?.try_into()?;
+
+        match action {
+            Action::Accept(_) => {
+                let mut udp_bind = udp_bind.guard(5000).await?;
+
+                loop {
+                    let action: Action = udp_bind.recv().await?.try_into()?;
+                    // 只处理udp转发包
+                    match action {
+                        Action::Ping => {}
+                        Action::UdpRequest(id, addr, packet) => {
+                            log::trace!("udp forward {} addr={:?}, packet={:?}", id, addr, packet);
+                            Self::udp_forward(udp_bind.clone(), id, addr, packet).detach()
+                        }
+                        _ => {
+                            log::warn!("Not a udp forwarding packet {:?}", action);
+                        }
+                    }
+                }
+            }
+            _ => smol::future::pending().await,
+        }
     }
 
     async fn run_core(
@@ -157,7 +186,7 @@ impl Fuso {
             .ne(&0)
             .then(|| SocketAddr::from(([0, 0, 0, 0], server_bind_port)));
 
-        stream.send(Action::Bind(name, bind_addr).into()).await?;
+        stream.send(Action::TcpBind(name, bind_addr).into()).await?;
 
         let action: Action = stream.recv().await?.try_into()?;
 
@@ -170,17 +199,21 @@ impl Fuso {
                 let server_addr = stream.peer_addr()?;
 
                 async move {
-                    let _ = Self::run_core(conv, cfg, stream, accept_tx)
-                        .race(async move {
-                            if bridge_addr.is_none() {
-                                smol::future::pending::<()>().await;
-                            } else {
-                                let _ = Self::run_bridge(bridge_addr.unwrap(), server_addr).await;
-                            }
+                    let race_future = smol::future::race(
+                        Self::run_core(conv, cfg, stream, accept_tx),
+                        Self::run_udp_forward(conv, server_addr),
+                    );
 
-                            Ok(())
-                        })
-                        .await;
+                    let bridge_future = async move {
+                        if bridge_addr.is_none() {
+                            smol::future::pending::<()>().await;
+                        } else {
+                            let _ = Self::run_bridge(bridge_addr.unwrap(), server_addr).await;
+                        }
+                        Ok(())
+                    };
+
+                    let _ = smol::future::race(race_future, bridge_future).await;
                 }
                 .detach();
             }
@@ -255,6 +288,7 @@ impl FusoListener<Reactor> for Fuso {
 impl futures::Stream for Fuso {
     type Item = Reactor;
 
+    #[inline]
     fn poll_next(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,

@@ -11,10 +11,10 @@ use smol::{
 };
 
 #[allow(unused)]
-use crate::ciphe::{Security, Xor};
+use crate::cipher::{Security, Xor};
 
 use fuso_api::{
-    AsyncTcpSocketEx, FusoPacket, Result, SafeStream, SafeStreamEx, Spwan, UdpListener,
+    AsyncTcpSocketEx, FusoPacket, Result, SafeStream, SafeStreamEx, Spawn, UdpListener,
 };
 
 use crate::{dispatch::DynHandler, packet::Action};
@@ -45,17 +45,18 @@ pub struct Channel {
     pub conv: u64,
     pub alloc_id: Arc<Mutex<u64>>,
     pub name: String,
-    pub core: HeartGuard<fuso_api::SafeStream<TcpStream>>,
     pub config: Arc<Config>,
+    pub tcp_core: HeartGuard<fuso_api::SafeStream<TcpStream>>,
+    pub udp_core: Arc<Mutex<Option<HeartGuard<fuso_api::SafeStream<TcpStream>>>>>,
     pub strategys: Arc<Vec<Arc<Box<DynHandler<Arc<Channel>, Action>>>>>,
-    pub wait_queue: Arc<Mutex<HashMap<u64, SafeStream<TcpStream>>>>,
-    pub udp_forward: Arc<Mutex<HashMap<u64, Sender<Vec<u8>>>>>,
+    pub tcp_forward_map: Arc<Mutex<HashMap<u64, SafeStream<TcpStream>>>>,
+    pub udp_forward_map: Arc<Mutex<HashMap<u64, Sender<Vec<u8>>>>>,
 }
 
 pub struct Udp {
     id: u64,
     core: HeartGuard<fuso_api::SafeStream<TcpStream>>,
-    forwards: Arc<Mutex<HashMap<u64, Sender<Vec<u8>>>>>,
+    forward_map: Arc<Mutex<HashMap<u64, Sender<Vec<u8>>>>>,
 }
 
 #[derive(Clone)]
@@ -64,7 +65,7 @@ pub struct Context {
     pub config: Arc<Config>,
     pub handlers: Arc<Vec<Arc<Box<DynHandler<Arc<Self>, ()>>>>>,
     pub strategys: Arc<Vec<Arc<Box<DynHandler<Arc<Channel>, Action>>>>>,
-    pub sessions: Arc<RwLock<HashMap<u64, Sender<(u64, SafeStream<TcpStream>)>>>>,
+    pub sessions: Arc<RwLock<HashMap<u64, Sender<(Action, SafeStream<TcpStream>)>>>>,
     pub accept_ax: Sender<FusoStream<fuso_api::SafeStream<TcpStream>>>,
 }
 
@@ -74,7 +75,7 @@ pub struct Fuso<IO> {
 
 pub struct FusoBuilder<C> {
     pub config: Option<Config>,
-    pub handelrs: Vec<Arc<Box<DynHandler<C, ()>>>>,
+    pub handlers: Vec<Arc<Box<DynHandler<C, ()>>>>,
     pub strategys: Vec<Arc<Box<DynHandler<Arc<Channel>, Action>>>>,
 }
 
@@ -93,7 +94,7 @@ impl FusoBuilder<Arc<Context>> {
         )
             -> ChainHandler<SafeTcpStream, Arc<Context>, fuso_api::Result<State<()>>>,
     {
-        self.handelrs
+        self.handlers
             .push(Arc::new(Box::new(with_chain(ChainHandler::new()))));
         self
     }
@@ -122,7 +123,7 @@ impl FusoBuilder<Arc<Context>> {
         let bind_addr = config.bind_addr.clone();
         let listen = bind_addr.tcp_listen().await?;
 
-        let handlers = Arc::new(self.handelrs);
+        let handlers = Arc::new(self.handlers);
         let strategys = Arc::new(self.strategys);
 
         let cx = Arc::new(Context {
@@ -182,7 +183,7 @@ impl Fuso<FusoStream<TcpStream>> {
     pub fn builder() -> FusoBuilder<Arc<Context>> {
         FusoBuilder {
             config: None,
-            handelrs: Vec::new(),
+            handlers: Vec::new(),
             strategys: Vec::new(),
         }
     }
@@ -208,7 +209,7 @@ where
 impl Channel {
     #[inline]
     pub async fn try_wake(&self, id: &u64) -> Result<fuso_api::SafeStream<TcpStream>> {
-        match self.wait_queue.lock().await.remove(id) {
+        match self.tcp_forward_map.lock().await.remove(id) {
             Some(tcp) => Ok(tcp),
             None => Err("No task operation required".into()),
         }
@@ -216,13 +217,70 @@ impl Channel {
 
     #[inline]
     pub async fn suspend(&self, id: u64, tcp: SafeStream<TcpStream>) -> Result<()> {
-        self.wait_queue.lock().await.insert(id, tcp);
+        self.tcp_forward_map.lock().await.insert(id, tcp);
+        Ok(())
+    }
+
+    pub async fn bind_udp(&self, mut tcp: SafeStream<TcpStream>) -> Result<()> {
+        tcp.send(Action::Accept(self.conv).into()).await?;
+
+        let bind_udp = tcp.guard(5000).await?;
+
+        let mut udp_core = self.udp_core.lock().await;
+
+        if let Some(mut udp_core) = udp_core.take() {
+            let _ = udp_core.close().await;
+        }
+
+        {
+            let mut udp_core = bind_udp.clone();
+            let forward_map = self.udp_forward_map.clone();
+            let locked_udp_core = self.udp_core.clone();
+
+            async move {
+                loop {
+                    match udp_core.recv().await {
+                        Ok(packet) => {
+                            let action: Result<Action> = packet.try_into();
+
+                            if action.is_err() {
+                                log::warn!("bad packet {}", action.unwrap_err());
+                                break;
+                            }
+
+                            let action = action.unwrap();
+
+                            match action {
+                                Action::UdpResponse(id, packet) => {
+                                    if let Some(sender) = forward_map.lock().await.remove(&id) {
+                                        let _ = sender.send(packet).await;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("{}", e);
+                            break;
+                        }
+                    }
+                }
+                if let Some(mut udp_core) = locked_udp_core.lock().await.take() {
+                    let _ = udp_core.close().await;
+                    log::warn!("Udp forwarding is turned off");
+                }
+            }
+        }
+        .detach();
+
+        *udp_core = Some(bind_udp);
+
         Ok(())
     }
 
     #[inline]
     pub async fn gen_id(&self) -> u64 {
-        let sessions = self.wait_queue.lock().await;
+        let sessions = self.tcp_forward_map.lock().await;
 
         loop {
             let (conv, _) = self.alloc_id.lock().await.overflowing_add(1);
@@ -244,19 +302,33 @@ impl Channel {
         Fut: Future<Output = std::io::Result<()>>,
     {
         let udp = UdpListener::bind("0.0.0.0:0").await?;
-        let core = self.core.clone();
-        let forwards = self.udp_forward.clone();
+
+        let core = self
+            .udp_core
+            .lock()
+            .await
+            .as_ref()
+            .map_or(self.tcp_core.clone(), |udp_core| udp_core.clone());
+
+        let forwards = self.udp_forward_map.clone();
         let id = self.gen_id().await;
 
-        forward(udp, Udp { id, core, forwards })
-            .await
-            .map_err(|e| e.into())
+        forward(
+            udp,
+            Udp {
+                id,
+                core,
+                forward_map: forwards,
+            },
+        )
+        .await
+        .map_err(|e| e.into())
     }
 }
 
 impl Context {
     #[inline]
-    pub async fn fork(&self) -> (u64, Receiver<(u64, SafeStream<TcpStream>)>) {
+    pub async fn fork(&self) -> (u64, Receiver<(Action, SafeStream<TcpStream>)>) {
         let (accept_tx, accept_ax) = unbounded();
 
         let mut sessions = self.sessions.write().await;
@@ -284,13 +356,13 @@ impl Context {
     pub async fn route(
         &self,
         conv: u64,
-        id: u64,
+        action: Action,
         tcp: fuso_api::SafeStream<TcpStream>,
     ) -> Result<()> {
         let sessions = self.sessions.read().await;
 
         if let Some(accept_tx) = sessions.get(&conv) {
-            if let Err(e) = accept_tx.send((id, tcp)).await {
+            if let Err(e) = accept_tx.send((action, tcp)).await {
                 Err(e.to_string().into())
             } else {
                 Ok(())
@@ -300,7 +372,7 @@ impl Context {
         }
     }
 
-    pub async fn spwan(
+    pub async fn spawn(
         &self,
         tcp: fuso_api::SafeStream<TcpStream>,
         addr: Option<SocketAddr>,
@@ -308,7 +380,7 @@ impl Context {
     ) -> Result<u64> {
         let (conv, accept_ax) = self.fork().await;
         let accept_tx = self.accept_ax.clone();
-        let clinet_addr = tcp.local_addr().unwrap();
+        let client_addr = tcp.local_addr().unwrap();
         let bind_addr = addr.unwrap_or(([0, 0, 0, 0], 0).into());
         let listen = bind_addr.tcp_listen().await?;
 
@@ -322,20 +394,21 @@ impl Context {
 
         let channel = Arc::new(Channel {
             conv,
-            core,
+            tcp_core: core,
             alloc_id: Arc::new(Mutex::new(0)),
             strategys,
             name: name.clone(),
             config: self.config.clone(),
-            wait_queue: Arc::new(Mutex::new(HashMap::new())),
-            udp_forward: udp_forward.clone(),
+            tcp_forward_map: Arc::new(Mutex::new(HashMap::new())),
+            udp_forward_map: udp_forward.clone(),
+            udp_core: Arc::new(Mutex::new(None)),
         });
 
         log::info!(
             "New mapping [{}] {} -> {}",
             name,
             listen.local_addr().unwrap(),
-            clinet_addr
+            client_addr
         );
 
         async move {
@@ -351,39 +424,40 @@ impl Context {
                             break;
                         }
 
-                        let (id, mut from) = from.unwrap();
+                        let (action, mut from) = from.unwrap();
 
-                        let to = channel.try_wake(&id).await;
-
-                        if to.is_err() {
-                            let _ = from.close().await;
-                            log::warn!("{}", to.unwrap_err());
-                            continue;
-                        }
-
-                        let to = to.unwrap();
-
-                        log::info!(
-                            "{} -> {}",
-                            from.peer_addr().unwrap(),
-                            to.peer_addr().unwrap()
-                        );
-
-                        // 成功建立映射, 发给下一端处理
-                        let err = accept_tx.send(FusoStream::new(from, to)).await;
-
-                        if err.is_err() {
-                            log::error!("An unavoidable error occurred {}", err.unwrap_err());
-                            break;
-                        }
+                        match action {
+                            Action::Connect(_, id) => {
+                                if let Ok(to) = channel.try_wake(&id).await {
+                                    let state =
+                                        accept_tx.send(FusoStream::new(from.clone(), to)).await;
+                                    if state.is_err() {
+                                        let _ = from.close().await;
+                                        log::error!(
+                                            "An unavoidable error occurred {}",
+                                            state.unwrap_err()
+                                        );
+                                    }
+                                }
+                            }
+                            Action::UdpBind(_) => {
+                                let addr = from.peer_addr().unwrap();
+                                if let Err(e) = channel.bind_udp(from).await {
+                                    log::warn!("Failed to bind udp forwarding {} {}", addr, e);
+                                } else {
+                                    log::info!("Binding udp forwarding successfully {}", addr)
+                                }
+                            }
+                            _ => {}
+                        };
                     }
                 }
             };
 
             let fuso_future = {
-                let mut core = channel.core.clone();
+                let mut core = channel.tcp_core.clone();
                 // 服务端与客户端加密,
-                // let mut core = core.ciphe(Xor::new(10)).await;
+                // let mut core = core.cipher(Xor::new(10)).await;
 
                 async move {
                     loop {
@@ -406,7 +480,7 @@ impl Context {
                         let action = packet.unwrap();
 
                         match action {
-                            Action::UdpRespose(id, data) => {
+                            Action::UdpResponse(id, data) => {
                                 if let Some(sender) = udp_forward.lock().await.remove(&id) {
                                     if let Err(e) = sender.send(data).await {
                                         log::warn!("{}", e);
@@ -421,16 +495,16 @@ impl Context {
                 }
             };
 
-            let future_listen = async move {
+            let listen_future = async move {
                 let _ = listen
                     .incoming()
                     .try_fold(channel, |channel, tcp| async move {
                         {
-                            log::info!("connected {}", tcp.peer_addr().unwrap());
+                            log::debug!("connected {}", tcp.peer_addr().unwrap());
                             let channel = channel.clone();
                             async move {
                                 let mut tcp = tcp.as_safe_stream();
-                                let mut core = channel.core.clone();
+                                let mut core = channel.tcp_core.clone();
 
                                 let action = {
                                     let strategys = channel.strategys.clone();
@@ -480,7 +554,7 @@ impl Context {
                     .await;
             };
 
-            accept_future.race(fuso_future.race(future_listen)).await
+            accept_future.race(fuso_future.race(listen_future)).await
         }
         .detach();
 
@@ -503,6 +577,7 @@ impl<T> FusoStream<T> {
 impl<T> futures::Stream for Fuso<T> {
     type Item = T;
 
+    #[inline]
     fn poll_next(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -515,7 +590,7 @@ impl Udp {
     pub async fn call(&mut self, addr: Addr, packet: &[u8]) -> std::io::Result<Vec<u8>> {
         let (sender, receiver) = unbounded();
 
-        self.forwards.lock().await.insert(self.id, sender);
+        self.forward_map.lock().await.insert(self.id, sender);
 
         self.core
             .send(Action::UdpRequest(self.id, addr, packet.to_vec()).into())

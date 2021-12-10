@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use fuso_api::{now_mills, FusoPacket, Spwan};
+use fuso_api::{now_mills, FusoPacket, Spawn};
 use futures::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use smol::{net::TcpStream, Task};
 use std::{io::Result, net::SocketAddr};
@@ -146,10 +146,12 @@ where
 }
 
 impl HeartGuard<TcpStream> {
+    #[inline]
     pub fn lock_addr(&self) -> std::io::Result<SocketAddr> {
         self.target.local_addr()
     }
 
+    #[inline]
     pub fn peer_addr(&self) -> std::io::Result<SocketAddr> {
         self.target.peer_addr()
     }

@@ -9,3 +9,4 @@ pub const CMD_ERROR: u8 = 0x50;
 pub const CMD_NOTHING: u8 = 0x66;
 pub const CMD_UDP_REQ: u8 = 0x70;
 pub const CMD_UDP_REP: u8 = 0x71;
+pub const CMD_UDP_BIND: u8 = 0x72;

@@ -121,7 +121,7 @@ pub trait RollbackEx<T, Store> {
     fn roll(self) -> Rollback<T, Store>;
 }
 
-pub trait Spwan {
+pub trait Spawn {
     fn detach(self);
 }
 
@@ -301,7 +301,7 @@ where
     }
 }
 
-impl<T, A> Spwan for T
+impl<T, A> Spawn for T
 where
     A: Send + 'static,
     T: Future<Output = A> + Send + 'static,
@@ -382,7 +382,7 @@ impl<T> Rollback<T, Buffer<u8>> {
     #[inline]
     pub async fn begin(&self) -> Result<()> {
         if self.rollback.read().unwrap().eq(&true) {
-            Err("Rollbabck enabled".into())
+            Err("Rollback enabled".into())
         } else {
             *self.rollback.write().unwrap() = true;
             Ok(())
@@ -392,7 +392,7 @@ impl<T> Rollback<T, Buffer<u8>> {
     #[inline]
     pub async fn back(&self) -> Result<()> {
         if self.rollback.read().unwrap().eq(&false) {
-            Err("Rollbabck enabled".into())
+            Err("Rollback enabled".into())
         } else {
             *self.rollback.write().unwrap() = false;
             Ok(())
