@@ -13,11 +13,9 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 [![GitHub license](https://img.shields.io/github/license/editso/fuso)](https://github.com/editso/fuso)
 [![Downloads](https://img.shields.io/github/downloads/editso/fuso/total?label=Release%20Download)](https://github.com/editso/fuso/releases/latest)
 
-### Fuso make PortForward & IntranetAccess Easy 😁
+### Fuso make PortForward & IntranetAccess Easy
 
-👉 这是一款用于内网穿透 端口转发的神器,帮助运维 开发 快速部署与接入内网 同时支持CobaltStrike 一键转发等功能 
-
-👉 还在因为工具的参数过多，体积大而烦恼吗? 我们只实现Socks5与端口转发，快捷的接入与转发内网流量且体积小方便实用
+👉 这是一款用于内网穿透 端口转发的工具,帮助运维,开发人员快速部署与接入内网
 
 👉 该项目可直接当做库来使用
 
@@ -31,30 +29,82 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 
 
 ### 👀如何使用 (How to use) ❓
+1. 你需要先[下载](https://github.com/editso/fuso/releases/latest)或[构建](#Build)`Fuso`
+2. `fuso` 分为客户端(`fuc`)与服务端(`fus`)
+3. 将你下载或构建好的`fus`程序[部署](#服务端部署)到服务器
+4. 将你下载或构建好的`fuc`程序[部署](#客户端部署)到你需要穿透的电脑上
 
-1. 你需要先[下载](https://github.com/editso/fuso/releases/latest)或[构建](#Build)Fuso
+#### 服务端部署
+1. 采用参数传递的形式来部署无需任何配置文件, 并且配置简单大多情况下可使用默认配置
 
-2. 服务端程序为`fus`, 客户端程序为`fuc`
+2. **参数说明**    
+`-h`: 绑定的地址
+`-p`: 监听的端口, 也就是客户端需要连接到服务端的端口  
+`-x`: `xor`加密的`key` (*目前暂时定义为`xor`加密的`key`, 未来可能因加密方式变化所改动*)  
+`-l`: 日志信息级别 (`debug`, `info`, `trace`, `error`, `warn`)  
+`-v`: 该参数打印的版本目前无效  
+`-h`: 获取帮助信息
 
-3. 测试  
-   1. 运行`fus`(服务端默认监听`9003`端口) 与 `fuc`(客户端默认转发`80`端口)
-   2. 确保服务端端口(`9003`)未被使用
-   3. 确保转发的端口(`80`)有服务在运行
-   4. 转发成功后需要访问的端口由服务端随机分配
-   5. 服务端出现 **New mapping xxxx -> xxxx**日志则代表转发服务已准备就绪
-   
-4. 配置  
-   `Fuso` 的所有配置都是通过参数传递的方式  
-   打开终端运行 `[fus or fuc] --help` 即可获取帮助信息
 
-5. 高级用法 `>1.0.2`  
-   1. 支持从客户端指定服务端要监听的端口(*前提你所指定的端口没有被占用!*) 用法:  
-       `fuc [--bind or -b] 端口`
-   2. 支持多连接
-   3. 级联代理(`桥接模式`), 支持级联代理, 用法:  
-      开启桥模式 `fuc [--bridge ] 端口` **开启后它既支持桥接也支持穿透互不影响**  
-      使用 `fuc 已开启桥接模式的地址 端口` 其它参数基本一致
+#### 客户端部署
+客户端配置相对服务端来说可能会复杂一点, 但大多数情况下也可使用默认配置
 
+1 **参数说明** 
+fuc [options] <server-host> <server-port>
+
+`<server-host>`: 服务端地址, 支持域名  
+`<server-port>`: 服务端监听的端口  
+`-h`: 需要转发的地址, 也就是穿透地址  
+`-p`: 转发的端口, 需要配合 `-h`参数  
+`-b`: 真实映射成功后访问的端口号, 不指定将自动分配  
+`-n`: 一个标识, 映射服务的名称  
+`-w`: 使用`Websocket`进程握手连接  
+`-x`: `xor`加密的`key` (*目前暂时定义为`xor`加密的`key`, 未来可能因加密方式  变化所改动*)  
+`-l`: 日志信息级别 (`debug`, `info`, `trace`, `error`, `warn`)  
+`--bridge-host`: 桥接服务监听的地址  
+`--bridge-port`: 桥接服务监听的端口  
+
+```
+# 一个转发例子
+# 服务端绑定在 xxx.xxx.xxx.xxx:9003
+# 转发内网中 10.10.10.8:80 到 xxx.xxx.xxx.xxx:8080
+# 需要注意的是:
+# 10.10.10.8 必须是能 ping 通的
+# 80 端口必须有服务在运行
+# 服务端已经在运行,并且服务端80端口没有被占用
+
+# 运行: 
+> fuc -h 10.10.10.8 -p 80 -b 8080 xxx.xxx.xxx.xxx 9003
+
+# 该命令运行后既可以是转发模式, 也可以是Socks5模式都可以使用8080端口进行访问
+
+
+# 一个桥接例子
+# 什么时候能用到桥接模式呢? 
+# 比如: 
+#  你的内网中只有一台机器可以出网, 但是我想访问不能出网机器上所运行的服务
+#  那么此时就可以使用桥接模式, 通过可以在出网的机器上开启桥接模式来转发不能出网的服务
+#  前提是你不能出网的机器和可以出网的机器在同一个内网中, 并且可以相互 ping 通
+
+# 在可以出网的机器上开启桥接 (0.0.0.0:9004)
+# 假设可以出网的内网ip地址为 10.10.10.5
+# 运行:
+> fuc -h 10.10.10.8 -p 80 -b 8080 --bridge-host 0.0.0.0 --bridge-port 9004 xxx.xxx.xxx.xxx 9003
+
+# 在不可以出网的机器上需要穿透80服务, 并且服务端监听8081端口
+# 此时fuc的服务端地址就不应该是服务器地址, 因为并不能出网, 所有需要连接到开启桥接服务的地址
+# 运行:
+> fuc -h 127.0.0.1 -p 80 -b 8081 10.10.10.5 9004
+
+
+# 另一种桥接做法
+# 假设不能出网机器的ip地址为 10.10.10.6
+# 在可以出网的机器上运行:
+> fuc -h 10.10.10.6 -p 80 -b 8081 xxx.xxx.xxx.xxx 9003
+
+# 此时也可以达到效果, 但是这样一来可以出网的就无法转发自己所监听的服务
+
+```
 
 ### 🤔Features
 | Name           | <font color="green">✔(Achieved)</font> / <font color="red">❌(Unrealized)</font>) |
@@ -67,7 +117,12 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 | 多映射         | <font color="green">✔</font>                                                     |
 | 级联代理       | <font color="green">✔</font>                                                     |
 | 数据传输压缩   | ❌                                                                                |
+| Websocket      | <font color="green">✔</font>                                                     |
 
+
+### 部署
+
+### Build
 
 ### 😶部分功能还待完善敬请期待..
 

@@ -116,7 +116,7 @@ impl UdpListener {
             loop {
                 let mut buf = Vec::new();
 
-                buf.resize(1350, 0);
+                buf.resize(MTU_BUF_SIZE, 0);
 
                 let packet = udp.recv_from(&mut buf).await;
 

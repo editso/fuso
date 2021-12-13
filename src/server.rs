@@ -1,6 +1,6 @@
 use std::process::exit;
 
-use clap::{App, Arg};
+use clap::{App, AppSettings, Arg, ArgSettings, SubCommand};
 use fuso::parse_addr;
 use fuso_core::{
     cipher::{Security, Xor},
@@ -11,7 +11,7 @@ use fuso_core::{
 };
 
 use fuso_socks::{AsyncUdpForward, Socks, Socks5Ex};
-use futures::{StreamExt, TryFutureExt};
+use futures::{AsyncReadExt, AsyncWriteExt, StreamExt, TryFutureExt};
 use smol::Executor;
 
 fn main() {
@@ -89,40 +89,63 @@ fn main() {
                 bind_addr: server_bind_addr,
             })
             .chain_handler(|chain| {
-                chain.next(|mut tcp, cx| async move {
-                    let action: Action = tcp.recv().await?.try_into()?;
-                    match action {
-                        Action::TcpBind(name, addr) => {
-                            match cx.spawn(tcp.clone(), addr, name).await {
-                                Ok(conv) => {
-                                    log::debug!(
-                                        "[fuso] accept conv={}, addr={}",
-                                        conv,
-                                        tcp.peer_addr().unwrap(),
-                                    );
-                                    Ok(State::Accept(()))
-                                }
-                                Err(e) => {
-                                    log::warn!(
-                                        "[fuso] Failed to open the mapping {}",
-                                        e.to_string()
-                                    );
-                                    let _ = tcp.send(Action::Err(e.to_string()).into()).await?;
-                                    Ok(State::Accept(()))
+                chain
+                    .next(|mut tcp, _| async move {
+                        let _ = tcp.begin().await;
+                        let mut buf = Vec::new();
+                        buf.resize(1024, 0);
+
+                        let n = tcp.read(&mut buf).await?;
+                        buf.truncate(n);
+                       
+                        if buf.starts_with(b"GET / HTTP/1.1") && buf.ends_with(b"\r\n\r\n") {
+                            log::debug!("{}", String::from_utf8_lossy(&buf));
+                            log::info!("Attempt to do a websocket handshake");
+                            tcp.write_all(b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n").await?;
+                        }else{
+                            let _ = tcp.back().await;
+                        }
+
+                        Ok(State::Next)
+                    })
+                    .next(|mut tcp, cx| async move {
+                        let action: Action = tcp.recv().await?.try_into()?;
+                        let _ = tcp.begin().await;
+                        match action {
+                            Action::TcpBind(name, addr) => {
+                                match cx.spawn(tcp.clone(), addr, name).await {
+                                    Ok(conv) => {
+                                        log::debug!(
+                                            "[fuso] accept conv={}, addr={}",
+                                            conv,
+                                            tcp.peer_addr().unwrap(),
+                                        );
+                                        Ok(State::Accept(()))
+                                    }
+                                    Err(e) => {
+                                        log::warn!(
+                                            "[fuso] Failed to open the mapping {}",
+                                            e.to_string()
+                                        );
+                                        let _ = tcp.send(Action::Err(e.to_string()).into()).await?;
+                                        Ok(State::Accept(()))
+                                    }
                                 }
                             }
+                            Action::UdpBind(conv) => {
+                                cx.route(conv, action, tcp).await?;
+                                Ok(State::Accept(()))
+                            }
+                            Action::Connect(conv, _) => {
+                                cx.route(conv, action, tcp).await?;
+                                Ok(State::Accept(()))
+                            }
+                            _ => {
+                                let _ = tcp.back().await;
+                                Ok(State::Next)
+                            }
                         }
-                        Action::UdpBind(conv) => {
-                            cx.route(conv, action, tcp).await?;
-                            Ok(State::Accept(()))
-                        }
-                        Action::Connect(conv, _) => {
-                            cx.route(conv, action, tcp).await?;
-                            Ok(State::Accept(()))
-                        }
-                        _ => Ok(State::Next),
-                    }
-                })
+                    })
             })
             .chain_strategy(|chain| {
                 chain

@@ -18,13 +18,13 @@ pub trait Security<T, O> {
 }
 
 pub trait Cipher {
-    fn poll_decode(
+    fn poll_decrypt(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         data: &[u8],
     ) -> Poll<std::io::Result<Vec<u8>>>;
 
-    fn poll_encode(
+    fn poll_encrypt(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         data: &[u8],
@@ -101,7 +101,7 @@ where
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
                 Poll::Ready(Ok(0)) => Poll::Ready(Ok(0)),
-                Poll::Ready(Ok(n)) => match Pin::new(&mut self.cipher).poll_decode(cx, &buf[..n]) {
+                Poll::Ready(Ok(n)) => match Pin::new(&mut self.cipher).poll_decrypt(cx, &buf[..n]) {
                     Poll::Pending => Poll::Pending,
                     Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
                     Poll::Ready(Ok(data)) => {
@@ -137,7 +137,7 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
-        match Pin::new(&mut self.cipher).poll_encode(cx, buf) {
+        match Pin::new(&mut self.cipher).poll_encrypt(cx, buf) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
             Poll::Ready(Ok(data)) => Pin::new(&mut self.target).poll_write(cx, &data),
@@ -170,7 +170,7 @@ impl Xor {
 
 impl Cipher for Xor {
     #[inline]
-    fn poll_decode(
+    fn poll_decrypt(
         self: std::pin::Pin<&mut Self>,
         _: &mut std::task::Context<'_>,
         data: &[u8],
@@ -181,7 +181,7 @@ impl Cipher for Xor {
     }
 
     #[inline]
-    fn poll_encode(
+    fn poll_encrypt(
         self: std::pin::Pin<&mut Self>,
         _: &mut std::task::Context<'_>,
         data: &[u8],
