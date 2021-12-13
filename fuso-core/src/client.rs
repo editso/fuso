@@ -1,8 +1,7 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use fuso_api::{
-    async_trait, AsyncTcpSocketEx, Error, Forward, FusoListener, FusoPacket, FusoStreamEx, Result,
-    Spawn,
+    async_trait, AsyncTcpSocketEx, Error, Forward, FusoListener, FusoPacket, Result, Spawn,
 };
 
 use futures::{AsyncRead, AsyncReadExt};
@@ -12,10 +11,14 @@ use smol::{
     stream::StreamExt,
 };
 
-use crate::retain::{HeartGuard, Heartbeat};
 use crate::{
     bridge::Bridge,
+    handsnake::HandsnakeEx,
     packet::{Action, Addr},
+};
+use crate::{
+    handsnake::Handsnake,
+    retain::{HeartGuard, Heartbeat},
 };
 
 #[allow(unused)]
@@ -31,21 +34,27 @@ pub struct Fuso {
     accept_ax: Receiver<Reactor>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Config {
     // 名称, 可选的
-    pub name: Option<String>,
+    pub forward_name: Option<String>,
     // 服务端地址
     pub server_addr: String,
     // 自定义服务绑定的端口, 如果不指定默认为随机分配
-    pub server_bind_port: u16,
+    pub visit_port: Option<u16>,
     // 桥接监听的地址
     pub bridge_addr: Option<String>,
     // 转发地址
     pub forward_addr: String,
     // 首次建立连接发送的头部信息
-    pub hand_snake: Option<String>,
-    pub skip_size: usize,
+    pub handsnake: Option<Handsnake>,
+
+    pub socks_passwd: Option<String>,
+    // forward type
+    pub forward_type: Option<String>,
+    pub crypt_type: Option<String>,
+
+    pub crypt_secret: Option<String>,
 }
 
 pub async fn skip<R>(reader: &mut R, max: usize) -> std::io::Result<()>
@@ -104,13 +113,10 @@ impl Fuso {
 
     async fn run_udp_forward(conv: u64, server_addr: SocketAddr, cfg: Arc<Config>) -> Result<()> {
         let mut udp_bind = TcpStream::connect(server_addr).await?;
-        let skip_size = cfg.skip_size.clone();
 
-        udp_bind
-            .send_opt_data(cfg.hand_snake.clone().map(|h| h.into()))
-            .await?;
-
-        skip(&mut udp_bind, skip_size).await?;
+        if let Some(handsnake) = cfg.handsnake.as_ref() {
+            udp_bind.write_handsnake(handsnake).await?;
+        }
 
         udp_bind.send(Action::UdpBind(conv).into()).await?;
 
@@ -199,28 +205,34 @@ impl Fuso {
         Ok(())
     }
 
-    pub async fn bind(config: Config) -> Result<Self> {
+    pub async fn with_config(config: Config) -> Result<Self> {
         let cfg = Arc::new(config);
         let server_addr = cfg.server_addr.clone();
-        let server_bind_port = cfg.server_bind_port.clone();
+        let visit_addr = cfg.visit_port.clone();
         let bridge_addr = cfg.bridge_addr.clone();
-        let hand_snake = cfg.hand_snake.clone();
-        let name = cfg.name.clone();
-        let skip_size = cfg.skip_size.clone();
+        let handsnake = cfg.handsnake.clone();
 
         let mut stream = server_addr.tcp_connect().await?;
 
-        log::debug!("{}", server_bind_port);
+        if let Some(handsnake) = handsnake.as_ref() {
+            stream.write_handsnake(handsnake).await?
+        }
 
-        let bind_addr = server_bind_port
-            .ne(&0)
-            .then(|| SocketAddr::from(([0, 0, 0, 0], server_bind_port)));
+        let visit_addr: Option<SocketAddr> =
+            visit_addr.map_or(None, |port| Some(([0, 0, 0, 0], port).into()));
 
-        stream.send_opt_data(hand_snake.map(|e| e.into())).await?;
+        let json = serde_json::json!({
+            "forward_name": cfg.forward_name,
+            "visit_addr": visit_addr,
+            "bridge_addr": bridge_addr,
+            "socks_passwd": cfg.socks_passwd,
+            "forward_type": cfg.forward_type,
+            "crypt_type": cfg.crypt_type,
+            "crypt_secret": cfg.crypt_secret
+        })
+        .to_string();
 
-        skip(&mut stream, skip_size).await?;
-
-        stream.send(Action::TcpBind(name, bind_addr).into()).await?;
+        stream.send(Action::TcpBind(Some(json)).into()).await?;
 
         let action: Action = stream.recv().await?.try_into()?;
 
@@ -264,7 +276,7 @@ impl Fuso {
 
 impl Reactor {
     #[inline]
-    pub async fn join(self) -> Result<(TcpStream, TcpStream)> {
+    pub async fn join(self) -> Result<(TcpStream, TcpStream, Arc<Config>)> {
         let (id, addr) = {
             match self.action {
                 Action::Forward(id, Addr::Domain(domain, port)) => {
@@ -294,15 +306,13 @@ impl Reactor {
             .await
             .map_err(|e| Error::with_io(e))?;
 
-        stream
-            .send_opt_data(self.config.hand_snake.clone().map(|h| h.into()))
-            .await?;
-
-        skip(&mut stream, self.config.skip_size).await?;
+        if let Some(handsnake) = self.config.handsnake.as_ref() {
+            stream.write_handsnake(handsnake).await?;
+        }
 
         stream.send(Action::Connect(self.conv, id).into()).await?;
 
-        Ok((stream, to))
+        Ok((stream, to, self.config))
     }
 }
 

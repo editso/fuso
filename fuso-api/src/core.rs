@@ -333,7 +333,7 @@ where
     #[inline]
     fn detach(self) {
         static GLOBAL: once_cell::sync::Lazy<Executor<'_>> = once_cell::sync::Lazy::new(|| {
-            println!("cpu {}", num_cpus::get());
+            log::info!("spawn thread count {}", num_cpus::get());
             for n in 0..num_cpus::get() {
                 log::trace!("spawn executor thread fuso-{}", n);
                 std::thread::Builder::new()
@@ -537,6 +537,9 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
+        *self.rollback.write().unwrap() = false;
+        self.store.lock().unwrap().clear();
+
         Pin::new(&mut self.target).poll_write(cx, buf)
     }
 

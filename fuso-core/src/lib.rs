@@ -5,6 +5,7 @@ pub mod cmd;
 pub mod core;
 pub mod dispatch;
 pub mod handler;
+pub mod handsnake;
 pub mod packet;
 pub mod retain;
 pub mod udp;
@@ -56,7 +57,7 @@ mod tests {
     use smol::net::TcpStream;
 
     use crate::{
-        core::{self, Config},
+        core::{self, FusoConfig},
         dispatch::State,
         handler::ChainHandler,
         packet::{Action, Addr},
@@ -72,10 +73,7 @@ mod tests {
     fn test_packet() {
         init_logger();
 
-        let action = Action::TcpBind(
-            Some("hello world".into()),
-            Some("127.0.0.1:80".parse().unwrap()),
-        );
+        let action = Action::TcpBind(Some("hello world".into()));
 
         let packet: Packet = action.into();
 
@@ -122,7 +120,7 @@ mod tests {
             let builder = crate::core::Fuso::builder();
 
             let mut fuso = builder
-                .with_config(Config {
+                .with_config(FusoConfig {
                     debug: false,
                     bind_addr: "127.0.0.1:9999".parse().unwrap(),
                 })
@@ -131,9 +129,9 @@ mod tests {
                         let action: Action = tcp.recv().await?.try_into()?;
 
                         match action {
-                            Action::TcpBind(name, addr) => {
+                            Action::TcpBind(cfg) => {
                                 let client_addr = tcp.peer_addr().unwrap();
-                                let conv = cx.spawn(tcp, addr, name).await?;
+                                let conv = cx.spawn(tcp, cfg).await?;
                                 log::debug!(
                                     "[fuso] accept conv={}, addr={}, name={}",
                                     conv,

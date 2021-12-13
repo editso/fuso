@@ -1,224 +1,142 @@
-use std::{process::exit, time::Duration};
+use std::{ time::Duration};
 
-use clap::{App, Arg};
-use fuso::parse_addr;
+use clap::{Parser};
+
 use fuso_core::{
     cipher::{Security, Xor},
-    client::Fuso,
-    Forward, Spawn,
+    client::{Fuso, Config},
+    Forward, Spawn, handsnake::Handsnake,
 };
+
+
 use futures::{StreamExt, TryFutureExt};
 use smol::Executor;
 
+
+#[derive(Debug, Parser)]
+#[clap(about, version)]
+struct FusoArgs {
+    /// 服务端主机地址
+    #[clap(default_value = "127.0.0.1")]
+    server_host: String,
+
+    /// 服务端监听的端口
+    #[clap(default_value = "9003")]
+    server_port: u16,
+
+    /// 转发主机地址
+    #[clap(
+        long,
+        default_value = "127.0.0.1",
+        takes_value = true,
+        display_order = 1
+    )]
+    forward_host: String,
+
+    /// 转发端口
+    #[clap(long, default_value = "80", takes_value = true, display_order = 2)]
+    forward_port: String,
+
+    /// 从公网访问的端口, 默认将自动分配
+    #[clap(short = 'b', long, takes_value = true, display_order = 3)]
+    visit_port: Option<u16>,
+
+    /// 转发服务名称
+    #[clap(short='n', long = "name", takes_value = true, display_order = 4)]
+    forward_name: Option<String>,
+
+    /// 加密类型
+    #[clap(long, default_value = "xor", takes_value=true, possible_values = ["xor"], display_order = 5)]
+    crypt_type: String,
+
+    /// 加密所需密钥
+    #[clap(long, default_value = "27", takes_value = true, display_order = 6)]
+    crypt_secret: String,
+
+    /// 握手方式, 默认不进行握手
+    #[clap(long,  possible_values = ["websocket"], takes_value=true, display_order = 7)]
+    handsnake: Option<String>,
+
+    /// 本地桥接绑定地址
+    #[clap(long, display_order = 8, takes_value=true)]
+    bridge_host: Option<String>,
+
+    /// 本地桥接监听端口
+    #[clap(long, display_order = 9, takes_value=true)]
+    bridge_port: Option<u16>,
+
+    /// 转发类型
+    #[clap(short = 't', long, default_value = "all", display_order = 10, takes_value=true, possible_values = ["all", "socks5", "forward"])]
+    forward_type: String,
+
+    /// socks5 连接密码, 默认不需要密码
+    #[clap(long = "s5passwd", takes_value=true)]
+    socks_password: Option<String>,  
+    
+    /// 日志级别
+    #[clap(
+        short, 
+        long, 
+        default_value = "info", 
+        takes_value=true, 
+        display_order = 11,
+        possible_values = ["off", "error", "warn", "info", "debug", "trace"], 
+    )]
+    log_level: log::LevelFilter,
+}
+
+
 fn main() {
-    let app = App::new("fuso")
-        .version("v1.0.3")
-        .author("https://github.com/editso/fuso")
-        .arg(
-            Arg::new("server-host")
-                .default_value("127.0.0.1")
-                .about("服务端监听的地址"),
-        )
-        .arg(
-            Arg::new("server-port")
-                .default_value("9003")
-                .about("服务端监听的端口"),
-        )
-        .arg(
-            Arg::new("forward-host")
-                .short('h')
-                .long("host")
-                .default_value("127.0.0.1")
-                .display_order(1)
-                .about("转发地址, (如果开启了socks代理该参数将无效)"),
-        )
-        .arg(
-            Arg::new("forward-port")
-                .short('p')
-                .long("port")
-                .default_value("80")
-                .display_order(2)
-                .about("转发的端口 (如果开启了socks代理该参数将无效)"),
-        )
-        .arg(
-            Arg::new("service-bind-port")
-                .short('b')
-                .long("bind")
-                .validator(|port| {
-                    port.parse::<u16>()
-                        .map_or(Err(format!("Invalid port {}", port)), |_| Ok(()))
-                })
-                .display_order(5)
-                .takes_value(true)
-                .about("真实映射成功后访问的端口号, 不指定将自动分配"),
-        )
-        .arg(
-            Arg::new("xor-secret")
-                .long("xor")
-                .short('x')
-                .default_value("27")
-                .validator(|num| {
-                    num.parse::<u8>()
-                        .map_or(Err(String::from("Invalid number 0-255")), |_| Ok(()))
-                })
-                .display_order(4)
-                .about(
-                    "传输时使用异或加密的Key (Use exclusive OR encrypted key during transmission)",
-                ),
-        )
-        .arg(
-            Arg::new("bridge-bind-host")
-                .long("bridge-host")
-                .takes_value(true)
-                .display_order(5)
-                .about("桥接服务监听的地址"),
-        )
-        .arg(
-            Arg::new("bridge-bind-port")
-                .long("bridge-port")
-                .takes_value(true)
-                .validator(|port| {
-                    port.parse::<u16>()
-                        .map_or(Err(format!("Invalid port {}", port)), |_| Ok(()))
-                })
-                .display_order(6)
-                .about("桥接服务监听的端口"),
-        )
-        .arg(
-            Arg::new("name")
-                .long("name")
-                .short('n')
-                .takes_value(true)
-                .display_order(7)
-                .about("自定义当前映射服务的名称"),
-        )
-        .arg(
-            Arg::new("websocket")
-                .takes_value(true)
-                .default_value("false")
-                .short('w')
-                .long("websocket")
-                .possible_values(["true", "false"])
-                .about("使用Websocket进行握手"),
-        )
-        .arg(
-            Arg::new("log")
-                .short('l')
-                .possible_values(["debug", "info", "trace", "error"])
-                .default_value("info")
-                .about("日志级别"),
-        );
-
-    let matches = app.get_matches();
-
-    let server_addr = parse_addr(
-        matches.value_of("server-host").unwrap(),
-        matches.value_of("server-port").unwrap(),
-    );
-
-    let forward_host = matches.value_of("forward-host").unwrap();
-    let forward_port = matches.value_of("forward-port").unwrap();
-    let websocket: bool = matches.value_of("websocket").unwrap().parse().unwrap();
-
-    let forward_addr = parse_addr(forward_host, forward_port);
-
-    let name = matches
-        .value_of("name")
-        .map_or_else(|| None, |name| Some(name.to_string()));
-
-    let service_bind_port: u16 = matches
-        .value_of("service-bind-port")
-        .unwrap_or("0")
-        .parse()
-        .unwrap();
-
-    if server_addr.is_err() {
-        println!("Server address error: {}", server_addr.unwrap_err());
-        exit(1);
-    }
-
-    if forward_addr.is_err() {
-        println!("Parameter error: {}", forward_addr.unwrap_err());
-        exit(1);
-    }
-
-    let server_addr = server_addr.unwrap();
-
-    let xor_num: u8 = matches.value_of("xor-secret").unwrap().parse().unwrap();
-
+    let args = FusoArgs::parse();
+    
     env_logger::builder()
-        .filter_level(match matches.value_of("log").unwrap() {
-            "debug" => log::LevelFilter::Debug,
-            "info" => log::LevelFilter::Info,
-            "warn" => log::LevelFilter::Warn,
-            "error" => log::LevelFilter::Error,
-            _ => log::LevelFilter::Info,
-        })
-        .filter_module("fuso_socks", log::LevelFilter::Info)
-        .init();
+    .filter_level(args.log_level)
+    .format_timestamp_millis()
+    .init();
 
-    let bridge_addr = {
-        let bridge_bind_host = matches.value_of("bridge-bind-host").unwrap_or("0.0.0.0");
-        let bridge_bind_port = matches.value_of("bridge-bind-port");
+    let server_addr = format!("{}:{}", args.server_host, args.server_port);
 
-        if bridge_bind_port.is_none() {
-            None
-        } else {
-            parse_addr(bridge_bind_host, bridge_bind_port.unwrap()).map_or_else(
-                |s| {
-                    log::warn!("Incorrect bridge parameters: {}", s);
-                    None
-                },
-                |addr| Some(addr),
-            )
+    let handsnake = args.handsnake.map_or(None, |handsnake|{
+        match handsnake.as_str() {
+            "websocket" => {
+               Some(Handsnake{
+                prefix: "HTTP/1.1 101".into(),
+                suffix: "\r\n\r\n".into(),
+                max_bytes: 1024,
+                write: format!("GET / HTTP/1.1\r\nHost: {}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n", server_addr),
+            }) 
+            },
+            _ => None,
         }
+    });
+    
+    let config = Config{
+        forward_name: args.forward_name,
+        server_addr: server_addr,
+        visit_port: args.visit_port,
+        bridge_addr: Some(format!("{}:{}", args.bridge_host.unwrap_or("0.0.0.0".into()), args.bridge_port.unwrap_or(0))),
+        forward_addr: format!("{}:{}", args.forward_host, args.forward_port),
+        handsnake: handsnake,
+        socks_passwd: args.socks_password,
+        forward_type: Some(args.forward_type),
+        crypt_type: Some(args.crypt_type),
+        crypt_secret: Some(args.crypt_secret),
     };
 
-    log::info!(
-        "\nserver_addr={}\nxor_num={}\nbridge_listen_addr={}\n",
-        server_addr,
-        xor_num,
-        {
-            if bridge_addr.is_some() {
-                bridge_addr.clone().unwrap().to_string()
-            } else {
-                "--".to_string()
-            }
-        }
-    );
-
-
-    smol::block_on(async move {
+    let future = async move{
         loop {
-            Fuso::bind(fuso_core::client::Config {
-                name: name.clone(),
-                server_addr: server_addr.clone(),
-                server_bind_port: service_bind_port,
-                bridge_addr: bridge_addr.clone(),
-                forward_addr: format!("{}:{}", forward_host, forward_port),
-                hand_snake: {
-                    if websocket{
-                        Some(format!("GET / HTTP/1.1\r\nHost: {}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n", server_addr))
-                    }else{
-                        None
-                    }
-                },
-                skip_size: {
-                    if websocket{
-                        1024
-                    }else{
-                        0
-                    }
-                },
-            })
+            Fuso::with_config(config.clone())
             .map_ok(|fuso| {
                 let ex = Executor::new();
                 smol::block_on(ex.run(fuso.for_each(|reactor| async move {
-                    let cipher = Xor::new(xor_num);
+                    
                     reactor
                         .join()
-                        .map_ok(|(from, to)| {
+                        .map_ok(|(from, to, cfg)| {
                             async move {
+                                
+                                let cipher = Xor::new(27);
+
                                 let from = from.cipher(cipher).await;
 
                                 if let Err(e) = from.forward(to).await {
@@ -240,6 +158,7 @@ fn main() {
 
             log::debug!("[fuc] Try to reconnect");
         }
-    });
-}
+    };
 
+    smol::block_on(future);
+}
