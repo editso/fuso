@@ -27,8 +27,10 @@ path = "src/server.rs"
 name = "fuc"
 path = "src/client.rs"
 
-
 [dependencies]
+aes = {version = "0.7.5"}
+block-modes = "0.8.1"
+hex-literal = "0.3.4"
 log = {version = "0.4.14"}
 clap = {version = "3.0.0-beta.5", features = ["yaml"]}
 smol = {version = "1.2.5"}

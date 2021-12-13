@@ -32,7 +32,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct Config {
     pub debug: bool,
-    pub bind_addr: SocketAddr,
+    pub bind_addr: String,
 }
 
 #[allow(unused)]
@@ -121,7 +121,11 @@ impl FusoBuilder<Arc<Context>> {
         let (accept_ax, accept_tx) = unbounded();
 
         let bind_addr = config.bind_addr.clone();
-        let listen = bind_addr.tcp_listen().await?;
+
+        let listen = {
+            let bind_addr = bind_addr.clone();
+            bind_addr.tcp_listen().await?
+        };
 
         let handlers = Arc::new(self.handlers);
         let strategys = Arc::new(self.strategys);

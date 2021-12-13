@@ -17,7 +17,7 @@ pub struct Bridge {
 
 impl Bridge {
     #[inline]
-    pub async fn bind(bind_addr: SocketAddr, server_addr: SocketAddr) -> Result<Self> {
+    pub async fn bind(bind_addr: String, server_addr: SocketAddr) -> Result<Self> {
         let listen = bind_addr.tcp_listen().await?;
 
         let (accept_tx, accept_ax) = unbounded();

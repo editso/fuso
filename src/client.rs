@@ -93,6 +93,15 @@ fn main() {
                 .about("自定义当前映射服务的名称"),
         )
         .arg(
+            Arg::new("websocket")
+                .takes_value(true)
+                .default_value("false")
+                .short('w')
+                .long("websocket")
+                .possible_values(["true", "false"])
+                .about("使用Websocket进行握手"),
+        )
+        .arg(
             Arg::new("log")
                 .short('l')
                 .possible_values(["debug", "info", "trace", "error"])
@@ -109,6 +118,7 @@ fn main() {
 
     let forward_host = matches.value_of("forward-host").unwrap();
     let forward_port = matches.value_of("forward-port").unwrap();
+    let websocket: bool = matches.value_of("websocket").unwrap().parse().unwrap();
 
     let forward_addr = parse_addr(forward_host, forward_port);
 
@@ -177,14 +187,29 @@ fn main() {
         }
     );
 
+
     smol::block_on(async move {
         loop {
             Fuso::bind(fuso_core::client::Config {
                 name: name.clone(),
-                server_addr,
+                server_addr: server_addr.clone(),
                 server_bind_port: service_bind_port,
-                bridge_addr: bridge_addr,
+                bridge_addr: bridge_addr.clone(),
                 forward_addr: format!("{}:{}", forward_host, forward_port),
+                hand_snake: {
+                    if websocket{
+                        Some(format!("GET / HTTP/1.1\r\nHost: {}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n", server_addr))
+                    }else{
+                        None
+                    }
+                },
+                skip_size: {
+                    if websocket{
+                        1024
+                    }else{
+                        0
+                    }
+                },
             })
             .map_ok(|fuso| {
                 let ex = Executor::new();
@@ -199,7 +224,6 @@ fn main() {
                                 if let Err(e) = from.forward(to).await {
                                     log::debug!("[fuc] Forwarding failed {}", e);
                                 }
-
                             }
                             .detach()
                         })
@@ -218,3 +242,4 @@ fn main() {
         }
     });
 }
+

@@ -1,9 +1,11 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use fuso_api::{
-    async_trait, AsyncTcpSocketEx, Error, Forward, FusoListener, FusoPacket, Result, Spawn,
+    async_trait, AsyncTcpSocketEx, Error, Forward, FusoListener, FusoPacket, FusoStreamEx, Result,
+    Spawn,
 };
 
+use futures::{AsyncRead, AsyncReadExt};
 use smol::{
     channel::{unbounded, Receiver, Sender},
     net::{TcpStream, UdpSocket},
@@ -34,13 +36,35 @@ pub struct Config {
     // 名称, 可选的
     pub name: Option<String>,
     // 服务端地址
-    pub server_addr: SocketAddr,
+    pub server_addr: String,
     // 自定义服务绑定的端口, 如果不指定默认为随机分配
     pub server_bind_port: u16,
     // 桥接监听的地址
-    pub bridge_addr: Option<SocketAddr>,
+    pub bridge_addr: Option<String>,
     // 转发地址
     pub forward_addr: String,
+    // 首次建立连接发送的头部信息
+    pub hand_snake: Option<String>,
+    pub skip_size: usize,
+}
+
+pub async fn skip<R>(reader: &mut R, max: usize) -> std::io::Result<()>
+where
+    R: AsyncRead + Unpin + Send + Sync + 'static,
+{
+    if max == 0 {
+        return Ok(());
+    }
+
+    let mut buf = Vec::new();
+    buf.resize(max, 0);
+
+    let n = reader.read(&mut buf).await?;
+    buf.truncate(n);
+
+    log::info!("[skip] {}", n);
+
+    Ok(())
 }
 
 impl Fuso {
@@ -78,8 +102,15 @@ impl Fuso {
         Ok(())
     }
 
-    async fn run_udp_forward(conv: u64, server_addr: SocketAddr) -> Result<()> {
+    async fn run_udp_forward(conv: u64, server_addr: SocketAddr, cfg: Arc<Config>) -> Result<()> {
         let mut udp_bind = TcpStream::connect(server_addr).await?;
+        let skip_size = cfg.skip_size.clone();
+
+        udp_bind
+            .send_opt_data(cfg.hand_snake.clone().map(|h| h.into()))
+            .await?;
+
+        skip(&mut udp_bind, skip_size).await?;
 
         udp_bind.send(Action::UdpBind(conv).into()).await?;
 
@@ -143,10 +174,7 @@ impl Fuso {
         }
     }
 
-    async fn run_bridge(
-        bridge_bind_addr: SocketAddr,
-        server_connect_addr: SocketAddr,
-    ) -> Result<()> {
+    async fn run_bridge(bridge_bind_addr: String, server_connect_addr: SocketAddr) -> Result<()> {
         let mut core = Bridge::bind(bridge_bind_addr, server_connect_addr).await?;
 
         log::info!("[bridge] Bridge service opened successfully");
@@ -176,7 +204,9 @@ impl Fuso {
         let server_addr = cfg.server_addr.clone();
         let server_bind_port = cfg.server_bind_port.clone();
         let bridge_addr = cfg.bridge_addr.clone();
+        let hand_snake = cfg.hand_snake.clone();
         let name = cfg.name.clone();
+        let skip_size = cfg.skip_size.clone();
 
         let mut stream = server_addr.tcp_connect().await?;
 
@@ -186,6 +216,10 @@ impl Fuso {
             .ne(&0)
             .then(|| SocketAddr::from(([0, 0, 0, 0], server_bind_port)));
 
+        stream.send_opt_data(hand_snake.map(|e| e.into())).await?;
+
+        skip(&mut stream, skip_size).await?;
+
         stream.send(Action::TcpBind(name, bind_addr).into()).await?;
 
         let action: Action = stream.recv().await?.try_into()?;
@@ -194,14 +228,14 @@ impl Fuso {
 
         match action {
             Action::Accept(conv) => {
-                log::debug!("Service binding is successful {}", conv);
+                log::info!("Service binding is successful {}", conv);
 
                 let server_addr = stream.peer_addr()?;
 
                 async move {
                     let race_future = smol::future::race(
-                        Self::run_core(conv, cfg, stream, accept_tx),
-                        Self::run_udp_forward(conv, server_addr),
+                        Self::run_core(conv, cfg.clone(), stream, accept_tx),
+                        Self::run_udp_forward(conv, server_addr, cfg.clone()),
                     );
 
                     let bridge_future = async move {
@@ -259,6 +293,12 @@ impl Reactor {
         let mut stream = TcpStream::connect(self.addr)
             .await
             .map_err(|e| Error::with_io(e))?;
+
+        stream
+            .send_opt_data(self.config.hand_snake.clone().map(|h| h.into()))
+            .await?;
+
+        skip(&mut stream, self.config.skip_size).await?;
 
         stream.send(Action::Connect(self.conv, id).into()).await?;
 

@@ -73,6 +73,11 @@ pub trait FusoPacket {
 }
 
 #[async_trait]
+pub trait FusoStreamEx {
+    async fn send_opt_data(&mut self, data: Option<Bytes>) -> Result<()>;
+}
+
+#[async_trait]
 pub trait FusoEncoder<OUT> {
     async fn encode(&self) -> Result<OUT>;
 }
@@ -165,6 +170,7 @@ impl Packet {
                 let magic = packet.get_u32();
 
                 if Self::magic() != magic {
+                    log::warn!("{:?}", String::from_utf8_lossy(&data));
                     return Err(error::ErrorKind::BadPacket.into());
                 }
 
@@ -204,10 +210,12 @@ impl Packet {
         self.cmd
     }
 
+    #[inline]
     pub fn get_data(&self) -> &Bytes {
         &self.data
     }
 
+    #[inline]
     pub fn get_mut_data(&mut self) -> &mut Bytes {
         &mut self.data
     }
@@ -301,6 +309,22 @@ where
     }
 }
 
+#[async_trait]
+impl<T> FusoStreamEx for T
+where
+    T: AsyncWrite + Unpin + Send + Sync + 'static,
+{
+    #[inline]
+    async fn send_opt_data(&mut self, mut data: Option<Bytes>) -> Result<()> {
+        if let Some(data) = data.take() {
+            log::debug!("[send_opt_data] len={}", data.len());
+            self.write_all(&data).await.map_err(|e| e.into())
+        } else {
+            Ok(())
+        }
+    }
+}
+
 impl<T, A> Spawn for T
 where
     A: Send + 'static,
@@ -309,8 +333,9 @@ where
     #[inline]
     fn detach(self) {
         static GLOBAL: once_cell::sync::Lazy<Executor<'_>> = once_cell::sync::Lazy::new(|| {
-            for n in 1..num_cpus::get() {
-                log::trace!("spwan executor thread fuso-{}", n);
+            println!("cpu {}", num_cpus::get());
+            for n in 0..num_cpus::get() {
+                log::trace!("spawn executor thread fuso-{}", n);
                 std::thread::Builder::new()
                     .name(format!("fuso-{}", n))
                     .spawn(|| loop {
@@ -353,6 +378,19 @@ where
 
 #[async_trait]
 impl AsyncTcpSocketEx<TcpListener, TcpStream> for SocketAddr {
+    #[inline]
+    async fn tcp_listen(self) -> Result<TcpListener> {
+        TcpListener::bind(self).await.map_err(|e| e.into())
+    }
+
+    #[inline]
+    async fn tcp_connect(self) -> Result<TcpStream> {
+        TcpStream::connect(self).await.map_err(|e| e.into())
+    }
+}
+
+#[async_trait]
+impl AsyncTcpSocketEx<TcpListener, TcpStream> for String {
     #[inline]
     async fn tcp_listen(self) -> Result<TcpListener> {
         TcpListener::bind(self).await.map_err(|e| e.into())
