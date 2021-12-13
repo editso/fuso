@@ -120,10 +120,6 @@ fuc [options] <server-host> <server-port>
 | Websocket      | <font color="green">✔</font>                                                     |
 
 
-### 部署
-
-### Build
-
 ### 😶部分功能还待完善敬请期待..
 
 ### 注意
