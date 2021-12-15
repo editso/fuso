@@ -1,5 +1,4 @@
 pub mod bridge;
-pub mod cipher;
 pub mod client;
 pub mod cmd;
 pub mod core;
@@ -9,12 +8,21 @@ pub mod handsnake;
 pub mod packet;
 pub mod retain;
 pub mod udp;
+pub mod auth;
+
+
+mod builder;
+
 
 use std::sync::Arc;
 
 pub use fuso_api::*;
 use futures::{AsyncRead, AsyncReadExt, AsyncWrite};
 use smol::lock::Mutex;
+pub use builder::*;
+
+pub use fuso_api::DynCipher;
+
 
 #[inline]
 pub fn split<T>(o: T) -> (T, T)
@@ -57,7 +65,7 @@ mod tests {
     use smol::net::TcpStream;
 
     use crate::{
-        core::{self, FusoConfig},
+        core::{self, GlobalConfig},
         dispatch::State,
         handler::ChainHandler,
         packet::{Action, Addr},
@@ -120,7 +128,7 @@ mod tests {
             let builder = crate::core::Fuso::builder();
 
             let mut fuso = builder
-                .with_config(FusoConfig {
+                .use_global_config(GlobalConfig {
                     debug: false,
                     bind_addr: "127.0.0.1:9999".parse().unwrap(),
                 })

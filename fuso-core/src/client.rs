@@ -1,10 +1,11 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use fuso_api::{
-    async_trait, AsyncTcpSocketEx, Error, Forward, FusoListener, FusoPacket, Result, Spawn,
+    async_trait, Advice, AsyncTcpSocketEx, DynCipher, Error, Forward, FusoListener, FusoPacket,
+    FusoStreamEx, Result, Security, SecurityEx, Spawn,
 };
 
-use futures::{AsyncRead, AsyncReadExt};
+use futures::{AsyncRead, AsyncWrite};
 use smol::{
     channel::{unbounded, Receiver, Sender},
     net::{TcpStream, UdpSocket},
@@ -16,6 +17,7 @@ use crate::{
     handsnake::HandsnakeEx,
     packet::{Action, Addr},
 };
+
 use crate::{
     handsnake::Handsnake,
     retain::{HeartGuard, Heartbeat},
@@ -23,15 +25,20 @@ use crate::{
 
 #[allow(unused)]
 #[derive(Debug)]
-pub struct Reactor {
+pub struct FusoProxy {
     conv: u64,
     action: Action,
-    addr: SocketAddr,
+    addr: String,
     config: Arc<Config>,
 }
 
 pub struct Fuso {
-    accept_ax: Receiver<Reactor>,
+    accept_ax: Receiver<FusoProxy>,
+}
+
+pub struct Builder {
+    config: Option<Config>,
+    advices: Vec<Arc<dyn Advice<TcpStream, Box<DynCipher>> + Send + Sync + 'static>>,
 }
 
 #[derive(Debug, Clone)]
@@ -48,41 +55,142 @@ pub struct Config {
     pub forward_addr: String,
     // 首次建立连接发送的头部信息
     pub handsnake: Option<Handsnake>,
-
+    // sock5代理密码
     pub socks_passwd: Option<String>,
     // forward type
     pub forward_type: Option<String>,
+    // 传输加密类型
     pub crypt_type: Option<String>,
-
+    // 传输加密密钥
     pub crypt_secret: Option<String>,
 }
 
-pub async fn skip<R>(reader: &mut R, max: usize) -> std::io::Result<()>
-where
-    R: AsyncRead + Unpin + Send + Sync + 'static,
-{
-    if max == 0 {
-        return Ok(());
+#[derive(Clone)]
+pub struct Context {
+    pub(crate) advices: Vec<Arc<dyn Advice<TcpStream, Box<DynCipher>> + Send + Sync + 'static>>,
+    pub(crate) config: Arc<Config>,
+}
+
+impl Builder {
+    pub fn add_advice<A>(mut self, advice: A) -> Self
+    where
+        A: Advice<TcpStream, Box<DynCipher>> + Send + Sync + 'static,
+    {
+        self.advices.push(Arc::new(advice));
+        self
     }
 
-    let mut buf = Vec::new();
-    buf.resize(max, 0);
+    pub fn use_config(mut self, config: Config) -> Self {
+        self.config = Some(config);
+        self
+    }
 
-    let n = reader.read(&mut buf).await?;
-    buf.truncate(n);
+    pub async fn build(self) -> fuso_api::Result<Fuso> {
+        let cfg = Arc::new(self.config.expect("config required"));
 
-    log::info!("[skip] {}", n);
+        let cx = Context {
+            advices: self.advices,
+            config: cfg.clone(),
+        };
 
-    Ok(())
+        let server_addr = cfg.server_addr.clone();
+        let visit_addr = cfg.visit_port.clone();
+        let bridge_addr = cfg.bridge_addr.clone();
+        let handsnake = cfg.handsnake.clone();
+
+        let mut stream = server_addr.clone().tcp_connect().await?;
+
+        let server_socket_addr = stream.peer_addr().unwrap();
+
+        if let Some(handsnake) = handsnake.as_ref() {
+            stream.write_handsnake(handsnake).await?
+        }
+
+        let visit_addr: Option<SocketAddr> =
+            visit_addr.map_or(None, |port| Some(([0, 0, 0, 0], port).into()));
+
+        let cipher = stream.select_cipher(&cx.advices).await?;
+
+        let mut stream = if let Some(cipher) = cipher {
+            let cipher = stream.cipher(cipher);
+            cipher.as_fuso_stream()
+        } else {
+            stream.as_fuso_stream()
+        };
+
+        let json = serde_json::json!({
+            "forward_name": cfg.forward_name,
+            "visit_addr": visit_addr,
+            "bridge_addr": bridge_addr,
+            "socks_passwd": cfg.socks_passwd,
+            "forward_type": cfg.forward_type,
+            "crypt_type": cfg.crypt_type,
+            "crypt_secret": cfg.crypt_secret
+        })
+        .to_string();
+
+        stream.send(Action::TcpBind(Some(json)).into()).await?;
+
+        let action: Action = stream.recv().await?.try_into()?;
+
+        let (accept_tx, accept_ax) = unbounded();
+
+        match action {
+            Action::Accept(conv) => {
+                log::info!("Service binding is successful {}", conv);
+
+                // let server_addr = stream.peer_addr()?;
+                let server_socket_addr = server_socket_addr.clone();
+                let server_addr = server_addr.clone();
+
+                async move {
+                    let race_future = smol::future::race(
+                        Fuso::run_core(conv, cfg.clone(), stream, accept_tx, server_addr.clone()),
+                        Fuso::run_udp_forward(conv, server_addr, cfg.clone()),
+                    );
+
+                    let bridge_future = async move {
+                        if bridge_addr.is_none() {
+                            smol::future::pending::<()>().await;
+                        } else {
+                            let _ =
+                                Fuso::run_bridge(bridge_addr.unwrap(), server_socket_addr).await;
+                        }
+                        Ok(())
+                    };
+
+                    let _ = smol::future::race(race_future, bridge_future).await;
+                }
+                .detach();
+            }
+            Action::Err(e) => {
+                log::error!("Server error message {}", e);
+                panic!()
+            }
+            _ => {}
+        }
+
+        Ok(Fuso { accept_ax })
+    }
 }
 
 impl Fuso {
-    async fn udp_forward(
-        mut core: HeartGuard<TcpStream>,
+    pub fn builder() -> Builder {
+        Builder {
+            advices: Vec::new(),
+            config: None,
+        }
+    }
+
+    async fn udp_forward<S>(
+        mut core: HeartGuard<S>,
         id: u64,
         addr: Addr,
         packet: Vec<u8>,
-    ) -> std::io::Result<()> {
+    ) -> std::io::Result<()>
+    where
+        S: AsyncRead + AsyncWrite + Clone + Unpin + Send + Sync + 'static,
+    {
         let udp = UdpSocket::bind("0.0.0.0:0").await?;
 
         let addr = match addr {
@@ -111,7 +219,7 @@ impl Fuso {
         Ok(())
     }
 
-    async fn run_udp_forward(conv: u64, server_addr: SocketAddr, cfg: Arc<Config>) -> Result<()> {
+    async fn run_udp_forward(conv: u64, server_addr: String, cfg: Arc<Config>) -> Result<()> {
         let mut udp_bind = TcpStream::connect(server_addr).await?;
 
         if let Some(handsnake) = cfg.handsnake.as_ref() {
@@ -145,12 +253,16 @@ impl Fuso {
         }
     }
 
-    async fn run_core(
+    async fn run_core<S>(
         conv: u64,
         config: Arc<Config>,
-        core: TcpStream,
-        accept_tx: Sender<Reactor>,
-    ) -> Result<()> {
+        core: S,
+        accept_tx: Sender<FusoProxy>,
+        server_addr: String,
+    ) -> Result<()>
+    where
+        S: AsyncRead + AsyncWrite + Clone + Unpin + Send + Sync + 'static,
+    {
         let mut core = core.guard(5000).await?;
 
         loop {
@@ -164,14 +276,14 @@ impl Fuso {
                     Self::udp_forward(core.clone(), id, addr, packet).detach()
                 }
                 action => {
-                    let reactor = Reactor {
+                    let proxy = FusoProxy {
                         conv,
                         action,
-                        addr: core.peer_addr().unwrap(),
+                        addr: server_addr.clone(),
                         config: config.clone(),
                     };
 
-                    accept_tx.send(reactor).await.map_err(|e| {
+                    accept_tx.send(proxy).await.map_err(|e| {
                         let err: fuso_api::Error = e.to_string().into();
                         err
                     })?;
@@ -204,93 +316,26 @@ impl Fuso {
 
         Ok(())
     }
-
-    pub async fn with_config(config: Config) -> Result<Self> {
-        let cfg = Arc::new(config);
-        let server_addr = cfg.server_addr.clone();
-        let visit_addr = cfg.visit_port.clone();
-        let bridge_addr = cfg.bridge_addr.clone();
-        let handsnake = cfg.handsnake.clone();
-
-        let mut stream = server_addr.tcp_connect().await?;
-
-        if let Some(handsnake) = handsnake.as_ref() {
-            stream.write_handsnake(handsnake).await?
-        }
-
-        let visit_addr: Option<SocketAddr> =
-            visit_addr.map_or(None, |port| Some(([0, 0, 0, 0], port).into()));
-
-        let json = serde_json::json!({
-            "forward_name": cfg.forward_name,
-            "visit_addr": visit_addr,
-            "bridge_addr": bridge_addr,
-            "socks_passwd": cfg.socks_passwd,
-            "forward_type": cfg.forward_type,
-            "crypt_type": cfg.crypt_type,
-            "crypt_secret": cfg.crypt_secret
-        })
-        .to_string();
-
-        stream.send(Action::TcpBind(Some(json)).into()).await?;
-
-        let action: Action = stream.recv().await?.try_into()?;
-
-        let (accept_tx, accept_ax) = unbounded();
-
-        match action {
-            Action::Accept(conv) => {
-                log::info!("Service binding is successful {}", conv);
-
-                let server_addr = stream.peer_addr()?;
-
-                async move {
-                    let race_future = smol::future::race(
-                        Self::run_core(conv, cfg.clone(), stream, accept_tx),
-                        Self::run_udp_forward(conv, server_addr, cfg.clone()),
-                    );
-
-                    let bridge_future = async move {
-                        if bridge_addr.is_none() {
-                            smol::future::pending::<()>().await;
-                        } else {
-                            let _ = Self::run_bridge(bridge_addr.unwrap(), server_addr).await;
-                        }
-                        Ok(())
-                    };
-
-                    let _ = smol::future::race(race_future, bridge_future).await;
-                }
-                .detach();
-            }
-            Action::Err(e) => {
-                log::error!("Server error message {}", e);
-                panic!()
-            }
-            _ => {}
-        }
-
-        Ok(Self { accept_ax })
-    }
 }
 
-impl Reactor {
+impl FusoProxy {
     #[inline]
     pub async fn join(self) -> Result<(TcpStream, TcpStream, Arc<Config>)> {
         let (id, addr) = {
             match self.action {
                 Action::Forward(id, Addr::Domain(domain, port)) => {
-                    log::info!("id={}, addr={}:{}", id, domain, port);
+                    log::info!("[domain] addr={}:{}", domain, port);
 
                     (id, format!("{}:{}", domain, port))
                 }
                 Action::Forward(id, Addr::Socket(addr)) if addr.port() == 0 => {
-                    log::info!("id={}, addr={}", id, addr);
+                    let addr = self.config.forward_addr.clone();
+                    log::info!("[forward_local] addr={}", addr);
 
-                    (id, self.config.forward_addr.clone())
+                    (id, addr)
                 }
                 Action::Forward(id, Addr::Socket(addr)) => {
-                    log::info!("id={}, addr={}", id, addr);
+                    log::info!("[addr] addr={}", addr);
 
                     (id, addr.to_string())
                 }
@@ -317,9 +362,9 @@ impl Reactor {
 }
 
 #[async_trait]
-impl FusoListener<Reactor> for Fuso {
+impl FusoListener<FusoProxy> for Fuso {
     #[inline]
-    async fn accept(&mut self) -> Result<Reactor> {
+    async fn accept(&mut self) -> Result<FusoProxy> {
         Ok(self.accept_ax.recv().await.map_err(|e| {
             Error::with_io(std::io::Error::new(
                 std::io::ErrorKind::Other,
@@ -336,7 +381,7 @@ impl FusoListener<Reactor> for Fuso {
 }
 
 impl futures::Stream for Fuso {
-    type Item = Reactor;
+    type Item = FusoProxy;
 
     #[inline]
     fn poll_next(

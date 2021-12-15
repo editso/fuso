@@ -11,7 +11,7 @@ pub struct Handsnake {
 
 #[async_trait]
 pub trait HandsnakeEx {
-    async fn handsnake(&mut self, handsnake: &Handsnake) -> std::io::Result<()>;
+    async fn handsnake(&mut self, handsnake: &Handsnake) -> std::io::Result<bool>;
     async fn write_handsnake(&mut self, handsnake: &Handsnake) -> std::io::Result<()>;
 }
 
@@ -20,7 +20,7 @@ impl<T> HandsnakeEx for T
 where
     T: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
 {
-    async fn handsnake(&mut self, handsnake: &Handsnake) -> std::io::Result<()> {
+    async fn handsnake(&mut self, handsnake: &Handsnake) -> std::io::Result<bool> {
         let len = handsnake.max_bytes;
 
         let mut buf = Vec::new();
@@ -43,9 +43,11 @@ where
             self.write_all(handsnake.write.as_bytes()).await?;
 
             log::debug!("[handsnake] write {}", handsnake.write.escape_default());
-        }
 
-        Ok(())
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     async fn write_handsnake(&mut self, handsnake: &Handsnake) -> std::io::Result<()> {

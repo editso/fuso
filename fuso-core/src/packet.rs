@@ -244,3 +244,21 @@ impl From<Action> for fuso_api::Packet {
         }
     }
 }
+
+impl From<fuso_socks::Addr> for Addr {
+    fn from(addr: fuso_socks::Addr) -> Self {
+        match addr {
+            fuso_socks::Addr::Socket(addr) => Self::Socket(addr),
+            fuso_socks::Addr::Domain(domain, port) => Self::Domain(domain, port),
+        }
+    }
+}
+
+impl From<Addr> for fuso_socks::Addr {
+    fn from(addr: Addr) -> Self {
+        match addr {
+            Addr::Socket(addr) => Self::Socket(addr),
+            Addr::Domain(domain, port) => Self::Domain(domain, port),
+        }
+    }
+}

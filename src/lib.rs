@@ -1,6 +1,8 @@
-mod crypt;
+pub mod crypt;
 
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+
+pub use crypt::*;
 
 pub fn parse_addr(host: &str, port: &str) -> std::result::Result<String, String> {
     host.parse::<IpAddr>().map_or(
@@ -38,6 +40,7 @@ mod tests {
         let _ = App::from(yaml).get_matches();
     }
 
+   
     fn init_logger() {
         env_logger::builder()
             .filter_level(log::LevelFilter::Debug)

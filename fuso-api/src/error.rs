@@ -30,12 +30,12 @@ impl Error {
     pub fn with_io(err: std::io::Error) -> Self {
         err.into()
     }
-}
 
-impl Display for Error {
-    #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Debug::fmt(&self.repr, f)
+    pub fn with_str<S>(err: S) -> Self
+    where
+        S: Into<String>,
+    {
+        err.into().into()
     }
 }
 
@@ -117,5 +117,20 @@ impl From<Error> for std::io::Error {
             Repr::IO(e) => e,
             Repr::Fuso(e) => std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e)),
         }
+    }
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let err = match &self.repr {
+            Repr::Fuso(kind) => match kind {
+                ErrorKind::BadPacket => format!("{}", "BadPacket"),
+                ErrorKind::UnHandler => format!("{}", "UnHandler"),
+                ErrorKind::Customer(customer) => customer.clone(),
+            },
+            Repr::IO(e) => e.to_string(),
+        };
+
+        writeln!(f, "{}", err)
     }
 }

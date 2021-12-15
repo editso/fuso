@@ -1,47 +1,46 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-use futures::{lock::Mutex, AsyncWriteExt, Future, TryStreamExt};
+use futures::{AsyncWriteExt, Future, TryStreamExt};
+
 use smol::{
     channel::{unbounded, Receiver, Sender},
     future::FutureExt,
-    lock::RwLock,
+    lock::{Mutex, RwLock},
     net::TcpStream,
     stream::StreamExt,
 };
 
-#[allow(unused)]
-use crate::cipher::{Security, Xor};
-
 use fuso_api::{
-    AsyncTcpSocketEx, FusoPacket, Result, SafeStream, SafeStreamEx, Spawn, UdpListener,
+    Advice, AsyncTcpSocketEx, Cipher, DynCipher, FusoAuth, FusoPacket, Result, SafeStream,
+    SafeStreamEx, Spawn, UdpListener,
 };
 
-use crate::{dispatch::DynHandler, handsnake::Handsnake, packet::Action};
+use crate::{dispatch::StrategyEx, retain::HeartGuard};
+
 use crate::{
-    dispatch::{SafeTcpStream, StrategyEx},
-    retain::HeartGuard,
+    dispatch::{DynHandler, SafeTcpStream},
+    handsnake::Handsnake,
+    packet::Action,
+    FusoBuilder,
 };
+
 use crate::{packet::Addr, retain::Heartbeat};
-
-use crate::{
-    dispatch::{Dispatch, State},
-    handler::ChainHandler,
-};
 
 use serde::Deserialize;
 
 #[derive(Debug, Clone)]
-pub struct FusoConfig {
+pub struct GlobalConfig {
     pub debug: bool,
     pub bind_addr: String,
 }
 
 #[allow(unused)]
-pub struct FusoStream<IO> {
+pub struct FusoProxy<P> {
     pub cfg: Arc<Config>,
-    pub from: IO,
-    pub to: IO,
+    pub(crate) session: Arc<Session>,
+    pub proxy_dst: P,
+    pub proxy_src: P,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -62,15 +61,21 @@ pub struct Config {
     pub crypt_secret: Option<String>,
 }
 
-pub struct Channel {
+pub struct Session {
     pub conv: u64,
-    pub alloc_id: Arc<Mutex<u64>>,
     pub name: String,
-    pub fuso_config: Arc<FusoConfig>,
     pub config: Arc<Config>,
-    pub tcp_core: HeartGuard<fuso_api::SafeStream<TcpStream>>,
-    pub udp_core: Arc<Mutex<Option<HeartGuard<fuso_api::SafeStream<TcpStream>>>>>,
-    pub strategys: Arc<Vec<Arc<Box<DynHandler<Arc<Channel>, Action>>>>>,
+    pub ciphers: Arc<
+        HashMap<
+            String,
+            Arc<Box<dyn Fn(Option<String>) -> Result<Box<DynCipher>> + Send + Sync + 'static>>,
+        >,
+    >,
+    pub alloc_id: Arc<Mutex<u64>>,
+    pub tcp_core: HeartGuard<SafeStream<TcpStream>>,
+    pub udp_core: Arc<Mutex<Option<HeartGuard<SafeStream<TcpStream>>>>>,
+    pub strategys: Arc<Vec<Arc<Box<DynHandler<Arc<Session>, Action>>>>>,
+    pub global_config: Arc<GlobalConfig>,
     pub tcp_forward_map: Arc<Mutex<HashMap<u64, SafeStream<TcpStream>>>>,
     pub udp_forward_map: Arc<Mutex<HashMap<u64, Sender<Vec<u8>>>>>,
 }
@@ -83,144 +88,47 @@ pub struct Udp {
 
 #[derive(Clone)]
 pub struct Context {
-    pub alloc_conv: Arc<Mutex<u64>>,
-    pub config: Arc<FusoConfig>,
-    pub handlers: Arc<Vec<Arc<Box<DynHandler<Arc<Self>, ()>>>>>,
-    pub strategys: Arc<Vec<Arc<Box<DynHandler<Arc<Channel>, Action>>>>>,
+    pub auth: Option<Arc<dyn FusoAuth<SafeTcpStream> + Send + Sync + 'static>>,
+    pub config: Arc<GlobalConfig>,
+    pub ciphers: Arc<
+        HashMap<
+            String,
+            Arc<Box<dyn Fn(Option<String>) -> Result<Box<DynCipher>> + Send + Sync + 'static>>,
+        >,
+    >,
     pub sessions: Arc<RwLock<HashMap<u64, Sender<(Action, SafeStream<TcpStream>)>>>>,
-    pub accept_ax: Sender<FusoStream<fuso_api::SafeStream<TcpStream>>>,
+    pub handlers: Arc<Vec<Arc<Box<DynHandler<Arc<Self>, ()>>>>>,
+    pub strategys: Arc<Vec<Arc<Box<DynHandler<Arc<Session>, Action>>>>>,
+    pub accept_ax: Sender<FusoProxy<SafeStream<TcpStream>>>,
+    pub alloc_conv: Arc<Mutex<u64>>,
     pub handsnakes: Arc<Vec<Handsnake>>,
+    pub advices: Vec<Arc<dyn Advice<SafeTcpStream, Box<DynCipher>> + Send + Sync + 'static>>,
 }
 
 pub struct Fuso<IO> {
-    accept_tx: Receiver<IO>,
+    pub(crate) accept_tx: Receiver<IO>,
 }
 
-pub struct FusoBuilder<C> {
-    pub config: Option<FusoConfig>,
-    pub handlers: Vec<Arc<Box<DynHandler<C, ()>>>>,
-    pub strategys: Vec<Arc<Box<DynHandler<Arc<Channel>, Action>>>>,
-    pub handsnakes: Vec<Handsnake>,
-}
-
-impl FusoBuilder<Arc<Context>> {
-    #[inline]
-    pub fn with_config(mut self, config: FusoConfig) -> Self {
-        self.config = Some(config);
-        self
-    }
-
-    #[inline]
-    pub fn chain_handler<F>(mut self, with_chain: F) -> Self
-    where
-        F: FnOnce(
-            ChainHandler<SafeTcpStream, Arc<Context>, fuso_api::Result<State<()>>>,
-        )
-            -> ChainHandler<SafeTcpStream, Arc<Context>, fuso_api::Result<State<()>>>,
-    {
-        self.handlers
-            .push(Arc::new(Box::new(with_chain(ChainHandler::new()))));
-        self
-    }
-
-    #[inline]
-    pub fn chain_strategy<F>(mut self, with_chain: F) -> Self
-    where
-        F: FnOnce(
-            ChainHandler<SafeTcpStream, Arc<Channel>, fuso_api::Result<State<Action>>>,
-        )
-            -> ChainHandler<SafeTcpStream, Arc<Channel>, fuso_api::Result<State<Action>>>,
-    {
-        self.strategys
-            .push(Arc::new(Box::new(with_chain(ChainHandler::new()))));
-
-        self
-    }
-
-    pub fn add_handsnake(mut self, handsnake: Handsnake) -> Self {
-        self.handsnakes.push(handsnake);
-        self
-    }
-
-    pub async fn build(
-        self,
-    ) -> fuso_api::Result<Fuso<FusoStream<fuso_api::SafeStream<TcpStream>>>> {
-        let config = Arc::new(self.config.unwrap());
-
-        let (accept_ax, accept_tx) = unbounded();
-
-        let bind_addr = config.bind_addr.clone();
-
-        let listen = {
-            let bind_addr = bind_addr.clone();
-            bind_addr.tcp_listen().await?
-        };
-
-        let handlers = Arc::new(self.handlers);
-        let strategys = Arc::new(self.strategys);
-        let handsnakes = Arc::new(self.handsnakes);
-
-        let cx = Arc::new(Context {
-            config,
-            accept_ax,
-            handlers,
-            strategys,
-            handsnakes,
-            sessions: Arc::new(RwLock::new(HashMap::new())),
-            alloc_conv: Arc::new(Mutex::new(0)),
-        });
-
-        async move {
-            log::info!("Service started successfully");
-            log::info!("Bind to {}", bind_addr);
-            log::info!("Waiting to connect");
-
-            let _ = listen
-                .incoming()
-                .try_fold(cx, |cx, mut tcp| async move {
-                    log::debug!("[tcp] accept {}", tcp.peer_addr().unwrap());
-
-                    {
-                        let handlers = cx.handlers.clone();
-                        let cx = cx.clone();
-                        async move {
-                            let process = tcp.clone().dispatch(handlers, cx).await;
-
-                            if process.is_err() {
-                                let _ = tcp.close().await;
-
-                                log::warn!(
-                                    "[tcp] An illegal connection {}",
-                                    tcp.peer_addr().unwrap()
-                                );
-                            } else {
-                                log::debug!(
-                                    "[tcp] Successfully processed {}",
-                                    tcp.local_addr().unwrap()
-                                );
-                            }
-                        }
-                        .detach();
-                    }
-
-                    Ok(cx)
-                })
-                .await;
-        }
-        .detach();
-
-        Ok(Fuso { accept_tx })
-    }
-}
-
-impl Fuso<FusoStream<TcpStream>> {
+impl Fuso<FusoProxy<TcpStream>> {
     #[inline]
     pub fn builder() -> FusoBuilder<Arc<Context>> {
         FusoBuilder {
+            auth: None,
             config: None,
             handlers: Vec::new(),
             strategys: Vec::new(),
             handsnakes: Vec::new(),
+            ciphers: HashMap::new(),
+            advices: Vec::new(),
+        }
+    }
+}
+
+impl GlobalConfig {
+    pub fn new(bind_addr: &str) -> Self {
+        Self {
+            debug: false,
+            bind_addr: bind_addr.into(),
         }
     }
 }
@@ -242,7 +150,7 @@ where
     }
 }
 
-impl Channel {
+impl Session {
     #[inline]
     pub async fn try_wake(&self, id: &u64) -> Result<fuso_api::SafeStream<TcpStream>> {
         match self.tcp_forward_map.lock().await.remove(id) {
@@ -296,7 +204,7 @@ impl Channel {
                             }
                         }
                         Err(e) => {
-                            log::warn!("{}", e);
+                            log::warn!("udp_forward {}", e);
                             break;
                         }
                     }
@@ -372,6 +280,11 @@ impl Channel {
 
 impl Context {
     #[inline]
+    pub fn get_auth(&self) -> Option<Arc<dyn FusoAuth<SafeTcpStream> + Send + Sync + 'static>> {
+        self.auth.clone()
+    }
+
+    #[inline]
     pub async fn fork(&self) -> (u64, Receiver<(Action, SafeStream<TcpStream>)>) {
         let (accept_tx, accept_ax) = unbounded();
 
@@ -427,10 +340,11 @@ impl Context {
 
         let cfg = Arc::new({
             config.map_or(Ok(Config::default()), |config| {
-                log::debug!("config {}", config);
                 serde_json::from_str(&config).map_err(|e| fuso_api::Error::from(e.to_string()))
             })?
         });
+
+        log::info!("{:#?}", cfg);
 
         let visit_addr = cfg.visit_addr.clone().unwrap_or(String::from("0.0.0.0:0"));
         let listen = visit_addr.tcp_listen().await?;
@@ -443,17 +357,18 @@ impl Context {
 
         let udp_forward = Arc::new(Mutex::new(HashMap::new()));
 
-        let channel = Arc::new(Channel {
+        let session = Arc::new(Session {
             conv,
             strategys,
+            tcp_core: core,
             name: name.clone(),
             config: cfg.clone(),
-            tcp_core: core,
             alloc_id: Arc::new(Mutex::new(0)),
-            fuso_config: self.config.clone(),
+            global_config: self.config.clone(),
             tcp_forward_map: Arc::new(Mutex::new(HashMap::new())),
             udp_forward_map: udp_forward.clone(),
             udp_core: Arc::new(Mutex::new(None)),
+            ciphers: self.ciphers.clone(),
         });
 
         log::info!(
@@ -465,28 +380,32 @@ impl Context {
 
         async move {
             let accept_future = {
-                let channel = channel.clone();
+                let session = session.clone();
                 async move {
                     loop {
                         // 接收客户端发来的连接
                         let from = accept_ax.recv().await;
 
                         if from.is_err() {
-                            log::warn!("An unavoidable error occurred {}", from.unwrap_err());
+                            log::warn!("An unavoidable error occurred");
                             break;
                         }
 
-                        let (action, mut from) = from.unwrap();
+                        let (action, from) = from.unwrap();
 
                         match action {
                             Action::Connect(_, id) => {
-                                if let Ok(to) = channel.try_wake(&id).await {
-                                    let state = accept_tx
-                                        .send(FusoStream::new(from.clone(), to, cfg.clone()))
-                                        .await;
+                                if let Ok(to) = session.try_wake(&id).await {
+                                    let proxy = FusoProxy {
+                                        proxy_src: from,
+                                        proxy_dst: to,
+                                        session: session.clone(),
+                                        cfg: cfg.clone(),
+                                    };
+
+                                    let state = accept_tx.send(proxy).await;
 
                                     if state.is_err() {
-                                        let _ = from.close().await;
                                         log::error!(
                                             "An unavoidable error occurred {}",
                                             state.unwrap_err()
@@ -497,7 +416,7 @@ impl Context {
                             }
                             Action::UdpBind(_) => {
                                 let addr = from.peer_addr().unwrap();
-                                if let Err(e) = channel.bind_udp(from).await {
+                                if let Err(e) = session.bind_udp(from).await {
                                     log::warn!("Failed to bind udp forwarding {} {}", addr, e);
                                 } else {
                                     log::info!("Binding udp forwarding successfully {}", addr)
@@ -510,7 +429,7 @@ impl Context {
             };
 
             let fuso_future = {
-                let mut core = channel.tcp_core.clone();
+                let mut core = session.tcp_core.clone();
                 // 服务端与客户端加密,
                 // let mut core = core.cipher(Xor::new(10)).await;
 
@@ -538,7 +457,7 @@ impl Context {
                             Action::UdpResponse(id, data) => {
                                 if let Some(sender) = udp_forward.lock().await.remove(&id) {
                                     if let Err(e) = sender.send(data).await {
-                                        log::warn!("{}", e);
+                                        log::warn!("udp_forward {}", e);
                                     };
                                 }
                             }
@@ -553,7 +472,7 @@ impl Context {
             let listen_future = async move {
                 let _ = listen
                     .incoming()
-                    .try_fold(channel, |channel, tcp| async move {
+                    .try_fold(session, |channel, tcp| async move {
                         {
                             log::debug!("connected {}", tcp.peer_addr().unwrap());
                             let channel = channel.clone();
@@ -617,15 +536,29 @@ impl Context {
     }
 }
 
-impl<T> FusoStream<T> {
-    #[inline]
-    pub fn new(from: T, to: T, cfg: Arc<Config>) -> Self {
-        Self { from, to, cfg }
-    }
-
+impl<T> FusoProxy<T> {
     #[inline]
     pub fn split(self) -> (T, T, Arc<Config>) {
-        (self.from, self.to, self.cfg)
+        (self.proxy_src, self.proxy_dst, self.cfg)
+    }
+
+    pub fn try_get_cipher(
+        &self,
+    ) -> fuso_api::Result<Option<Box<dyn Cipher + Send + Sync + 'static>>> {
+        let cfg = self.cfg.as_ref();
+        let cipher = self.session.ciphers.as_ref();
+
+        if let Some(crypt_type) = cfg.crypt_type.as_ref() {
+            if let Some(create_cipher) = cipher.get(crypt_type) {
+                let secret = cfg.crypt_secret.clone();
+
+                Ok(Some(create_cipher(secret)?))
+            } else {
+                Ok(None)
+            }
+        } else {
+            Ok(None)
+        }
     }
 }
 
