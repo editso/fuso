@@ -1,8 +1,12 @@
 [package]
 name = "fuso"
-version = "0.1.0"
+version = "1.0.4-beta"
 edition = "2021"
-
+authors = ["editso"]
+readme = "README.md"
+homepage = "https://github.com/editso/fuso"
+license-file = "LICENSE"
+description = "这是一款用于内网穿透,端口转发的工具,帮助运维,开发人员快速部署与接入内网\r\n本项目所用技术仅用于学习交流，请勿直接用于任何商业场合和非法用途\r\n项目地址: https://github.com/editso/fuso"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [profile.release]
@@ -21,14 +25,16 @@ members = [
 
 [[bin]]
 name = "fus"
-path = "src/server.rs"
+path = "src/bin/server.rs"
 
 [[bin]]
 name = "fuc"
-path = "src/client.rs"
+path = "src/bin/client.rs"
 
 [dependencies]
 aes = {version = "0.7.5"}
+rsa = {version = "0.5.0"}
+rand = "0.8.4"
 block-modes = "0.8.1"
 hex-literal = "0.3.4"
 log = {version = "0.4.14"}
@@ -39,3 +45,5 @@ futures = "0.3"
 env_logger = "0.9.0"
 fuso-core = {path = "./fuso-core"}
 fuso-socks = {path ="./fuso-socks"}
+rpassword = "5.0"
+async-trait = {version = "0.1.51"}

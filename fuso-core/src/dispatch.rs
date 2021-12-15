@@ -46,7 +46,6 @@ where
         cx: C,
     ) -> fuso_api::Result<()> {
         let mut io = self.as_safe_stream();
-
         for handle in handlers.iter() {
             let handle = handle.clone();
 

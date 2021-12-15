@@ -3,12 +3,14 @@ mod core;
 mod error;
 mod stream;
 mod udp;
+mod cipher;
 
 pub use crate::buffer::*;
 pub use crate::core::*;
 pub use crate::error::*;
 pub use crate::stream::*;
 pub use crate::udp::*;
+pub use crate::cipher::*;
 pub use async_trait::*;
 
 #[cfg(test)]

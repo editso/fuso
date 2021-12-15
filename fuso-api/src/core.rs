@@ -62,34 +62,18 @@ pub struct Packet {
 }
 
 #[async_trait]
-pub trait FusoHook<Type, Arg> {
-    async fn hook(&self, t: Type, arg: Arg);
-}
-
-#[async_trait]
 pub trait FusoPacket {
     async fn recv(&mut self) -> Result<Packet>;
     async fn send(&mut self, packet: Packet) -> Result<()>;
 }
 
-#[async_trait]
 pub trait FusoStreamEx {
-    async fn send_opt_data(&mut self, data: Option<Bytes>) -> Result<()>;
+    fn as_fuso_stream(self) -> FusoStream;
 }
 
 #[async_trait]
-pub trait FusoEncoder<OUT> {
-    async fn encode(&self) -> Result<OUT>;
-}
-
-#[async_trait]
-pub trait FusoDecoder<IN, OUT> {
-    async fn decode(data: &IN) -> Result<OUT>;
-}
-
-#[async_trait]
-pub trait FusoAuth {
-    async fn auth(&self) -> Result<()>;
+pub trait FusoAuth<IO> {
+    async fn auth(&self, io: &mut IO) -> Result<()>;
 }
 
 #[async_trait]
@@ -104,12 +88,6 @@ pub trait Forward<To> {
 }
 
 #[async_trait]
-pub trait Life<C> {
-    async fn start(&self, cx: C) -> Result<()>;
-    async fn stop(self) -> Result<()>;
-}
-
-#[async_trait]
 pub trait AsyncTcpSocketEx<B, C> {
     async fn tcp_listen(self) -> Result<B>;
     async fn tcp_connect(self) -> Result<C>;
@@ -118,8 +96,17 @@ pub trait AsyncTcpSocketEx<B, C> {
 #[derive(Debug, Clone)]
 pub struct Rollback<T, Store> {
     target: T,
+    back_store: Store,
+    begin_store: Store,
     rollback: Arc<RwLock<bool>>,
-    store: Arc<Mutex<Store>>,
+}
+
+#[derive(Clone)]
+pub struct FusoStream {
+    peer_addr: Option<SocketAddr>,
+    local_addr: Option<SocketAddr>,
+    core_reader: Arc<Mutex<dyn AsyncRead + Unpin + Send + Sync + 'static>>,
+    core_writer: Arc<Mutex<dyn AsyncWrite + Unpin + Send + Sync + 'static>>,
 }
 
 pub trait RollbackEx<T, Store> {
@@ -170,7 +157,7 @@ impl Packet {
                 let magic = packet.get_u32();
 
                 if Self::magic() != magic {
-                    log::warn!("{:?}", String::from_utf8_lossy(&data));
+                    log::warn!("decode fuso packet error {:?}", data);
                     return Err(error::ErrorKind::BadPacket.into());
                 }
 
@@ -309,18 +296,18 @@ where
     }
 }
 
-#[async_trait]
 impl<T> FusoStreamEx for T
 where
-    T: AsyncWrite + Unpin + Send + Sync + 'static,
+    T: AsyncWrite + AsyncRead + Unpin + Send + Sync + 'static,
 {
-    #[inline]
-    async fn send_opt_data(&mut self, mut data: Option<Bytes>) -> Result<()> {
-        if let Some(data) = data.take() {
-            log::debug!("[send_opt_data] len={}", data.len());
-            self.write_all(&data).await.map_err(|e| e.into())
-        } else {
-            Ok(())
+    fn as_fuso_stream(self) -> FusoStream {
+        let (reader, writer) = self.split();
+
+        FusoStream {
+            peer_addr: None,
+            local_addr: None,
+            core_reader: Arc::new(Mutex::new(reader)),
+            core_writer: Arc::new(Mutex::new(writer)),
         }
     }
 }
@@ -333,7 +320,7 @@ where
     #[inline]
     fn detach(self) {
         static GLOBAL: once_cell::sync::Lazy<Executor<'_>> = once_cell::sync::Lazy::new(|| {
-            println!("cpu {}", num_cpus::get());
+            log::info!("spawn thread count {}", num_cpus::get());
             for n in 0..num_cpus::get() {
                 log::trace!("spawn executor thread fuso-{}", n);
                 std::thread::Builder::new()
@@ -368,7 +355,7 @@ where
         smol::future::race(copy(reader_t, writer_s), copy(reader_s, writer_t))
             .await
             .map_err(|e| {
-                log::warn!("{}", e);
+                log::warn!("forward {}", e);
                 error::Error::with_io(e)
             })?;
 
@@ -411,7 +398,8 @@ where
         Rollback {
             target: self,
             rollback: Arc::new(RwLock::new(false)),
-            store: Arc::new(Mutex::new(Buffer::new())),
+            begin_store: Buffer::new(),
+            back_store: Buffer::new(),
         }
     }
 }
@@ -428,19 +416,32 @@ impl<T> Rollback<T, Buffer<u8>> {
     }
 
     #[inline]
-    pub async fn back(&self) -> Result<()> {
+    pub async fn back(&mut self) -> Result<()> {
         if self.rollback.read().unwrap().eq(&false) {
             Err("Rollback enabled".into())
         } else {
+            // 简单实现, 待优化...
+            let begin = &mut self.begin_store;
+            let back = &mut self.back_store;
+
+            if !begin.is_empty() {
+                let mut buf = Vec::new();
+                buf.resize(begin.len(), 0);
+                begin.read_exact(&mut buf).await?;
+
+                back.push_front(&mut buf);
+            }
+
             *self.rollback.write().unwrap() = false;
             Ok(())
         }
     }
 
     #[inline]
-    pub async fn release(&self) -> Result<()> {
+    pub async fn release(&mut self) -> Result<()> {
         *self.rollback.write().unwrap() = false;
-        self.store.lock().unwrap().clear();
+        self.begin_store.clear();
+        self.begin_store.clear();
 
         Ok(())
     }
@@ -490,37 +491,40 @@ where
     ) -> std::task::Poll<std::io::Result<usize>> {
         let rollback = *self.rollback.read().unwrap();
 
-        let read_len = if !rollback {
-            let mut io = self.store.lock().unwrap();
-            match Pin::new(&mut *io).poll_read(cx, buf)? {
-                std::task::Poll::Pending => 0,
-                std::task::Poll::Ready(n) => n,
+        let read_len = if !self.back_store.is_empty() {
+            match Pin::new(&mut self.back_store).poll_read(cx, buf)? {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(n) => n,
             }
         } else {
             0
         };
 
-        if read_len >= buf.len() {
+        let poll = if read_len >= buf.len() {
             std::task::Poll::Ready(Ok(read_len))
         } else {
             match Pin::new(&mut self.target).poll_read(cx, &mut buf[read_len..])? {
                 std::task::Poll::Pending => Poll::Pending,
                 std::task::Poll::Ready(0) => Poll::Ready(Ok(read_len)),
-                std::task::Poll::Ready(n) => {
-                    if rollback {
-                        let mut store = self.store.lock().unwrap();
-                        match Pin::new(&mut *store).poll_write(cx, &buf[..n + read_len])? {
-                            Poll::Pending => {
-                                log::warn!("[store] Shouldn't be executed to this point");
-                            }
-                            Poll::Ready(n) => {
-                                log::debug!("[store] save rollback {}", n);
-                            }
+                std::task::Poll::Ready(n) => Poll::Ready(Ok(read_len + n)),
+            }
+        };
+
+        match poll {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Err(e)) => Poll::Ready(e),
+            Poll::Ready(Ok(n)) => {
+                if rollback {
+                    match Pin::new(&mut self.begin_store).poll_write(cx, &buf[..n])? {
+                        Poll::Pending => {
+                            log::warn!("[store] Shouldn't be executed to this point");
+                        }
+                        Poll::Ready(n) => {
+                            log::debug!("[store] save rollback {}", n);
                         }
                     }
-
-                    Poll::Ready(Ok(read_len + n))
                 }
+                Poll::Ready(Ok(n))
             }
         }
     }
@@ -537,6 +541,10 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
+        *self.rollback.write().unwrap() = false;
+        self.begin_store.clear();
+        self.back_store.clear();
+
         Pin::new(&mut self.target).poll_write(cx, buf)
     }
 
@@ -554,5 +562,43 @@ where
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
         Pin::new(&mut self.target).poll_close(cx)
+    }
+}
+
+impl AsyncRead for FusoStream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let mut core = self.core_reader.lock().unwrap();
+        Pin::new(&mut *core).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for FusoStream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let mut core = self.core_writer.lock().unwrap();
+        Pin::new(&mut *core).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let mut core = self.core_writer.lock().unwrap();
+        Pin::new(&mut *core).poll_flush(cx)
+    }
+
+    fn poll_close(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let mut core = self.core_writer.lock().unwrap();
+        Pin::new(&mut *core).poll_close(cx)
     }
 }

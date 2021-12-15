@@ -53,7 +53,7 @@ where
 }
 
 #[test]
-fn test_hander() {
+fn test_handler() {
     use crate::dispatch::Handler;
 
     env_logger::builder()
@@ -62,7 +62,7 @@ fn test_hander() {
 
     smol::block_on(async move {
         let chains = ChainHandler::new();
-
+        
         let state = chains
             .next(|_, _| async move {
                 log::info!("[chian] chain 1");

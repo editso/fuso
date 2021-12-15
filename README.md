@@ -47,11 +47,10 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 
 
 #### 客户端部署
-客户端配置相对服务端来说可能会复杂一点, 但大多数情况下也可使用默认配置
-
-1 **参数说明** 
+1. 客户端配置相对服务端来说可能会复杂一点, 但大多数情况下也可使用默认配置
+ 
+2. **参数说明**   
 fuc [options] <server-host> <server-port>
-
 `<server-host>`: 服务端地址, 支持域名  
 `<server-port>`: 服务端监听的端口  
 `-h`: 需要转发的地址, 也就是穿透地址  
@@ -92,7 +91,7 @@ fuc [options] <server-host> <server-port>
 > fuc -h 10.10.10.8 -p 80 -b 8080 --bridge-host 0.0.0.0 --bridge-port 9004 xxx.xxx.xxx.xxx 9003
 
 # 在不可以出网的机器上需要穿透80服务, 并且服务端监听8081端口
-# 此时fuc的服务端地址就不应该是服务器地址, 因为并不能出网, 所有需要连接到开启桥接服务的地址
+# 此时fuc的服务端地址就不应该是服务器地址, 因为并不能出网, 所以需要连接到开启桥接服务的地址
 # 运行:
 > fuc -h 127.0.0.1 -p 80 -b 8081 10.10.10.5 9004
 
