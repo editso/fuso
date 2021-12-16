@@ -48,18 +48,19 @@ struct FusoArgs {
 fn main() {
     let args = FusoArgs::parse();
 
-    
     env_logger::builder()
         .filter_level(args.log_level)
         .format_timestamp_millis()
         .init();
-    
+
+    let bind_addr = format!("{}:{}", args.bind_host, args.bind_port);
+
     let core_future = async move {
         Fuso::builder()
             .use_auth(TokenAuth::new("my_token"))
             .use_default_handler()
             .use_default_strategy()
-            .use_global_config(GlobalConfig::new("0.0.0.0:9003"))
+            .use_global_config(GlobalConfig::new(&bind_addr))
             .add_advice(fuso::rsa::server::RsaAdvice)
             .add_handsnake(Handsnake {
                 prefix: "GET / HTTP/1.1".into(),
