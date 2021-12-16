@@ -14,12 +14,14 @@ impl TokenAuth {
     }
 }
 
+
+
 #[async_trait]
 impl<T> FusoAuth<T> for TokenAuth
 where
     T: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
 {
-    async fn auth(&self, io: &mut T) -> fuso_api::Result<()> {
+    async fn auth(&self, _: &mut T) -> fuso_api::Result<()> {
         Ok(())
     }
 }

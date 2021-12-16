@@ -12,8 +12,8 @@ use smol::{
 };
 
 use fuso_api::{
-    Advice, AsyncTcpSocketEx, Cipher, DynCipher, FusoAuth, FusoPacket, Result, SafeStream,
-    SafeStreamEx, Spawn, UdpListener,
+    Advice, AsyncTcpSocketEx, Cipher, DynCipher, FusoAuth, FusoPacket, FusoStream, FusoStreamEx,
+    Result, SafeStream, SafeStreamEx, Security, Spawn, UdpListener,
 };
 
 use crate::{dispatch::StrategyEx, retain::HeartGuard};
@@ -73,7 +73,7 @@ pub struct Session {
     >,
     pub alloc_id: Arc<Mutex<u64>>,
     pub tcp_core: HeartGuard<SafeStream<TcpStream>>,
-    pub udp_core: Arc<Mutex<Option<HeartGuard<SafeStream<TcpStream>>>>>,
+    pub udp_core: Arc<Mutex<Option<HeartGuard<FusoStream>>>>,
     pub strategys: Arc<Vec<Arc<Box<DynHandler<Arc<Session>, Action>>>>>,
     pub global_config: Arc<GlobalConfig>,
     pub tcp_forward_map: Arc<Mutex<HashMap<u64, SafeStream<TcpStream>>>>,
@@ -82,7 +82,7 @@ pub struct Session {
 
 pub struct Udp {
     id: u64,
-    core: HeartGuard<fuso_api::SafeStream<TcpStream>>,
+    core: FusoStream,
     forward_map: Arc<Mutex<HashMap<u64, Sender<Vec<u8>>>>>,
 }
 
@@ -159,6 +159,25 @@ impl Session {
         }
     }
 
+    pub fn try_get_cipher(
+        &self,
+    ) -> fuso_api::Result<Option<Box<dyn Cipher + Send + Sync + 'static>>> {
+        let cfg = self.config.as_ref();
+        let cipher = self.ciphers.as_ref();
+
+        if let Some(crypt_type) = cfg.crypt_type.as_ref() {
+            if let Some(create_cipher) = cipher.get(crypt_type) {
+                let secret = cfg.crypt_secret.clone();
+
+                Ok(Some(create_cipher(secret)?))
+            } else {
+                Ok(None)
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
     #[inline]
     pub async fn suspend(&self, id: u64, tcp: SafeStream<TcpStream>) -> Result<()> {
         self.tcp_forward_map.lock().await.insert(id, tcp);
@@ -167,6 +186,15 @@ impl Session {
 
     pub async fn bind_udp(&self, mut tcp: SafeStream<TcpStream>) -> Result<()> {
         tcp.send(Action::Accept(self.conv).into()).await?;
+
+        let cipher = self.try_get_cipher()?;
+
+        let tcp = if let Some(cipher) = cipher {
+            let tcp = tcp.cipher(cipher);
+            tcp.as_fuso_stream()
+        } else {
+            tcp.as_fuso_stream()
+        };
 
         let bind_udp = tcp.guard(5000).await?;
 
@@ -255,12 +283,16 @@ impl Session {
     {
         let udp = UdpListener::bind("0.0.0.0:0").await?;
 
-        let core = self
-            .udp_core
-            .lock()
-            .await
-            .as_ref()
-            .map_or(self.tcp_core.clone(), |udp_core| udp_core.clone());
+        let core = self.udp_core.lock().await.as_ref().map_or(
+            {
+                let tcp = self.tcp_core.clone();
+                tcp.as_fuso_stream()
+            },
+            |udp_core| {
+                let udp = udp_core.clone();
+                udp.as_fuso_stream()
+            },
+        );
 
         let forwards = self.udp_forward_map.clone();
         let id = self.gen_id().await;
@@ -384,21 +416,21 @@ impl Context {
                 async move {
                     loop {
                         // 接收客户端发来的连接
-                        let from = accept_ax.recv().await;
+                        let proxy_dst = accept_ax.recv().await;
 
-                        if from.is_err() {
+                        if proxy_dst.is_err() {
                             log::warn!("An unavoidable error occurred");
                             break;
                         }
 
-                        let (action, from) = from.unwrap();
+                        let (action, proxy_dst) = proxy_dst.unwrap();
 
                         match action {
                             Action::Connect(_, id) => {
-                                if let Ok(to) = session.try_wake(&id).await {
+                                if let Ok(proxy_src) = session.try_wake(&id).await {
                                     let proxy = FusoProxy {
-                                        proxy_src: from,
-                                        proxy_dst: to,
+                                        proxy_src,
+                                        proxy_dst,
                                         session: session.clone(),
                                         cfg: cfg.clone(),
                                     };
@@ -415,8 +447,8 @@ impl Context {
                                 }
                             }
                             Action::UdpBind(_) => {
-                                let addr = from.peer_addr().unwrap();
-                                if let Err(e) = session.bind_udp(from).await {
+                                let addr = proxy_dst.peer_addr().unwrap();
+                                if let Err(e) = session.bind_udp(proxy_dst).await {
                                     log::warn!("Failed to bind udp forwarding {} {}", addr, e);
                                 } else {
                                     log::info!("Binding udp forwarding successfully {}", addr)
@@ -545,20 +577,7 @@ impl<T> FusoProxy<T> {
     pub fn try_get_cipher(
         &self,
     ) -> fuso_api::Result<Option<Box<dyn Cipher + Send + Sync + 'static>>> {
-        let cfg = self.cfg.as_ref();
-        let cipher = self.session.ciphers.as_ref();
-
-        if let Some(crypt_type) = cfg.crypt_type.as_ref() {
-            if let Some(create_cipher) = cipher.get(crypt_type) {
-                let secret = cfg.crypt_secret.clone();
-
-                Ok(Some(create_cipher(secret)?))
-            } else {
-                Ok(None)
-            }
-        } else {
-            Ok(None)
-        }
+        self.session.try_get_cipher()
     }
 }
 

@@ -1,5 +1,6 @@
 use clap::Parser;
 
+use fuso::aes::Aes;
 use fuso_core::{
   
     core::{GlobalConfig, Fuso},
@@ -75,6 +76,13 @@ fn main() {
                     Err("xor secret is a required 1-255".into())
                 }
             })
+            .add_cipher("aes", |secret|{
+                if let Some(secret) = secret{
+                    Ok(Aes::try_from(secret)?)
+                }else{
+                    Err("aes secret is a required".into())
+                }
+            })
             .build()
             .map_ok(|fuso| {
                 let ex = Executor::new();
@@ -88,8 +96,8 @@ fn main() {
                       
                             match cipher {
                                 Some(cipher) => {
-                                    let crypt_dst = proxy_dst.cipher(cipher);
-                                    proxy_src.forward(crypt_dst).detach();
+                                    let proxy_dst = proxy_dst.cipher(cipher);
+                                    proxy_dst.forward(proxy_src).detach();
                                 },
                                 None => {
                                     proxy_src.forward(proxy_dst).detach();
@@ -98,7 +106,7 @@ fn main() {
 
                         },
                         Err(e) => {
-                            log::warn!("[proxy] cipher error {}", e);
+                            log::debug!("[proxy] cipher error {}", e);
                         },
                     }
 

@@ -355,7 +355,7 @@ where
         smol::future::race(copy(reader_t, writer_s), copy(reader_s, writer_t))
             .await
             .map_err(|e| {
-                log::warn!("forward {}", e);
+                log::debug!("forward {}", e);
                 error::Error::with_io(e)
             })?;
 
@@ -428,7 +428,6 @@ impl<T> Rollback<T, Buffer<u8>> {
                 let mut buf = Vec::new();
                 buf.resize(begin.len(), 0);
                 begin.read_exact(&mut buf).await?;
-
                 back.push_front(&mut buf);
             }
 
@@ -441,7 +440,7 @@ impl<T> Rollback<T, Buffer<u8>> {
     pub async fn release(&mut self) -> Result<()> {
         *self.rollback.write().unwrap() = false;
         self.begin_store.clear();
-        self.begin_store.clear();
+        self.back_store.clear();
 
         Ok(())
     }

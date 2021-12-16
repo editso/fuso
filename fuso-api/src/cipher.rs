@@ -11,7 +11,7 @@ use futures::{AsyncRead, AsyncWrite};
 
 use crate::{Result, SafeStream};
 
-use smol::net::TcpStream;
+use smol::{future::FutureExt, io::AsyncWriteExt, net::TcpStream};
 
 use crate::Buffer;
 
@@ -145,7 +145,7 @@ where
     C: Cipher + Unpin + Send + Sync + 'static,
 {
     fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
+        self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
@@ -191,7 +191,7 @@ where
 {
     #[inline]
     fn poll_write(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
@@ -204,7 +204,7 @@ where
 
     #[inline]
     fn poll_flush(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
         let mut core = self.target.lock().unwrap();
@@ -213,7 +213,7 @@ where
 
     #[inline]
     fn poll_close(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
         let mut core = self.target.lock().unwrap();
@@ -247,7 +247,7 @@ where
                 Poll::Ready(Ok(data)) => {
                     let total = buf.len();
                     let mut cur = Cursor::new(buf);
-
+                    
                     let write_len = if total >= data.len() {
                         cur.write_all(&data).unwrap();
                         data.len()
@@ -278,7 +278,6 @@ where
         let mut core = self.target.lock().unwrap();
         let mut cipher = self.cipher.lock().unwrap();
         let io = Box::new(&mut *core as _);
-
         Pin::new(&mut *cipher).poll_encrypt(io, cx, buf)
     }
 
@@ -317,9 +316,10 @@ impl Cipher for Xor {
     ) -> Poll<std::io::Result<Vec<u8>>> {
         match Pin::new(&mut io).poll_read(cx, buf)? {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(n) => {
-                Poll::Ready(Ok(buf.iter().map(|n| self.num ^ n).collect::<Vec<u8>>()))
-            }
+            Poll::Ready(n) => Poll::Ready(Ok(buf[..n]
+                .iter()
+                .map(|n| self.num ^ n)
+                .collect::<Vec<u8>>())),
         }
     }
 
@@ -329,7 +329,13 @@ impl Cipher for Xor {
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-       
-        todo!()
+      
+        match Pin::new(&mut io)
+            .write_all(&buf.into_iter().map(|n| self.num ^ n).collect::<Vec<u8>>())
+            .poll(cx)?
+        {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(_) => Poll::Ready(Ok(buf.len())),
+        }
     }
 }

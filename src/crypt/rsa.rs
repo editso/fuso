@@ -11,6 +11,7 @@ pub struct Rsa {
 }
 
 impl Rsa {
+    #[inline]
     pub fn new(public_key: RsaPublicKey, private_key: RsaPrivateKey) -> Self {
         Self {
             public_key,
@@ -24,13 +25,14 @@ impl Cipher for Rsa {
         &mut self,
         mut io: Box<&mut (dyn AsyncRead + Unpin + Send + Sync + 'static)>,
         cx: &mut std::task::Context<'_>,
-        buf: &mut [u8],
+        _: &mut [u8],
     ) -> Poll<std::io::Result<Vec<u8>>> {
         let mut packet = Vec::new();
-
         packet.resize(256, 0);
 
-        match Box::pin(Pin::new(&mut io).read_exact(&mut packet)).poll(cx)? {
+        log::debug!("[rsa] decrypt");
+
+        match Pin::new(&mut io).read_exact(&mut packet).poll(cx)? {
             Poll::Pending => Poll::Pending,
             Poll::Ready(_) => {
                 let padding = PaddingScheme::new_pkcs1v15_encrypt();
@@ -53,6 +55,8 @@ impl Cipher for Rsa {
         let mut rng = OsRng;
         let padding = PaddingScheme::new_pkcs1v15_encrypt();
 
+        log::debug!("[rsa] encrypt {}", buf.len());
+
         let data = self
             .public_key
             .encrypt(&mut rng, padding, buf)
@@ -61,13 +65,12 @@ impl Cipher for Rsa {
                 fuso_core::Error::with_str(e.to_string())
             })?;
 
-        match Box::pin(Pin::new(&mut io).write_all(&data)).poll(cx)? {
+        match Pin::new(&mut io).write_all(&data).poll(cx)? {
             Poll::Pending => Poll::Pending,
             Poll::Ready(_) => Poll::Ready(Ok(buf.len())),
         }
     }
 }
-
 
 pub mod server {
     use async_trait::async_trait;
@@ -212,6 +215,7 @@ pub mod client {
 }
 
 #[test]
+#[allow(unused)]
 fn test_rsa() {
     use rand::rngs::OsRng;
     use rsa::{PaddingScheme, PublicKey, RsaPrivateKey, RsaPublicKey};
