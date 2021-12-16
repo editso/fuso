@@ -17,6 +17,8 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 
 👉 这是一款用于内网穿透 端口转发的工具,帮助运维,开发人员快速部署与接入内网
 
+👉 传输采用`Rsa + Aes`加密
+
 👉 该项目可直接当做库来使用
 
 👉 项目保持长期维护
@@ -40,8 +42,9 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 2. **参数说明**    
 `-h`: 绑定的地址
 `-p`: 监听的端口, 也就是客户端需要连接到服务端的端口  
-`-x`: `xor`加密的`key` (*目前暂时定义为`xor`加密的`key`, 未来可能因加密方式变化所改动*)  
-`-l`: 日志信息级别 (`debug`, `info`, `trace`, `error`, `warn`)  
+`-l`: 日志信息级别 (`debug`, `info`, `trace`, `error`, `warn`)
+`--auth`: 认证方式 (预留, 暂未实现) 
+`--secret`: 密码 (预留, 暂未实现)
 `-v`: 该参数打印的版本目前无效  
 `-h`: 获取帮助信息
 
@@ -50,18 +53,22 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 1. 客户端配置相对服务端来说可能会复杂一点, 但大多数情况下也可使用默认配置
  
 2. **参数说明**   
-fuc [options] <server-host> <server-port>
+fuc [options] <server-host> <server-port>  
 `<server-host>`: 服务端地址, 支持域名  
 `<server-port>`: 服务端监听的端口  
-`-h`: 需要转发的地址, 也就是穿透地址  
-`-p`: 转发的端口, 需要配合 `-h`参数  
-`-b`: 真实映射成功后访问的端口号, 不指定将自动分配  
-`-n`: 一个标识, 映射服务的名称  
-`-w`: 使用`Websocket`进程握手连接  
-`-x`: `xor`加密的`key` (*目前暂时定义为`xor`加密的`key`, 未来可能因加密方式  变化所改动*)  
+`-h` | `--forward-host`: 需要转发的地址, 也就是穿透地址  
+`-p` | `--forward-host`: 转发的端口, 需要配合 `-h`参数  
+`-b` | `--visit-port`: 真实映射成功后访问的端口号, 不指定将自动分配  
+`-n` | `--name`: 一个标识, 映射服务的名称   
+`-t` | `--forward-type`: 转发类型, 默认自动判定类型 支持: [`socks5`, `forward`]  
+`--crypt-type`: 传输加密类型 默认使用`aes`加密  
+`--crypt-secret`: 传输加密密钥, 默认随机  
+`--handsnake`: 前置握手方式, 默认不进行前置握手, 支持: [`websocket`]  
+`--bridge-host`: 本地桥接绑定地址    
+`--bridge-port`: 本地桥接监听端口    
+`--s5-pwd`: `Socks5`认证时的连接密码, 默认不需要  
+`-P | --fuso-pwd`: 连接到服务端所需密码(预留, 暂未实现)  
 `-l`: 日志信息级别 (`debug`, `info`, `trace`, `error`, `warn`)  
-`--bridge-host`: 桥接服务监听的地址  
-`--bridge-port`: 桥接服务监听的端口  
 
 ```
 # 一个转发例子
@@ -105,6 +112,7 @@ fuc [options] <server-host> <server-port>
 
 ```
 
+
 ### 🤔Features
 | Name           | <font color="green">✔(Achieved)</font> / <font color="red">❌(Unrealized)</font>) |
 | -------------- | -------------------------------------------------------------------------------- |
@@ -112,12 +120,13 @@ fuc [options] <server-host> <server-port>
 | 传输加密       | <font color="green">✔</font>                                                     |
 | Socks5代理     | <font color="green">✔</font>                                                     |
 | Socks5 Udp转发 | <font color="green">✔</font>                                                     |
-| UDP支持        | ❌                                                                                |
+| Udp (kcp)支持  | ❌                                                                                |
 | 多映射         | <font color="green">✔</font>                                                     |
 | 级联代理       | <font color="green">✔</font>                                                     |
 | 数据传输压缩   | ❌                                                                                |
 | Websocket      | <font color="green">✔</font>                                                     |
-
+| `Rsa`加密      | <font color="green">✔</font>                                                     |
+| `Aes`加密      | <font color="green">✔</font>                                                     |
 
 ### 😶部分功能还待完善敬请期待..
 

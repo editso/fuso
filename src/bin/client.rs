@@ -2,7 +2,7 @@ use std::{ time::Duration};
 
 use clap::{Parser};
 
-use fuso::rsa::{Rsa, client::{RsaAdvice}};
+use fuso::{rsa::{client::{RsaAdvice}}, aes::Aes};
 use fuso_core::{
     client::{Fuso, Config},
     Forward, Spawn, handsnake::Handsnake, Security, Xor,
@@ -10,7 +10,7 @@ use fuso_core::{
 
 
 use futures::{StreamExt, TryFutureExt};
-use rsa::{RsaPrivateKey, RsaPublicKey};
+
 use smol::Executor;
 
 
@@ -37,7 +37,7 @@ struct FusoArgs {
 
     /// 转发端口
     #[clap(short='p',long, default_value = "80", takes_value = true, display_order = 2)]
-    forward_port: String,
+    forward_port: u16,
 
     /// 从公网访问的端口, 默认将自动分配
     #[clap(short = 'b', long, takes_value = true, display_order = 3)]
@@ -48,11 +48,11 @@ struct FusoArgs {
     forward_name: Option<String>,
 
     /// 加密类型
-    #[clap(long, default_value = "xor", takes_value=true, possible_values = ["xor"], display_order = 5)]
+    #[clap(long, default_value = "aes", takes_value=true, possible_values = ["aes", "xor"], display_order = 5)]
     crypt_type: String,
 
     /// 加密所需密钥
-    #[clap(long, default_value = "27", takes_value = true, display_order = 6)]
+    #[clap(long, default_value = "random", takes_value = true, display_order = 6)]
     crypt_secret: String,
 
     /// 前置握手方式, 默认不进行前置握手
@@ -102,10 +102,9 @@ struct FusoArgs {
     log_level: log::LevelFilter,
 }
 
-
 fn main() {
 
-    let args = FusoArgs::parse();
+    let mut args = FusoArgs::parse();
     
     env_logger::builder()
     .filter_level(args.log_level)
@@ -127,41 +126,88 @@ fn main() {
         }
     });
     
-    let config = Config{
-        forward_name: args.forward_name,
-        server_addr: server_addr,
-        visit_port: args.visit_port,
-        bridge_addr: None,
-        forward_addr: format!("{}:{}", args.forward_host, args.forward_port),
-        handsnake: handsnake,
-        socks_passwd: args.socks_password,
-        forward_type: Some(args.forward_type),
-        crypt_type: Some(args.crypt_type),
-        crypt_secret: Some(args.crypt_secret),
+    match args.crypt_type.as_str() {
+        "aes" => {
+            let aes = Aes::try_with(args.crypt_secret.as_str())
+                .expect("aes key error");
+            args.crypt_secret = aes.to_hex_string();
+        },
+        "xor" => {
+            Xor::new(args.crypt_secret.parse().expect("xor key error 1-255"));
+        }, 
+        _ => panic!(),
     };
 
+    let crypt_type = args.crypt_type.clone();
+
+    let bridge_addr = {
+        match (args.bridge_port, args.bridge_host){
+            (Some(port), addr)=>{
+                Some(format!("{}:{}", addr.unwrap_or("0.0.0.0".into()), port))
+            }
+            _=> None
+        }
+    };
+
+    let forward_addr =  format!("{}:{}", args.forward_host, args.forward_port);
+
+    let config = Config{
+        handsnake: handsnake,
+        crypt_type: Some(args.crypt_type),
+        visit_port: args.visit_port,
+        bridge_addr: bridge_addr,
+        server_addr: server_addr,
+        forward_name: args.forward_name,
+        forward_addr: forward_addr,
+        socks_passwd: args.socks_password,
+        forward_type: Some(args.forward_type),
+        crypt_secret: Some(args.crypt_secret.clone()),
+    };
 
     let core_future = async move{
         loop {
+           let crypt_type = crypt_type.clone();
             Fuso::builder()
                 .use_config(config.clone())
                 .add_advice(RsaAdvice)
+                .set_cipher(move|secret|{  
+                    match (crypt_type.as_str(), secret ) {
+                        ("xor", Some(key)) => {
+                            Ok(Some(Box::new(Xor::new(key.parse().expect("xor key error 1-255")))))
+                        },
+                        ("aes", Some(key)) =>{
+                            Ok(Some(Box::new(Aes::try_from(key)?)))
+                        }
+                        _=> Ok(None)
+                    }
+                  
+                })
                 .build()
                 .map_ok(|fuso| {
                 let ex = Executor::new();
                 smol::block_on(ex.run(fuso.for_each(|proxy| async move {
+                    
                     proxy
                         .join()
-                        .map_ok(|(from, to, _)| {
+                        .map_ok(|(from, to, cx)| {
                             async move {
+                                
+                                let cipher = cx.get_cipher().unwrap();
 
-                                let cipher = Xor::new(27);
-
-                                let from = from.cipher(cipher);
-
-                                if let Err(e) = from.forward(to).await {
+                                let status = match cipher {
+                                    Some(cipher) => {
+                                        let from = from.cipher(cipher);
+                                        from.forward(to).await
+                                    },
+                                    None => {
+                                        from.forward(to).await
+                                    },
+                                };
+                            
+                                if let Err(e) =  status{
                                     log::debug!("[fuc] Forwarding failed {}", e);
                                 }
+                                
                             }
                             .detach()
                         })

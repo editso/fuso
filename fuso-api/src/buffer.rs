@@ -11,7 +11,7 @@ use async_trait::async_trait;
 
 #[derive(Debug, Clone)]
 pub struct Buffer<T> {
-    len: usize,
+    len: Arc<Mutex<usize>>,
     buf: Arc<Mutex<VecDeque<Vec<T>>>>,
 }
 
@@ -22,7 +22,7 @@ where
     #[inline]
     pub fn new() -> Self {
         Self {
-            len: 0,
+            len: Arc::new(Mutex::new(0)),
             buf: Arc::new(Mutex::new(VecDeque::new())),
         }
     }
@@ -34,25 +34,25 @@ where
 
     #[inline]
     pub fn len(&self) -> usize {
-        self.len
+        *self.len.lock().unwrap()
     }
 
     #[inline]
     pub fn clear(&mut self) {
         self.buf.lock().unwrap().clear();
-        self.len = 0;
+        *self.len.lock().unwrap() = 0;
     }
 
     #[inline]
     pub fn push_back(&mut self, data: &[T]) {
         self.buf.lock().unwrap().push_back(data.to_vec());
-        self.len += data.len();
+        *self.len.lock().unwrap() += data.len();
     }
 
     #[inline]
     pub fn push_front(&mut self, data: &[T]) {
         self.buf.lock().unwrap().push_front(data.to_vec());
-        self.len += data.len();
+        *self.len.lock().unwrap() += data.len();
     }
 }
 
@@ -64,10 +64,12 @@ impl Buffer<u8> {
         let mut io = Cursor::new(buf);
         let mut buf = self.buf.lock().unwrap();
 
+        let mut len = self.len.lock().unwrap();
+
         loop {
             if remaining == 0 {
-                if self.len != 0 {
-                    self.len -= read_len;
+                if *len != 0 {
+                    *len -= read_len;
                 }
                 break Ok(read_len);
             }
@@ -75,8 +77,8 @@ impl Buffer<u8> {
             let data = buf.pop_front();
 
             if data.is_none() {
-                if self.len != 0 {
-                    self.len -= read_len;
+                if *len != 0 {
+                    *len -= read_len;
                 }
 
                 break Ok(read_len);

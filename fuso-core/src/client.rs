@@ -24,12 +24,11 @@ use crate::{
 };
 
 #[allow(unused)]
-#[derive(Debug)]
 pub struct FusoProxy {
     conv: u64,
     action: Action,
     addr: String,
-    config: Arc<Config>,
+    context: Arc<Context>,
 }
 
 pub struct Fuso {
@@ -39,6 +38,14 @@ pub struct Fuso {
 pub struct Builder {
     config: Option<Config>,
     advices: Vec<Arc<dyn Advice<TcpStream, Box<DynCipher>> + Send + Sync + 'static>>,
+    cipher: Option<
+        Box<
+            dyn Fn(Option<String>) -> fuso_api::Result<Option<Box<DynCipher>>>
+                + Send
+                + Sync
+                + 'static,
+        >,
+    >,
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +76,27 @@ pub struct Config {
 pub struct Context {
     pub(crate) advices: Vec<Arc<dyn Advice<TcpStream, Box<DynCipher>> + Send + Sync + 'static>>,
     pub(crate) config: Arc<Config>,
+    pub(crate) cipher: Arc<
+        Option<
+            Box<
+                dyn Fn(Option<String>) -> fuso_api::Result<Option<Box<DynCipher>>>
+                    + Send
+                    + Sync
+                    + 'static,
+            >,
+        >,
+    >,
+}
+
+impl Context {
+    pub fn get_cipher(&self) -> fuso_api::Result<Option<Box<DynCipher>>> {
+        let secret = self.config.crypt_secret.clone();
+        if let Some(create_cipher) = self.cipher.as_ref() {
+            create_cipher(secret)
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 impl Builder {
@@ -85,13 +113,25 @@ impl Builder {
         self
     }
 
+    pub fn set_cipher<F>(mut self, cipher: F) -> Self
+    where
+        F: Fn(Option<String>) -> fuso_api::Result<Option<Box<DynCipher>>> + Send + Sync + 'static,
+    {
+        let cipher = Box::new(cipher);
+        self.cipher = Some(cipher);
+        self
+    }
+
     pub async fn build(self) -> fuso_api::Result<Fuso> {
         let cfg = Arc::new(self.config.expect("config required"));
 
         let cx = Context {
             advices: self.advices,
             config: cfg.clone(),
+            cipher: Arc::new(self.cipher),
         };
+
+        let cx = Arc::new(cx);
 
         let server_addr = cfg.server_addr.clone();
         let visit_addr = cfg.visit_port.clone();
@@ -145,8 +185,8 @@ impl Builder {
 
                 async move {
                     let race_future = smol::future::race(
-                        Fuso::run_core(conv, cfg.clone(), stream, accept_tx, server_addr.clone()),
-                        Fuso::run_udp_forward(conv, server_addr, cfg.clone()),
+                        Fuso::run_core(conv, cx.clone(), stream, accept_tx, server_addr.clone()),
+                        Fuso::run_udp_forward(conv, server_addr, cx.clone()),
                     );
 
                     let bridge_future = async move {
@@ -179,6 +219,7 @@ impl Fuso {
         Builder {
             advices: Vec::new(),
             config: None,
+            cipher: None,
         }
     }
 
@@ -219,12 +260,15 @@ impl Fuso {
         Ok(())
     }
 
-    async fn run_udp_forward(conv: u64, server_addr: String, cfg: Arc<Config>) -> Result<()> {
+    async fn run_udp_forward(conv: u64, server_addr: String, cx: Arc<Context>) -> Result<()> {
         let mut udp_bind = TcpStream::connect(server_addr).await?;
+        let cfg = cx.config.clone();
 
         if let Some(handsnake) = cfg.handsnake.as_ref() {
             udp_bind.write_handsnake(handsnake).await?;
         }
+
+        let cipher = cx.get_cipher()?;
 
         udp_bind.send(Action::UdpBind(conv).into()).await?;
 
@@ -232,6 +276,12 @@ impl Fuso {
 
         match action {
             Action::Accept(_) => {
+                let udp_bind = if cipher.is_some() {
+                    udp_bind.cipher(cipher.unwrap()).as_fuso_stream()
+                } else {
+                    udp_bind.as_fuso_stream()
+                };
+
                 let mut udp_bind = udp_bind.guard(5000).await?;
 
                 loop {
@@ -255,7 +305,7 @@ impl Fuso {
 
     async fn run_core<S>(
         conv: u64,
-        config: Arc<Config>,
+        context: Arc<Context>,
         core: S,
         accept_tx: Sender<FusoProxy>,
         server_addr: String,
@@ -280,7 +330,7 @@ impl Fuso {
                         conv,
                         action,
                         addr: server_addr.clone(),
-                        config: config.clone(),
+                        context: context.clone(),
                     };
 
                     accept_tx.send(proxy).await.map_err(|e| {
@@ -320,7 +370,8 @@ impl Fuso {
 
 impl FusoProxy {
     #[inline]
-    pub async fn join(self) -> Result<(TcpStream, TcpStream, Arc<Config>)> {
+    pub async fn join(self) -> Result<(TcpStream, TcpStream, Arc<Context>)> {
+        let config = self.context.config.clone();
         let (id, addr) = {
             match self.action {
                 Action::Forward(id, Addr::Domain(domain, port)) => {
@@ -329,7 +380,7 @@ impl FusoProxy {
                     (id, format!("{}:{}", domain, port))
                 }
                 Action::Forward(id, Addr::Socket(addr)) if addr.port() == 0 => {
-                    let addr = self.config.forward_addr.clone();
+                    let addr = config.forward_addr.clone();
                     log::info!("[forward_local] addr={}", addr);
 
                     (id, addr)
@@ -351,13 +402,13 @@ impl FusoProxy {
             .await
             .map_err(|e| Error::with_io(e))?;
 
-        if let Some(handsnake) = self.config.handsnake.as_ref() {
+        if let Some(handsnake) = config.handsnake.as_ref() {
             stream.write_handsnake(handsnake).await?;
         }
 
         stream.send(Action::Connect(self.conv, id).into()).await?;
 
-        Ok((stream, to, self.config))
+        Ok((stream, to, self.context))
     }
 }
 
