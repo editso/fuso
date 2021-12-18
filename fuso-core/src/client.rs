@@ -276,6 +276,14 @@ impl Fuso {
 
         match action {
             Action::Accept(_) => {
+                
+                log::info!(
+                    "udp forwarding is bound to {}",
+                    udp_bind
+                        .local_addr()
+                        .map_or(String::from("Unknown"), |addr| addr.to_string())
+                );
+
                 let udp_bind = if cipher.is_some() {
                     udp_bind.cipher(cipher.unwrap()).as_fuso_stream()
                 } else {

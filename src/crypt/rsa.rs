@@ -1,9 +1,8 @@
-use std::{pin::Pin, task::Poll};
-
 use fuso_core::Cipher;
 use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use rand::rngs::OsRng;
 use rsa::{PaddingScheme, PublicKey, RsaPrivateKey, RsaPublicKey};
-use smol::future::FutureExt;
+use std::pin::Pin;
 
 pub struct Rsa {
     public_key: RsaPublicKey,
@@ -21,56 +20,64 @@ impl Rsa {
 }
 
 impl Cipher for Rsa {
-    fn poll_decrypt(
-        &mut self,
-        mut io: Box<&mut (dyn AsyncRead + Unpin + Send + Sync + 'static)>,
-        cx: &mut std::task::Context<'_>,
-        _: &mut [u8],
-    ) -> Poll<std::io::Result<Vec<u8>>> {
-        let mut packet = Vec::new();
-        packet.resize(256, 0);
+    fn decrypt(
+        &self,
+        mut io: Pin<Box<dyn AsyncRead + Unpin + Send>>,
+        _: usize,
+    ) -> Pin<Box<dyn futures::Future<Output = std::io::Result<Vec<u8>>> + Send>> {
+        let private_key = self.private_key.clone();
+        let fut = async move {
+            let mut packet = Vec::new();
+            packet.resize(256, 0);
 
-        log::debug!("[rsa] decrypt");
+            log::debug!("[rsa] decrypt");
 
-        match Pin::new(&mut io).read_exact(&mut packet).poll(cx)? {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(_) => {
-                let padding = PaddingScheme::new_pkcs1v15_encrypt();
-                let data = self.private_key.decrypt(padding, &packet).map_err(|e| {
-                    log::warn!("[rsa] {}", e);
-                    fuso_core::Error::with_str(e.to_string())
-                })?;
-                Poll::Ready(Ok(data))
-            }
-        }
-    }
+            io.read_exact(&mut packet).await?;
 
-    fn poll_encrypt(
-        &mut self,
-        mut io: Box<&mut (dyn AsyncWrite + Unpin + Send + Sync + 'static)>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> Poll<std::io::Result<usize>> {
-        use rand::rngs::OsRng;
-        let mut rng = OsRng;
-        let padding = PaddingScheme::new_pkcs1v15_encrypt();
-
-        log::debug!("[rsa] encrypt {}", buf.len());
-
-        let data = self
-            .public_key
-            .encrypt(&mut rng, padding, buf)
-            .map_err(|e| {
-                log::warn!("[rsa] {}", e);
+            let padding = PaddingScheme::new_pkcs1v15_encrypt();
+            let data = private_key.decrypt(padding, &packet).map_err(|e| {
+                log::warn!("[rsa] decrypt_error {}", e);
                 fuso_core::Error::with_str(e.to_string())
             })?;
 
-        match Pin::new(&mut io).write_all(&data).poll(cx)? {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(_) => Poll::Ready(Ok(buf.len())),
-        }
+            Ok(data)
+        };
+
+        Box::pin(fut)
+    }
+
+    fn encrypt(
+        &self,
+        mut io: Pin<Box<dyn AsyncWrite + Unpin + Send>>,
+        buf: &[u8],
+    ) -> Pin<Box<dyn futures::Future<Output = std::io::Result<usize>> + Send>> {
+        let public_key = self.public_key.clone();
+        let buf = buf.to_vec();
+
+        let fut = async move {
+            let data = {
+                let mut rng = OsRng;
+                let padding = PaddingScheme::new_pkcs1v15_encrypt();
+
+                log::debug!("[rsa] encrypt_len {}", buf.len());
+
+                let data = public_key.encrypt(&mut rng, padding, &buf).map_err(|e| {
+                    log::warn!("[rsa] encrypt_error {}", e);
+                    fuso_core::Error::with_str(e.to_string())
+                })?;
+
+                data
+            };
+
+            io.write_all(&data).await?;
+
+            Ok(buf.len())
+        };
+
+        Box::pin(fut)
     }
 }
+
 
 pub mod server {
     use async_trait::async_trait;

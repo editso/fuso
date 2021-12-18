@@ -7,7 +7,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use futures::{AsyncRead, AsyncWrite};
+use futures::{AsyncRead, AsyncReadExt, AsyncWrite, Future};
 
 use crate::{Result, SafeStream};
 
@@ -15,13 +15,15 @@ use smol::{future::FutureExt, io::AsyncWriteExt, net::TcpStream};
 
 use crate::Buffer;
 
-pub type DynCipher = dyn self::Cipher + Send + Sync + 'static;
+pub type DynCipher = dyn self::Cipher + Send + Sync;
 
 #[derive(Clone)]
 pub struct Crypt<T, C> {
-    buf: Arc<Mutex<Buffer<u8>>>,
-    target: Arc<Mutex<T>>,
-    cipher: Arc<Mutex<C>>,
+    core: T,
+    cipher: C,
+    store: Buffer<u8>,
+    decrypt_fut: Arc<Mutex<Option<Pin<Box<dyn Future<Output = std::io::Result<Vec<u8>>> + Send>>>>>,
+    encrypt_fut: Arc<Mutex<Option<Pin<Box<dyn Future<Output = std::io::Result<usize>> + Send>>>>>,
 }
 
 #[async_trait]
@@ -64,19 +66,17 @@ where
 }
 
 pub trait Cipher {
-    fn poll_decrypt(
-        &mut self,
-        io: Box<&mut (dyn AsyncRead + Unpin + Send + Sync + 'static)>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<std::io::Result<Vec<u8>>>;
+    fn decrypt(
+        &self,
+        io: Pin<Box<dyn AsyncRead + Unpin + Send>>,
+        max_buf: usize,
+    ) -> Pin<Box<dyn Future<Output = std::io::Result<Vec<u8>>> + Send>>;
 
-    fn poll_encrypt(
-        &mut self,
-        io: Box<&mut (dyn AsyncWrite + Unpin + Send + Sync + 'static)>,
-        cx: &mut std::task::Context<'_>,
+    fn encrypt(
+        &self,
+        io: Pin<Box<dyn AsyncWrite + Unpin + Send>>,
         buf: &[u8],
-    ) -> Poll<std::io::Result<usize>>;
+    ) -> Pin<Box<dyn Future<Output = std::io::Result<usize>> + Send>>;
 }
 
 #[derive(Clone)]
@@ -87,29 +87,29 @@ pub struct Xor {
 impl<C> Crypt<TcpStream, C> {
     #[inline]
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
-        self.target.lock().unwrap().local_addr()
+        self.core.local_addr()
     }
 
     #[inline]
     pub fn peer_addr(&self) -> std::io::Result<SocketAddr> {
-        self.target.lock().unwrap().peer_addr()
+        self.core.peer_addr()
     }
 }
 
 impl<C> Crypt<SafeStream<TcpStream>, C> {
     #[inline]
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
-        self.target.lock().unwrap().local_addr()
+        self.core.local_addr()
     }
 
     #[inline]
     pub fn peer_addr(&self) -> std::io::Result<SocketAddr> {
-        self.target.lock().unwrap().peer_addr()
+        self.core.peer_addr()
     }
 }
 
 #[async_trait]
-impl<T, C> Security<T, C> for T
+impl<'a, T, C> Security<T, C> for T
 where
     T: AsyncWrite + AsyncRead + Unpin + Send + Sync + 'static,
     C: Cipher + Send + Sync + 'static,
@@ -117,157 +117,85 @@ where
     #[inline]
     fn cipher(self, c: C) -> Crypt<T, C> {
         Crypt {
-            target: Arc::new(Mutex::new(self)),
-            buf: Arc::new(Mutex::new(Buffer::new())),
-            cipher: Arc::new(Mutex::new(c)),
+            core: self,
+            store: Buffer::new(),
+            cipher: c,
+            decrypt_fut: Arc::new(Mutex::new(None)),
+            encrypt_fut: Arc::new(Mutex::new(None)),
         }
     }
 }
 
-impl<T> Security<T, Box<DynCipher>> for T
+impl<'a, T> Security<T, Box<DynCipher>> for T
 where
     T: AsyncWrite + AsyncRead + Send + Sync + 'static,
 {
     #[inline]
     fn cipher(self, c: Box<DynCipher>) -> Crypt<T, Box<DynCipher>> {
         Crypt {
-            target: Arc::new(Mutex::new(self)),
-            buf: Arc::new(Mutex::new(Buffer::new())),
-            cipher: Arc::new(Mutex::new(c)),
+            core: self,
+            store: Buffer::new(),
+            cipher: c,
+            decrypt_fut: Arc::new(Mutex::new(None)),
+            encrypt_fut: Arc::new(Mutex::new(None)),
         }
     }
 }
 
-#[async_trait]
-impl<T, C> AsyncRead for Crypt<T, C>
-where
-    T: AsyncRead + Unpin + Send + Sync + 'static,
-    C: Cipher + Unpin + Send + Sync + 'static,
-{
-    fn poll_read(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut [u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        let io_buf = self.buf.clone();
-
-        let mut io_buf = io_buf.lock().unwrap();
-
-        if !io_buf.is_empty() {
-            Pin::new(&mut *io_buf).poll_read(cx, buf)
-        } else {
-            let mut core = self.target.lock().unwrap();
-            let mut cipher = self.cipher.lock().unwrap();
-            let io = Box::new(&mut *core as _);
-
-            match Pin::new(&mut *cipher).poll_decrypt(io, cx, buf) {
-                Poll::Pending => Poll::Pending,
-                Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
-                Poll::Ready(Ok(data)) => {
-                    let total = buf.len();
-                    let mut cur = Cursor::new(buf);
-
-                    let write_len = if total >= data.len() {
-                        cur.write_all(&data).unwrap();
-                        data.len()
-                    } else {
-                        cur.write_all(&data[..total]).unwrap();
-                        io_buf.push_back(&data[total..]);
-                        total
-                    };
-
-                    Poll::Ready(Ok(write_len))
-                }
-            }
-        }
-    }
-}
-
-#[async_trait]
-impl<T, C> AsyncWrite for Crypt<T, C>
-where
-    T: AsyncWrite + Unpin + Send + Sync + 'static,
-    C: Cipher + Unpin + Send + Sync + 'static,
-{
-    #[inline]
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        let mut core = self.target.lock().unwrap();
-        let mut cipher = self.cipher.lock().unwrap();
-        let io = Box::new(&mut *core as _);
-
-        Pin::new(&mut *cipher).poll_encrypt(io, cx, buf)
-    }
-
-    #[inline]
-    fn poll_flush(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        let mut core = self.target.lock().unwrap();
-        Pin::new(&mut *core).poll_flush(cx)
-    }
-
-    #[inline]
-    fn poll_close(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        let mut core = self.target.lock().unwrap();
-        Pin::new(&mut *core).poll_close(cx)
-    }
-}
-
-#[async_trait]
 impl<T> AsyncRead for Crypt<T, Box<DynCipher>>
 where
-    T: AsyncRead + Unpin + Send + Sync + 'static,
+    T: AsyncRead + Clone + Unpin + Send + Sync + 'static,
 {
     fn poll_read(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
-        let io_buf = self.buf.clone();
+        let mut store = self.store.clone();
 
-        let mut io_buf = io_buf.lock().unwrap();
-
-        if !io_buf.is_empty() {
-            Pin::new(&mut *io_buf).poll_read(cx, buf)
+        if !store.is_empty() {
+            store.read(buf).poll(cx)
         } else {
-            let mut core = self.target.lock().unwrap();
-            let mut cipher = self.cipher.lock().unwrap();
-            let io = Box::new(&mut *core as _);
-            match Pin::new(&mut *cipher).poll_decrypt(io, cx, buf) {
-                Poll::Pending => Poll::Pending,
-                Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
-                Poll::Ready(Ok(data)) => {
-                    let total = buf.len();
-                    let mut cur = Cursor::new(buf);
-                    
-                    let write_len = if total >= data.len() {
-                        cur.write_all(&data).unwrap();
-                        data.len()
-                    } else {
-                        cur.write_all(&data[..total]).unwrap();
-                        io_buf.push_back(&data[total..]);
-                        total
-                    };
+            let mut decrypt_fut = self.decrypt_fut.lock().unwrap();
 
-                    Poll::Ready(Ok(write_len))
+            let mut fut = match decrypt_fut.take() {
+                Some(fut) => fut,
+                None => {
+                    let core = self.core.clone();
+                    let core = Box::pin(core);
+                    self.cipher.decrypt(core, buf.len())
+                }
+            };
+
+            match fut.poll(cx)? {
+                Poll::Ready(data) if data.len() <= buf.len() => {
+                    let mut cur = Cursor::new(buf);
+                    let _ = cur.write_all(&data)?;
+                    Poll::Ready(Ok(data.len()))
+                }
+                Poll::Ready(data) => {
+                    let total = buf.len();
+                    match Pin::new(&mut store).poll_write(cx, &data[total..])? {
+                        Poll::Pending => Poll::Pending,
+                        Poll::Ready(_) => {
+                            let mut cur = Cursor::new(buf);
+                            cur.write_all(&data[..total])?;
+                            Poll::Ready(Ok(total))
+                        }
+                    }
+                }
+                Poll::Pending => {
+                    *decrypt_fut = Some(fut);
+                    Poll::Pending
                 }
             }
         }
     }
 }
 
-#[async_trait]
 impl<T> AsyncWrite for Crypt<T, Box<DynCipher>>
 where
-    T: AsyncWrite + Unpin + Send + Sync + 'static,
+    T: AsyncWrite + Clone + Unpin + Send + Sync + 'static,
 {
     #[inline]
     fn poll_write(
@@ -275,28 +203,40 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
-        let mut core = self.target.lock().unwrap();
-        let mut cipher = self.cipher.lock().unwrap();
-        let io = Box::new(&mut *core as _);
-        Pin::new(&mut *cipher).poll_encrypt(io, cx, buf)
+        let mut encrypt_fut = self.encrypt_fut.lock().unwrap();
+
+        let mut fut = match encrypt_fut.take() {
+            Some(fut) => fut,
+            None => {
+                let core = self.core.clone();
+                let core = Box::pin(core);
+                self.cipher.encrypt(core, buf)
+            }
+        };
+
+        match fut.poll(cx)? {
+            Poll::Ready(n) => Poll::Ready(Ok(n)),
+            Poll::Pending => {
+                *encrypt_fut = Some(fut);
+                Poll::Pending
+            }
+        }
     }
 
     #[inline]
     fn poll_flush(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
-        let mut core = self.target.lock().unwrap();
-        Pin::new(&mut *core).poll_flush(cx)
+        Pin::new(&mut self.core).poll_flush(cx)
     }
 
     #[inline]
     fn poll_close(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
-        let mut core = self.target.lock().unwrap();
-        Pin::new(&mut *core).poll_close(cx)
+        Pin::new(&mut self.core).poll_close(cx)
     }
 }
 
@@ -308,34 +248,34 @@ impl Xor {
 }
 
 impl Cipher for Xor {
-    fn poll_decrypt(
-        &mut self,
-        mut io: Box<&mut (dyn AsyncRead + Unpin + Send + Sync + 'static)>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<std::io::Result<Vec<u8>>> {
-        match Pin::new(&mut io).poll_read(cx, buf)? {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(n) => Poll::Ready(Ok(buf[..n]
-                .iter()
-                .map(|n| self.num ^ n)
-                .collect::<Vec<u8>>())),
-        }
+    fn decrypt(
+        &self,
+        mut io: Pin<Box<dyn AsyncRead + Unpin + Send>>,
+        buf_size: usize,
+    ) -> Pin<Box<dyn Future<Output = std::io::Result<Vec<u8>>> + Send>> {
+        let num = self.num.clone();
+        Box::pin(async move {
+            let mut buf = Vec::new();
+            buf.resize(buf_size, 0);
+            let n = io.read(&mut buf).await?;
+
+            Ok(buf[..n].iter().map(|n| num ^ n).collect::<Vec<u8>>())
+        })
     }
 
-    fn poll_encrypt(
-        &mut self,
-        mut io: Box<&mut (dyn AsyncWrite + Unpin + Send + Sync + 'static)>,
-        cx: &mut std::task::Context<'_>,
+    fn encrypt(
+        &self,
+        mut io: Pin<Box<dyn AsyncWrite + Unpin + Send>>,
         buf: &[u8],
-    ) -> Poll<std::io::Result<usize>> {
-      
-        match Pin::new(&mut io)
-            .write_all(&buf.into_iter().map(|n| self.num ^ n).collect::<Vec<u8>>())
-            .poll(cx)?
-        {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(_) => Poll::Ready(Ok(buf.len())),
-        }
+    ) -> Pin<Box<dyn Future<Output = std::io::Result<usize>> + Send>> {
+        let num = self.num.clone();
+        let len = buf.len();
+        let buf = buf.to_vec();
+
+        Box::pin(async move {
+            io.write_all(&buf.into_iter().map(|n| num ^ n).collect::<Vec<u8>>())
+                .await?;
+            Ok(len)
+        })
     }
 }

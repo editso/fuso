@@ -27,8 +27,15 @@ pub fn parse_addr(host: &str, port: &str) -> std::result::Result<String, String>
 
 #[cfg(test)]
 mod tests {
-    use futures::{AsyncReadExt, AsyncWriteExt};
-    use smol::net::{TcpListener, TcpStream};
+    
+    use futures::{
+
+        AsyncReadExt, AsyncWriteExt,
+    };
+
+    use smol::{
+        net::{TcpListener, TcpStream},
+    };
 
     #[test]
     fn test_clap() {
@@ -40,7 +47,6 @@ mod tests {
         let _ = App::from(yaml).get_matches();
     }
 
-   
     fn init_logger() {
         env_logger::builder()
             .filter_level(log::LevelFilter::Debug)
@@ -74,7 +80,7 @@ mod tests {
                     loop {
                         let mut buf = Vec::new();
                         buf.resize(1024, 0);
-
+                        
                         let n = stream.read(&mut buf).await.unwrap();
                         buf.truncate(n);
 
@@ -120,21 +126,22 @@ mod tests {
             log::debug!("recv = {:?}", String::from_utf8_lossy(&buf));
 
             loop {
-
-                stream.write_all(b"hello world").await.expect("write msg failure");
+                stream
+                    .write_all(b"hello world")
+                    .await
+                    .expect("write msg failure");
 
                 buf.resize(1024, 0);
 
                 let n = stream.read(&mut buf).await.expect("read header error");
 
                 buf.truncate(n);
-                
-                if n == 0{
+
+                if n == 0 {
                     break;
                 }
 
                 log::debug!("recv = {:?}", String::from_utf8_lossy(&buf));
-
             }
         };
 

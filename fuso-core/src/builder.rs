@@ -142,8 +142,9 @@ impl FusoBuilder<Arc<Context>> {
                     Ok(State::Next)
                 })
                 .next(|mut tcp, cx| async move {
-                    let action: Action = tcp.recv().await?.try_into()?;
                     let _ = tcp.begin().await;
+
+                    let action: Action = tcp.recv().await?.try_into()?;
 
                     match action {
                         Action::TcpBind(cfg) => {
@@ -297,7 +298,8 @@ impl FusoBuilder<Arc<Context>> {
 
                                 log::warn!(
                                     "[tcp] An illegal connection {}",
-                                    tcp.peer_addr().unwrap()
+                                    tcp.peer_addr()
+                                        .map_or_else(|_| "Unknown".into(), |e| e.to_string())
                                 );
                             } else {
                                 log::debug!(

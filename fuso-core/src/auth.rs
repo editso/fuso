@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use fuso_api::FusoAuth;
 use futures::{AsyncRead, AsyncWrite};
 
+#[allow(unused)]
 pub struct TokenAuth {
     token: String,
 }
@@ -13,8 +14,6 @@ impl TokenAuth {
         }
     }
 }
-
-
 
 #[async_trait]
 impl<T> FusoAuth<T> for TokenAuth

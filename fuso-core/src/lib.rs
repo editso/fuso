@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod bridge;
 pub mod client;
 pub mod cmd;
@@ -8,21 +9,17 @@ pub mod handsnake;
 pub mod packet;
 pub mod retain;
 pub mod udp;
-pub mod auth;
-
 
 mod builder;
 
-
 use std::sync::Arc;
 
+pub use builder::*;
 pub use fuso_api::*;
 use futures::{AsyncRead, AsyncReadExt, AsyncWrite};
 use smol::lock::Mutex;
-pub use builder::*;
 
 pub use fuso_api::DynCipher;
-
 
 #[inline]
 pub fn split<T>(o: T) -> (T, T)
@@ -113,9 +110,9 @@ mod tests {
 
         log::debug!("{:?}", packet.encode());
 
-        let bytes = b"\0\0\0\xccq\0\0\0\x17\0\0\0\0\0\0\0\0\n\0\0\0\x0bhello world11111";
+        let bytes = [0, 0, 0, 204, 16, 0, 0, 0, 0, 0];
 
-        let action: Action = Packet::decode_data(bytes).unwrap().try_into().unwrap();
+        let action: Action = Packet::decode_data(&bytes).unwrap().try_into().unwrap();
 
         log::debug!("{:?}", action);
     }

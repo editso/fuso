@@ -49,7 +49,7 @@ where
 
         buf.truncate(n);
 
-        writer.write_all(&mut buf).await?;
+        let _ = writer.write_all(&mut buf).await?;
     }
 }
 
@@ -281,7 +281,7 @@ where
         self.read_exact(&mut buffer)
             .await
             .map_err(|_| error::Error::new(error::ErrorKind::BadPacket))?;
-
+            
         packet.set_data(buffer);
 
         Ok(packet)
@@ -289,9 +289,11 @@ where
 
     #[inline]
     async fn send(&mut self, packet: Packet) -> Result<()> {
+        
         self.write(&packet.encode())
             .await
             .map_err(|e| error::Error::with_io(e))?;
+
         Ok(())
     }
 }
@@ -352,6 +354,10 @@ where
         let (reader_s, writer_s) = self.split();
         let (reader_t, writer_t) = to.split();
 
+        // smol::future::race(
+        //     smol::io::copy(reader_t, writer_s),
+        //     smol::io::copy(reader_s, writer_t),
+        // )
         smol::future::race(copy(reader_t, writer_s), copy(reader_s, writer_t))
             .await
             .map_err(|e| {

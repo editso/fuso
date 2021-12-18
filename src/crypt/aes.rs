@@ -1,13 +1,12 @@
-use std::{pin::Pin, task::Poll};
+use std::pin::Pin;
 
 use aes::Aes128;
 use block_modes::{block_padding::Pkcs7, BlockMode, Cbc};
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{BufMut, BytesMut};
 use fuso_core::Cipher;
 use futures::{AsyncReadExt, AsyncWriteExt};
 use hex::ToHex;
 use rand::Rng;
-use smol::future::FutureExt;
 
 type Aes128Cbc = Cbc<Aes128, Pkcs7>;
 
@@ -16,7 +15,6 @@ pub struct Aes {
     key: [u8; 16],
     iv: [u8; 16],
 }
-
 
 impl Aes {
     pub fn try_with(key: &str) -> fuso_core::Result<Self> {
@@ -49,7 +47,6 @@ impl Aes {
     }
 }
 
-
 impl TryFrom<String> for Aes {
     type Error = fuso_core::Error;
 
@@ -58,7 +55,7 @@ impl TryFrom<String> for Aes {
             |e| Err(fuso_core::Error::with_str(e.to_string())),
             |data| {
                 if data.len() != 32 {
-                    Err("bad ase key".into())
+                    Err("bad aes key".into())
                 } else {
                     let mut key = [0; 16];
                     let mut iv = [0; 16];
@@ -79,81 +76,95 @@ impl TryFrom<String> for Aes {
 }
 
 impl Cipher for Aes {
-    fn poll_decrypt(
-        &mut self,
-        mut io: Box<&mut (dyn futures::AsyncRead + Unpin + Send + Sync + 'static)>,
-        cx: &mut std::task::Context<'_>,
-        _: &mut [u8],
-    ) -> std::task::Poll<std::io::Result<Vec<u8>>> {
-        let mut buf = BytesMut::new();
-        buf.resize(4, 0);
+    fn decrypt(
+        &self,
+        mut io: Pin<Box<dyn futures::AsyncRead + Unpin + Send>>,
+        _: usize,
+    ) -> Pin<Box<dyn futures::Future<Output = std::io::Result<Vec<u8>>> + Send>> {
+        let cipher = self.aes.clone();
 
-        let n = match Pin::new(&mut io.read_exact(&mut buf)).poll(cx)? {
-            Poll::Pending => return Poll::Pending,
-            Poll::Ready(_) => buf.get_u32(),
-        };
+        let fut = async move {
+            let mut buf = [0u8; 4];
 
-        buf.resize(n as usize, 0);
+            io.read_exact(&mut buf).await?;
 
-        match Pin::new(&mut io.read_exact(&mut buf)).poll(cx)? {
-            std::task::Poll::Pending => Poll::Pending,
-            std::task::Poll::Ready(_) => {
-                let cipher = self.aes.clone();
+            let n = u32::from_be_bytes(buf);
 
-                let data = cipher.decrypt(&mut buf).map_err(|e| {
-                    log::warn!("[aes] decrypt error {}", e);
-                    fuso_core::Error::with_str(e.to_string())
-                })?;
+            let mut buf = BytesMut::new();
+            buf.resize(n as usize, 0);
 
-                Poll::Ready(Ok(data.to_vec()))
-            }
-        }
-    }
+            io.read_exact(&mut buf).await?;
 
-    fn poll_encrypt(
-        &mut self,
-        mut io: Box<&mut (dyn futures::AsyncWrite + Unpin + Send + Sync + 'static)>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        let encrypt_data = Vec::new();
+            log::debug!("[aes] decrypt_len {}", n);
 
-        let data = buf
-            .chunks(4095)
-            .into_iter()
-            .try_fold(encrypt_data, |mut buffer, data| {
-                let mut encrypt_data = [0; 4096];
-
-                let cipher = self.aes.clone();
-
-                encrypt_data[..data.len()].copy_from_slice(data);
-
-                cipher
-                    .encrypt(&mut encrypt_data, data.len())
-                    .map_or_else(
-                        |e| {
-                            log::warn!("[aes] encrypt error {}", e);
-                            Err(fuso_core::Error::with_str(e.to_string()))
-                        },
-                        |n| Ok(n.len()),
-                    )
-                    .map_or_else(
-                        |e| Err(e),
-                        |pos| {
-                            // let _ = Pkcs7::pad_block(&mut encrypt_data, pos);
-                            buffer.put_u32(pos as u32);
-                            buffer.put_slice(&encrypt_data[..pos]);
-
-                            Ok(buffer)
-                        },
-                    )
+            let data = cipher.decrypt(&mut buf).map_err(|e| {
+                log::warn!("[aes] decrypt error {}", e);
+                fuso_core::Error::with_str(e.to_string())
             })?;
 
-        match Pin::new(&mut io).write_all(&data).poll(cx)? {
-            Poll::Ready(_) => Poll::Ready(Ok(buf.len())),
-            Poll::Pending => Poll::Pending,
-        }
+            Ok(data.to_vec())
+        };
+
+        Box::pin(fut)
     }
+
+    fn encrypt(
+        &self,
+        mut io: Pin<Box<dyn futures::AsyncWrite + Unpin + Send>>,
+        buf: &[u8],
+    ) -> Pin<Box<dyn futures::Future<Output = std::io::Result<usize>> + Send>> {
+        let cipher = self.aes.clone();
+
+        let buf = buf.to_vec();
+
+        let fut = async move {
+            let encrypt_data = BytesMut::new();
+
+            let data =
+                buf.chunks(0x2000 - 1)
+                    .into_iter()
+                    .try_fold(encrypt_data, |mut buffer, data| {
+                        let mut encrypt_data = [0; 0x2000];
+
+                        encrypt_data[..data.len()].copy_from_slice(data);
+
+                        let cipher = cipher.clone();
+
+                        cipher.encrypt(&mut encrypt_data, data.len()).map_or_else(
+                            |e| {
+                                log::warn!("[aes] encrypt error {}", e);
+                                Err(fuso_core::Error::with_str(e.to_string()))
+                            },
+                            |data| {
+                                // let _ = Pkcs7::pad_block(&mut encrypt_data, pos);
+                                let len = data.len();
+
+                                log::debug!("[aes] encrypt_len = {}", len);
+
+                                buffer.put_u32(len as u32);
+                                buffer.put_slice(data);
+
+                                Ok(buffer)
+                            },
+                        )
+                    })?;
+
+            io.write_all(&data).await?;
+
+            Ok(buf.len())
+        };
+
+        Box::pin(fut)
+    }
+}
+
+#[test]
+fn test_bytes() {
+    let mut buf = BytesMut::new();
+    let num = 1024 as usize;
+    buf.put_u32(num as u32);
+
+    println!("{:?}", buf);
 }
 
 #[test]

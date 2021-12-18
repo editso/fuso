@@ -1,3 +1,1 @@
-pub struct UdpForward{
-    
-}
+pub struct UdpForward {}

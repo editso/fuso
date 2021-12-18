@@ -42,9 +42,9 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 2. **参数说明**    
 `-h`: 绑定的地址
 `-p`: 监听的端口, 也就是客户端需要连接到服务端的端口  
-`-l`: 日志信息级别 (`debug`, `info`, `trace`, `error`, `warn`)
-`--auth`: 认证方式 (预留, 暂未实现) 
-`--secret`: 密码 (预留, 暂未实现)
+`-l`: 日志信息级别 (`debug`, `info`, `trace`, `error`, `warn`)  
+`--auth`: 认证方式 (预留, 暂未实现)   
+`--secret`: 密码 (预留, 暂未实现)  
 `-v`: 该参数打印的版本目前无效  
 `-h`: 获取帮助信息
 

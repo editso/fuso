@@ -2,18 +2,14 @@ use clap::Parser;
 
 use fuso::aes::Aes;
 use fuso_core::{
-  
-    core::{GlobalConfig, Fuso},
-   
-    handsnake::{Handsnake},
-   
-    Forward, Spawn, auth::TokenAuth, Xor, Security,
+    auth::TokenAuth,
+    core::{Fuso, GlobalConfig},
+    handsnake::Handsnake,
+    Forward, Security, Spawn, Xor,
 };
 
-
 use futures::{StreamExt, TryFutureExt};
-use smol::{Executor};
-
+use smol::Executor;
 
 #[derive(Debug, Parser)]
 #[clap(about, version)]
@@ -44,7 +40,6 @@ struct FusoArgs {
     log_level: log::LevelFilter,
 }
 
-
 fn main() {
     let args = FusoArgs::parse();
 
@@ -56,7 +51,7 @@ fn main() {
     let bind_addr = format!("{}:{}", args.bind_host, args.bind_port);
 
     let core_future = async move {
-        Fuso::builder()
+       Fuso::builder()
             .use_auth(TokenAuth::new("my_token"))
             .use_default_handler()
             .use_default_strategy()

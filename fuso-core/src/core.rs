@@ -189,6 +189,8 @@ impl Session {
 
         let cipher = self.try_get_cipher()?;
 
+        log::info!("[bind_udp] bind udp");
+
         let tcp = if let Some(cipher) = cipher {
             let tcp = tcp.cipher(cipher);
             tcp.as_fuso_stream()
@@ -524,7 +526,10 @@ impl Context {
                                     log::warn!(
                                         "Unable to process connection {} {}",
                                         action.unwrap_err(),
-                                        tcp.peer_addr().unwrap()
+                                        tcp.peer_addr().map_or_else(
+                                            |_| { String::from("Unknown addr") },
+                                            |addr| addr.to_string()
+                                        )
                                     );
                                 } else {
                                     let action = action.unwrap();

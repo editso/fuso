@@ -6,8 +6,8 @@ use std::{
     task::Poll,
 };
 
-use futures::{AsyncRead, AsyncWrite};
-use smol::net::TcpStream;
+use futures::{AsyncRead, AsyncWrite, Future};
+use smol::{future::FutureExt, net::TcpStream};
 
 use crate::{Buffer, DynCipher, Rollback, RollbackEx, UdpStream};
 
@@ -16,6 +16,8 @@ pub struct SafeStream<Inner> {
     core: Rollback<Inner, Buffer<u8>>,
     store: Buffer<u8>,
     cipher: Arc<Mutex<Option<Box<DynCipher>>>>,
+    decrypt_fut: Arc<Mutex<Option<Pin<Box<dyn Future<Output = std::io::Result<Vec<u8>>> + Send>>>>>,
+    encrypt_fut: Arc<Mutex<Option<Pin<Box<dyn Future<Output = std::io::Result<usize>> + Send>>>>>,
 }
 
 pub trait SafeStreamEx<T> {
@@ -29,6 +31,8 @@ impl SafeStreamEx<Self> for TcpStream {
             core: self.roll(),
             store: Buffer::new(),
             cipher: Arc::new(Mutex::new(None)),
+            decrypt_fut: Arc::new(Mutex::new(None)),
+            encrypt_fut: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -40,6 +44,8 @@ impl SafeStreamEx<Self> for UdpStream {
             core: self.roll(),
             store: Buffer::new(),
             cipher: Arc::new(Mutex::new(None)),
+            decrypt_fut: Arc::new(Mutex::new(None)),
+            encrypt_fut: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -111,10 +117,18 @@ where
         } else {
             let cipher = self.cipher.clone();
             let mut cipher = cipher.lock().unwrap();
-
             if let Some(cipher) = cipher.as_mut() {
-                let io = Box::new(&mut self.core as _);
-                match cipher.poll_decrypt(io, cx, buf)? {
+                let mut decrypt_fut = self.decrypt_fut.lock().unwrap();
+
+                let mut fut = match decrypt_fut.take() {
+                    Some(fut) => fut,
+                    None => {
+                        let io = Box::pin(self.core.clone());
+                        cipher.decrypt(io, buf.len())
+                    }
+                };
+
+                match fut.poll(cx)? {
                     Poll::Ready(packet) if packet.len() <= buf.len() => {
                         let n = packet.len();
                         let mut cur = Cursor::new(buf);
@@ -132,7 +146,10 @@ where
                             }
                         }
                     }
-                    Poll::Pending =>Poll::Pending,
+                    Poll::Pending => {
+                        *decrypt_fut = Some(fut);
+                        Poll::Pending
+                    }
                 }
             } else {
                 Pin::new(&mut self.core).poll_read(cx, buf)
@@ -151,11 +168,28 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
+        
         let cipher = self.cipher.clone();
         let mut cipher = cipher.lock().unwrap();
         if let Some(cipher) = cipher.as_mut() {
-            let io = Box::new(&mut self.core as _);
-            cipher.poll_encrypt(io, cx, buf)
+            let mut encrypt_fut = self.encrypt_fut.lock().unwrap();
+
+            let mut fut = match encrypt_fut.take() {
+                Some(fut) => fut,
+                None => {
+                    let io = Box::pin(self.core.clone());
+
+                    cipher.encrypt(io, buf)
+                }
+            };
+
+            match fut.poll(cx)? {
+                Poll::Ready(n) => Poll::Ready(Ok(n)),
+                Poll::Pending => {
+                    *encrypt_fut = Some(fut);
+                    Poll::Pending
+                }
+            }
         } else {
             Pin::new(&mut self.core).poll_write(cx, buf)
         }

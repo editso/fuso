@@ -62,7 +62,7 @@ fn test_handler() {
 
     smol::block_on(async move {
         let chains = ChainHandler::new();
-        
+
         let state = chains
             .next(|_, _| async move {
                 log::info!("[chian] chain 1");
