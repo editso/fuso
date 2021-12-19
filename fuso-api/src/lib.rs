@@ -32,6 +32,17 @@ mod tests {
     }
 
     #[test]
+    fn test_copy() {
+        let mut buf = [1;1024];
+        let data = [1,2,3];
+        unsafe{
+            std::ptr::copy(data.as_ptr(), buf.as_mut_ptr(), 3);
+        }
+
+        println!("{:?}", buf)
+    }
+
+    #[test]
     fn test_time() {
         // let time = std::time::SystemTime::now()
         // .duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap();
@@ -51,7 +62,7 @@ mod tests {
         assert_eq!(5, packet.get_len());
 
         let data = packet.encode();
-        
+
         log::debug!("len: {}, raw: {:?}", data.len(), data);
 
         let packet = Packet::decode_data(&data).unwrap();

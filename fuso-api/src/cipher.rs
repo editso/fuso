@@ -1,5 +1,4 @@
 use std::{
-    io::{Cursor, Write},
     net::SocketAddr,
     pin::Pin,
     sync::{Arc, Mutex},
@@ -169,8 +168,8 @@ where
 
             match fut.poll(cx)? {
                 Poll::Ready(data) if data.len() <= buf.len() => {
-                    let mut cur = Cursor::new(buf);
-                    let _ = cur.write_all(&data)?;
+                    unsafe { std::ptr::copy(data.as_ptr(), buf.as_mut_ptr(), data.len()) }
+
                     Poll::Ready(Ok(data.len()))
                 }
                 Poll::Ready(data) => {
@@ -178,8 +177,13 @@ where
                     match Pin::new(&mut store).poll_write(cx, &data[total..])? {
                         Poll::Pending => Poll::Pending,
                         Poll::Ready(_) => {
-                            let mut cur = Cursor::new(buf);
-                            cur.write_all(&data[..total])?;
+                            // let mut cur = Cursor::new(buf);
+                            // cur.write_all(&data[..total])?;
+
+                            unsafe {
+                                std::ptr::copy(data.as_ptr(), buf.as_mut_ptr(), total);
+                            }
+
                             Poll::Ready(Ok(total))
                         }
                     }
@@ -192,6 +196,7 @@ where
         }
     }
 }
+
 
 impl<T> AsyncWrite for Crypt<T, Box<DynCipher>>
 where
@@ -255,8 +260,12 @@ impl Cipher for Xor {
     ) -> Pin<Box<dyn Future<Output = std::io::Result<Vec<u8>>> + Send>> {
         let num = self.num.clone();
         Box::pin(async move {
-            let mut buf = Vec::new();
-            buf.resize(buf_size, 0);
+            let mut buf = Vec::with_capacity(buf_size);
+
+            unsafe {
+                buf.set_len(buf_size);
+            }
+
             let n = io.read(&mut buf).await?;
 
             Ok(buf[..n].iter().map(|n| num ^ n).collect::<Vec<u8>>())
@@ -270,11 +279,10 @@ impl Cipher for Xor {
     ) -> Pin<Box<dyn Future<Output = std::io::Result<usize>> + Send>> {
         let num = self.num.clone();
         let len = buf.len();
-        let buf = buf.to_vec();
+        let buf = buf.into_iter().map(|n| num ^ n).collect::<Vec<u8>>();
 
         Box::pin(async move {
-            io.write_all(&buf.into_iter().map(|n| num ^ n).collect::<Vec<u8>>())
-                .await?;
+            io.write_all(&buf).await?;
             Ok(len)
         })
     }

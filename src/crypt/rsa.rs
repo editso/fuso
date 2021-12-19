@@ -26,15 +26,20 @@ impl Cipher for Rsa {
         _: usize,
     ) -> Pin<Box<dyn futures::Future<Output = std::io::Result<Vec<u8>>> + Send>> {
         let private_key = self.private_key.clone();
+
         let fut = async move {
-            let mut packet = Vec::new();
-            packet.resize(256, 0);
+            let mut packet = Vec::with_capacity(256);
+
+            unsafe {
+                packet.set_len(256);
+            }
 
             log::debug!("[rsa] decrypt");
 
             io.read_exact(&mut packet).await?;
 
             let padding = PaddingScheme::new_pkcs1v15_encrypt();
+
             let data = private_key.decrypt(padding, &packet).map_err(|e| {
                 log::warn!("[rsa] decrypt_error {}", e);
                 fuso_core::Error::with_str(e.to_string())
@@ -51,33 +56,28 @@ impl Cipher for Rsa {
         mut io: Pin<Box<dyn AsyncWrite + Unpin + Send>>,
         buf: &[u8],
     ) -> Pin<Box<dyn futures::Future<Output = std::io::Result<usize>> + Send>> {
-        let public_key = self.public_key.clone();
-        let buf = buf.to_vec();
+        let mut rng = OsRng;
+        let padding = PaddingScheme::new_pkcs1v15_encrypt();
+
+        log::debug!("[rsa] encrypt_len {}", buf.len());
+
+        let len = buf.len();
+        let data = self.public_key.encrypt(&mut rng, padding, &buf);
 
         let fut = async move {
-            let data = {
-                let mut rng = OsRng;
-                let padding = PaddingScheme::new_pkcs1v15_encrypt();
-
-                log::debug!("[rsa] encrypt_len {}", buf.len());
-
-                let data = public_key.encrypt(&mut rng, padding, &buf).map_err(|e| {
-                    log::warn!("[rsa] encrypt_error {}", e);
-                    fuso_core::Error::with_str(e.to_string())
-                })?;
-
-                data
-            };
+            let data = data.map_err(|e| {
+                log::warn!("[rsa] encrypt_error {}", e);
+                fuso_core::Error::with_str(e.to_string())
+            })?;
 
             io.write_all(&data).await?;
 
-            Ok(buf.len())
+            Ok(len)
         };
 
         Box::pin(fut)
     }
 }
-
 
 pub mod server {
     use async_trait::async_trait;

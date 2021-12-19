@@ -1,5 +1,4 @@
 use std::{
-    io::{Cursor, Write},
     net::SocketAddr,
     pin::Pin,
     sync::{Arc, Mutex},
@@ -131,8 +130,14 @@ where
                 match fut.poll(cx)? {
                     Poll::Ready(packet) if packet.len() <= buf.len() => {
                         let n = packet.len();
-                        let mut cur = Cursor::new(buf);
-                        let _ = cur.write_all(&packet)?;
+
+                        // let mut cur = Cursor::new(buf);
+                        // let _ = cur.write_all(&packet)?;
+
+                        unsafe {
+                            std::ptr::copy(packet.as_ptr(), buf.as_mut_ptr(), n);
+                        }
+
                         Poll::Ready(Ok(n))
                     }
                     Poll::Ready(packet) => {
@@ -140,8 +145,13 @@ where
                         match Pin::new(&mut store).poll_write(cx, &packet[total..])? {
                             Poll::Pending => Poll::Pending,
                             Poll::Ready(_) => {
-                                let mut cur = Cursor::new(buf);
-                                cur.write_all(&packet[..total])?;
+                                // let mut cur = Cursor::new(buf);
+                                // cur.write_all(&packet[..total])?;
+
+                                unsafe {
+                                    std::ptr::copy(packet.as_ptr(), buf.as_mut_ptr(), total);
+                                }
+
                                 Poll::Ready(Ok(total))
                             }
                         }
@@ -168,7 +178,6 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
-        
         let cipher = self.cipher.clone();
         let mut cipher = cipher.lock().unwrap();
         if let Some(cipher) = cipher.as_mut() {

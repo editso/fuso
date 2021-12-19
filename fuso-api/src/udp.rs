@@ -74,8 +74,11 @@ impl UdpStream {
                             }
                             packet.unwrap()
                         } else {
-                            let mut buf = Vec::new();
-                            buf.resize(MTU_BUF_SIZE, 0);
+                            let mut buf = Vec::with_capacity(MTU_BUF_SIZE);
+
+                            unsafe {
+                                buf.set_len(MTU_BUF_SIZE);
+                            }
 
                             let packet = udp.recv(&mut buf).await;
                             if packet.is_err() {
@@ -114,9 +117,11 @@ impl UdpListener {
 
         let core_future = async move {
             loop {
-                let mut buf = Vec::new();
+                let mut buf = Vec::with_capacity(MTU_BUF_SIZE);
 
-                buf.resize(MTU_BUF_SIZE, 0);
+                unsafe {
+                    buf.set_len(MTU_BUF_SIZE);
+                }
 
                 let packet = udp.recv_from(&mut buf).await;
 
