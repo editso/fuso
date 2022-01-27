@@ -21,9 +21,9 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 
 👉 该项目可直接当做库来使用
 
-👉 项目保持长期维护
-
 👉 目前该项目还处于初步开发阶段，欢迎提出功能与意见´◡`
+
+👉  项目将在年后进行异步库迁移 smol => tokio 可自定义运行时, 提高性能与扩展性
 
 ### ✨Demo
 
