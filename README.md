@@ -33,6 +33,8 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 2. `fuso` 分为客户端(`fuc`)与服务端(`fus`)
 3. 将你下载或构建好的`fus`程序[部署](#服务端部署)到服务器
 4. 将你下载或构建好的`fuc`程序[部署](#客户端部署)到你需要穿透的电脑上
+5. [多级代理截图演示#24](https://github.com/editso/fuso/issues/24)
+6. [新功能扩展提议](https://github.com/editso/fuso/issues/25)
 
 #### 服务端部署
 1. 采用参数传递的形式来部署无需任何配置文件, 并且配置简单大多情况下可使用默认配置
