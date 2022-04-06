@@ -82,27 +82,35 @@ impl Cipher for Aes {
         _: usize,
     ) -> Pin<Box<dyn futures::Future<Output = std::io::Result<Vec<u8>>> + Send>> {
         let cipher = self.aes.clone();
+        let mut buf = [0u8; 4];
 
         let fut = async move {
-            let mut buf = [0u8; 4];
-
             io.read_exact(&mut buf).await?;
 
-            let n = u32::from_be_bytes(buf);
+            let n = u32::from_be_bytes(buf) as usize;
 
-            let mut buf = BytesMut::new();
-            buf.resize(n as usize, 0);
+            let mut buf = Vec::with_capacity(n);
+
+            unsafe {
+                buf.set_len(n);
+            }
 
             io.read_exact(&mut buf).await?;
 
             log::debug!("[aes] decrypt_len {}", n);
 
-            let data = cipher.decrypt(&mut buf).map_err(|e| {
-                log::warn!("[aes] decrypt error {}", e);
-                fuso_core::Error::with_str(e.to_string())
-            })?;
+            let len = {
+                let data = cipher.decrypt(&mut buf).map_err(|e| {
+                    log::warn!("[aes] decrypt error {}", e);
+                    fuso_core::Error::with_str(e.to_string())
+                })?;
 
-            Ok(data.to_vec())
+                data.len()
+            };
+
+            buf.truncate(len);
+
+            Ok(buf)
         };
 
         Box::pin(fut)
@@ -114,18 +122,18 @@ impl Cipher for Aes {
         buf: &[u8],
     ) -> Pin<Box<dyn futures::Future<Output = std::io::Result<usize>> + Send>> {
         let cipher = self.aes.clone();
+        let len = buf.len();
 
-        let buf = buf.to_vec();
+        let encrypt_data = BytesMut::new();
+        let encrypted_data = [0; 0x2000];
 
-        let fut = async move {
-            let encrypt_data = BytesMut::new();
-
-            let data =
-                buf.chunks(0x2000 - 1)
-                    .into_iter()
-                    .try_fold(encrypt_data, |mut buffer, data| {
-                        let mut encrypt_data = [0; 0x2000];
-
+        let data = buf
+            .chunks(0x2000 - 1)
+            .into_iter()
+            .try_fold(
+                (encrypt_data, encrypted_data),
+                |(mut buffer, mut encrypt_data), data| {
+                    {
                         encrypt_data[..data.len()].copy_from_slice(data);
 
                         let cipher = cipher.clone();
@@ -144,14 +152,17 @@ impl Cipher for Aes {
                                 buffer.put_u32(len as u32);
                                 buffer.put_slice(data);
 
-                                Ok(buffer)
+                                Ok((buffer, encrypted_data))
                             },
                         )
-                    })?;
+                    }
+                },
+            )
+            .map(|(data, _)| data);
 
-            io.write_all(&data).await?;
-
-            Ok(buf.len())
+        let fut = async move {
+            io.write_all(&data?).await?;
+            Ok(len)
         };
 
         Box::pin(fut)

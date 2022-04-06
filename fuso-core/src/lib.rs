@@ -8,7 +8,6 @@ pub mod handler;
 pub mod handsnake;
 pub mod packet;
 pub mod retain;
-pub mod udp;
 
 mod builder;
 

@@ -37,8 +37,11 @@ where
     W: AsyncWrite + Unpin + Send + 'static,
 {
     loop {
-        let mut buf = Vec::new();
-        buf.resize(0x2000, 0);
+        let mut buf = Vec::with_capacity(0x2000);
+
+        unsafe {
+            buf.set_len(0x2000);
+        }
 
         let n = reader.read(&mut buf).await?;
 
@@ -265,9 +268,11 @@ where
 {
     #[inline]
     async fn recv(&mut self) -> Result<Packet> {
-        let mut buffer = Vec::new();
+        let mut buffer = Vec::with_capacity(Packet::size());
 
-        buffer.resize(Packet::size(), 0);
+        unsafe {
+            buffer.set_len(Packet::size());
+        }
 
         self.read_exact(&mut buffer)
             .await
@@ -275,13 +280,16 @@ where
 
         let mut packet = Packet::decode(&buffer)?;
 
-        buffer.clear();
-        buffer.resize(packet.get_len(), 0);
+        let mut buffer = Vec::with_capacity(packet.get_len());
+
+        unsafe {
+            buffer.set_len(packet.get_len());
+        }
 
         self.read_exact(&mut buffer)
             .await
             .map_err(|_| error::Error::new(error::ErrorKind::BadPacket))?;
-            
+
         packet.set_data(buffer);
 
         Ok(packet)
@@ -289,7 +297,6 @@ where
 
     #[inline]
     async fn send(&mut self, packet: Packet) -> Result<()> {
-        
         self.write(&packet.encode())
             .await
             .map_err(|e| error::Error::with_io(e))?;
@@ -483,7 +490,6 @@ impl From<Rollback<TcpStream, Buffer<u8>>> for TcpStream {
     }
 }
 
-#[async_trait]
 impl<T> AsyncRead for Rollback<T, Buffer<u8>>
 where
     T: AsyncRead + Unpin + Send + Sync + 'static,
@@ -535,7 +541,6 @@ where
     }
 }
 
-#[async_trait]
 impl<T> AsyncWrite for Rollback<T, Buffer<u8>>
 where
     T: AsyncWrite + Unpin + Send + Sync + 'static,

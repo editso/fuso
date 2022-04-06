@@ -15,7 +15,7 @@ use crate::packet::Action;
 
 #[derive(Clone)]
 pub struct HeartGuard<T> {
-    target: T,
+    core: T,
     last: Arc<RwLock<u64>>,
     guard: Arc<std::sync::Mutex<Option<Task<()>>>>,
 }
@@ -29,14 +29,14 @@ impl<T> HeartGuard<T>
 where
     T: Clone + AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
 {
-    pub fn new(target: T, interval: u64) -> Self {
+    pub fn new(core: T, interval: u64) -> Self {
         let last = Arc::new(RwLock::new(now_mills()));
 
         Self {
             last: last.clone(),
-            target: target.clone(),
+            core: core.clone(),
             guard: Arc::new(std::sync::Mutex::new(Some(smol::spawn({
-                let mut io = target.clone();
+                let mut io = core.clone();
 
                 async move {
                     log::info!("Guardian mode is turned on");
@@ -102,7 +102,7 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
-        match Pin::new(&mut self.target).poll_read(cx, buf) {
+        match Pin::new(&mut self.core).poll_read(cx, buf) {
             std::task::Poll::Ready(result) => {
                 if result.is_ok() {
                     *self.last.write().unwrap() = now_mills();
@@ -125,7 +125,7 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
-        Pin::new(&mut self.target).poll_write(cx, buf)
+        Pin::new(&mut self.core).poll_write(cx, buf)
     }
 
     #[inline]
@@ -133,7 +133,7 @@ where
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
-        Pin::new(&mut self.target).poll_flush(cx)
+        Pin::new(&mut self.core).poll_flush(cx)
     }
 
     #[inline]
@@ -141,18 +141,18 @@ where
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
-        Pin::new(&mut self.target).poll_close(cx)
+        Pin::new(&mut self.core).poll_close(cx)
     }
 }
 
 impl HeartGuard<TcpStream> {
     #[inline]
     pub fn lock_addr(&self) -> std::io::Result<SocketAddr> {
-        self.target.local_addr()
+        self.core.local_addr()
     }
 
     #[inline]
     pub fn peer_addr(&self) -> std::io::Result<SocketAddr> {
-        self.target.peer_addr()
+        self.core.peer_addr()
     }
 }
