@@ -184,6 +184,8 @@ where
                                 std::ptr::copy(data.as_ptr(), buf.as_mut_ptr(), total);
                             }
 
+                            store.push_back(&data[total..]);
+
                             Poll::Ready(Ok(total))
                         }
                     }
@@ -196,7 +198,6 @@ where
         }
     }
 }
-
 
 impl<T> AsyncWrite for Crypt<T, Box<DynCipher>>
 where
