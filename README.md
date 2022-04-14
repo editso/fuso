@@ -13,17 +13,23 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 [![GitHub license](https://img.shields.io/github/license/editso/fuso)](https://github.com/editso/fuso)
 [![Downloads](https://img.shields.io/github/downloads/editso/fuso/total?label=Release%20Download)](https://github.com/editso/fuso/releases/latest)
 
-### Fuso make PortForward & IntranetAccess Easy
 
-👉 这是一款用于内网穿透 端口转发的工具,帮助运维,开发人员快速部署与接入内网
-
-👉 传输采用`Rsa + Aes`加密
-
-👉 该项目可直接当做库来使用
-
-👉 项目保持长期维护
-
-👉 目前该项目还处于初步开发阶段，欢迎提出功能与意见´◡`
+### 项目重构计划
+1. 支持`tokio` & `smol` 或`自定义运行时`
+2. 支持更多协议,如 `quic`, `kcp`
+3. 完全重写设计(以前写的太烂)
+4. 可以用配置文件的形式来运行,该功能可在编译时进行选择
+5. 可自己扩展其他协议
+6. 连接信息查询接口
+7. 简单ui管理面板
+8. 设计上去除`async_trait`库
+9. 尽可能的的减少额外开销
+10. 传输加密 功能
+11. 有些情况下可能不需要内网穿透而是直接直连，所以加入直连功能
+12. 级联代理功能
+14. 连接鉴权功能
+15. udp打洞功能
+16. 分功能进行编译, 也就是说可以自己选择需要的功能来编译
 
 ### ✨Demo
 
