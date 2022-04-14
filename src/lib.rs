@@ -44,6 +44,7 @@ mod tests {
 
         let yaml = load_yaml!("assets/client-cfg.yml");
 
+        
         let _ = App::from(yaml).get_matches();
     }
 
