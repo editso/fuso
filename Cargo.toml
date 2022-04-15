@@ -7,11 +7,15 @@ edition = "2021"
 
 [dependencies]
 log = "0.4.16"
-futures = "0.3.21"
+
+[dependencies.futures]
+version = "0.3.21"
+optional = true
 
 [dependencies.tokio]
 version = "1.17.0"
 optional = true
+features = ["full", "io-util"]
 
 [dependencies.smol]
 version = "1.2.5"
@@ -53,11 +57,11 @@ optional = true
 
 [features]
 # 默认开启tokio异步 & clap参数解析器
-default = ['tokio', "fuso-clap", "fuso-log", "bytes"]
+default = ['fuso-rt-tokio', "fuso-clap", "fuso-log", "bytes"]
 # 只提供api，不提供web界面
-fuso-api = ["axum"]
+fuso-api = ["axum", "fuso-rt-tokio"]
 # web界面
-fuso-web = ["fuso-api", "toml"]
+fuso-web = ["fuso-api", "toml", "serde"]
 # 配置文件的方式运行
 fuso-toml = ["toml"]
 # 使用serde序列化进行数据传输
@@ -65,11 +69,11 @@ fuso-serde = ["serde"]
 # 使用clap进行参数解析
 fuso-clap = ["clap"]
 # smol运行时
-fuso-rt-smol = ['smol']
+fuso-rt-smol = ['smol', "futures"]
 # tokio运行时
-fuso-rt-tookio = ['tokio']
+fuso-rt-tokio = ['tokio']
 # 自定义运行时
-fuso-rt-custom = []
+fuso-rt-custom = ["futures"]
 # 日志输出
 fuso-log = ['env_logger']
 # kcp
@@ -84,3 +88,12 @@ fuso-socks5 = []
 fuso-crypt-rsa = []
 # aes加密
 fuso-ctypr-aes = []
+
+
+[[bin]]
+name = "fuc"
+path = "src/bin/client.rs"
+
+[[bin]]
+name = "fus"
+path = "src/bin/server.rs"
