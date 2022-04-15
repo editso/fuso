@@ -1,50 +1,86 @@
 [package]
 name = "fuso"
-version = "1.0.4-beta"
+version = "0.1.0"
 edition = "2021"
-authors = ["editso"]
-readme = "README.md"
-homepage = "https://github.com/editso/fuso"
-license-file = "LICENSE"
-description = "这是一款用于内网穿透,端口转发的工具,帮助运维,开发人员快速部署与接入内网\r\n本项目所用技术仅用于学习交流，请勿直接用于任何商业场合和非法用途\r\n项目地址: https://github.com/editso/fuso"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[profile.release]
-lto = true
-opt-level = 'z'
-codegen-units = 1
-panic = 'abort'
-debug = false
-
-[workspace]
-members = [
-    "./fuso-api",
-    "./fuso-core",
-    "./fuso-socks"
-]
-
-[[bin]]
-name = "fus"
-path = "src/bin/server.rs"
-
-[[bin]]
-name = "fuc"
-path = "src/bin/client.rs"
-
 [dependencies]
-aes = {version = "0.7.5"}
-rsa = {version = "0.5.0"}
-rand = "0.8.4"
-block-modes = "0.8.1"
-hex-literal = "0.3.4"
-log = {version = "0.4.14"}
-clap = {version = "3.0.0-beta.5", features = ["yaml"]}
-smol = {version = "1.2.5"}
-bytes = {version = "1.1.0"}
-futures = "0.3"
-env_logger = "0.9.0"
-fuso-core = {path = "./fuso-core"}
-fuso-socks = {path ="./fuso-socks"}
-rpassword = "5.0"
-hex = "0.4.3"
-async-trait = {version = "0.1.51"}
+log = "0.4.16"
+futures = "0.3.21"
+
+[dependencies.tokio]
+version = "1.17.0"
+optional = true
+
+[dependencies.smol]
+version = "1.2.5"
+optional = true
+
+[dependencies.serde]
+version =  "1.0.136"
+optional = true
+features = ["derive"] 
+
+[dependencies.axum]
+version = "0.5.1"
+optional = true
+
+[dependencies.toml]
+version = "0.5.9"
+optional = true
+
+[dependencies.clap]
+version = "3.1.8"
+optional = true
+
+[dependencies.bytes]
+version = "1.1.0"
+optional = true
+
+[dependencies.env_logger]
+version =  "0.9.0"
+optional = true
+
+[dependencies.rsa]
+version = "0.6.1"
+optional = true
+
+[definitions.aes]
+version = "0.8.1"
+optional = true
+
+
+[features]
+# 默认开启tokio异步 & clap参数解析器
+default = ['tokio', "fuso-clap", "fuso-log", "bytes"]
+# 只提供api，不提供web界面
+fuso-api = ["axum"]
+# web界面
+fuso-web = ["fuso-api", "toml"]
+# 配置文件的方式运行
+fuso-toml = ["toml"]
+# 使用serde序列化进行数据传输
+fuso-serde = ["serde"]
+# 使用clap进行参数解析
+fuso-clap = ["clap"]
+# smol运行时
+fuso-rt-smol = ['smol']
+# tokio运行时
+fuso-rt-tookio = ['tokio']
+# 自定义运行时
+fuso-rt-custom = []
+# 日志输出
+fuso-log = ['env_logger']
+# kcp
+fuso-kcp = []
+# quic
+fuso-quic = []
+# 直连模式
+fuso-proxy = []
+# socks5代理
+fuso-socks5 = []
+# rsa加密
+fuso-crypt-rsa = []
+# aes加密
+fuso-ctypr-aes = []
