@@ -7,3 +7,4 @@ pub use self::serde::*;
 mod local;
 #[cfg(not(feature = "fuso-serde"))]
 pub use self::local::*;
+
