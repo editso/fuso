@@ -1,3 +1,5 @@
+pub mod stream;
+
 #[cfg(not(feature = "fuso-rt-tokio"))]
 pub use futures::{AsyncRead, AsyncWrite};
 

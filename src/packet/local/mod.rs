@@ -14,6 +14,13 @@ macro_rules! invalid {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Packet {
+    magic: u32,
+    data_len: u32,
+    payload: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Connect {
     TCP(Addr),
     UDP(Addr),
@@ -441,6 +448,10 @@ impl From<&Behavior> for Vec<u8> {
     }
 }
 
+
+
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -498,6 +509,5 @@ mod tests {
         assert!(b1.is_ok());
 
         assert_eq!(behavior, b1.unwrap());
-
     }
 }

@@ -1,6 +1,8 @@
 #[cfg(feature = "fuso-rt-tokio")]
 #[tokio::main]
-async fn main() {}
+async fn main() {
+    use fuso::{DefaultExecutor, DefaultRegister, Executor};
+}
 
 #[cfg(feature = "fuso-web")]
 #[tokio::main]

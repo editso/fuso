@@ -1,6 +1,21 @@
-use std::{pin::Pin, task::Context};
+use std::{
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 use crate::error::Result;
+
+pub trait ToVec {
+    fn to_vec(&self) -> Vec<u8>;
+}
+
+pub trait Executor {
+    type Output;
+    fn spawn<F>(&self, fut: F) -> Self::Output
+    where
+        F: Future<Output = Self::Output> + Send + 'static;
+}
 
 pub trait Register {
     type Output;
@@ -9,17 +24,35 @@ pub trait Register {
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         metadata: &Self::Metadata,
-    ) -> Result<Self::Output>;
+    ) -> Poll<Result<Self::Output>>;
 }
 
-pub trait Encrypt {
-    fn poll_encrypt_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Result<Vec<u8>>;
+pub trait Accepter {
+    type Stream;
+
+    fn poll_accept(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<Self::Stream>>;
+}
+
+pub trait Proxy {
+    type Stream;
+
+    fn poll_connect(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<Self::Stream>>;
+
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>>;
 }
 
 pub trait Decrypt {
-    fn poll_decrypt_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Result<()>;
+    fn poll_decrypt_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<Result<usize>>;
+}
+
+pub trait Encrypt {
+    fn poll_encrypt_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<()>>;
 }

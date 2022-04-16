@@ -368,6 +368,7 @@ dependencies = [
  "env_logger",
  "futures",
  "log",
+ "pin-project",
  "rsa",
  "serde",
  "smol",

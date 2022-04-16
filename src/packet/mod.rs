@@ -8,3 +8,6 @@ mod local;
 #[cfg(not(feature = "fuso-serde"))]
 pub use self::local::*;
 
+mod stream;
+
+pub use self::stream::*;
