@@ -76,6 +76,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-mutex"
+version = "1.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "479db852db25d9dbf6204e6cb6253698f175c15726470f78af0d918e99d6156e"
+dependencies = [
+ "event-listener",
+]
+
+[[package]]
 name = "async-net"
 version = "1.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -362,6 +371,7 @@ dependencies = [
 name = "fuso"
 version = "0.1.0"
 dependencies = [
+ "async-mutex",
  "axum",
  "bytes",
  "clap",

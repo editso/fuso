@@ -5,13 +5,15 @@ use std::{
 
 use bytes::{Buf, BufMut};
 
-use crate::{Addr, Error, Kind, Result};
+use crate::{Addr, Error, Kind, Result, ToBehavior, ToVec};
 
 macro_rules! invalid {
     () => {
         Err(Kind::Deserialize("invalid data".to_owned()).into())
     };
 }
+
+pub const MAGIC: u32 = 0xFC;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Packet {
@@ -448,9 +450,40 @@ impl From<&Behavior> for Vec<u8> {
     }
 }
 
+impl From<&Behavior> for Packet {
+    fn from(packet: &Behavior) -> Self {
+        let data = Vec::from(packet);
+        Packet {
+            magic: MAGIC,
+            data_len: data.len() as u32,
+            payload: data,
+        }
+    }
+}
 
+impl TryFrom<&Packet> for Behavior {
+    type Error = Error;
 
+    fn try_from(packet: &Packet) -> Result<Self> {
+        Behavior::try_from(packet.payload.as_slice())
+    }
+}
 
+impl ToVec for Packet {
+    fn to_vec(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.put_u32(self.magic);
+        buf.put_u32(self.data_len);
+        buf.put_slice(&self.payload);
+        buf
+    }
+}
+
+impl ToBehavior for Packet {
+    fn to_behavior(&self) -> Result<Behavior> {
+        self.try_into()
+    }
+}
 
 #[cfg(test)]
 mod tests {

@@ -1,3 +1,4 @@
-pub struct Tun {}
-
-impl Tun {}
+pub struct Tun<E, S> {
+    stream: S,
+    executor: E,
+}

@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 log = "0.4.16"
+async-mutex = "1.4.0"
 pin-project = "1.0.10"
 
 [dependencies.futures]

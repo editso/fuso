@@ -1,7 +1,19 @@
 #[cfg(feature = "fuso-rt-tokio")]
 #[tokio::main]
 async fn main() {
-    use fuso::{DefaultExecutor, DefaultRegister, Executor};
+    use std::sync::Arc;
+
+    use fuso::{client, AsyncRecvPacket, ToBehavior};
+    use tokio::net::TcpStream;
+
+    let behavior = TcpStream::connect("addr")
+        .await
+        .unwrap()
+        .recv_packet()
+        .await
+        .unwrap()
+        .to_behavior()
+        .unwrap();
 }
 
 #[cfg(feature = "fuso-web")]

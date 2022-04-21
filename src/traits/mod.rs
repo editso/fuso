@@ -4,10 +4,14 @@ use std::{
     task::{Context, Poll},
 };
 
-use crate::error::Result;
+use crate::{error::Result, Behavior};
 
 pub trait ToVec {
     fn to_vec(&self) -> Vec<u8>;
+}
+
+pub trait ToBehavior {
+    fn to_behavior(&self) -> Result<Behavior>;
 }
 
 pub trait Executor {
@@ -55,4 +59,14 @@ pub trait Encrypt {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<()>>;
+}
+
+pub trait Crypt {
+    type Stream;
+    type Cipher: Decrypt + Encrypt + Clone;
+
+    fn crypt(
+        &self,
+        stream: Self::Stream,
+    ) -> Result<Self::Cipher>;
 }
