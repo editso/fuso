@@ -6,3 +6,8 @@ pub mod quic;
 
 #[cfg(feature = "fuso-socks5")]
 pub mod socks;
+
+pub mod tun;
+
+#[cfg(feature = "fuso-proxy")]
+pub mod proxy;

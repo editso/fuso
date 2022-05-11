@@ -2,8 +2,10 @@
 name = "fuso"
 version = "0.1.0"
 edition = "2021"
+repository = "https://mirrors.tuna.tsinghua.edu.cn/git/crates.io-index.git"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
 
 [dependencies]
 log = "0.4.16"
@@ -52,14 +54,21 @@ optional = true
 version = "0.6.1"
 optional = true
 
-[definitions.aes]
+[dependencies.aes]
 version = "0.8.1"
 optional = true
+
+[profile.release]
+lto = true
+opt-level = 'z'
+codegen-units = 1
+panic = 'abort'
+debug = false
 
 
 [features]
 # 默认开启tokio异步 & clap参数解析器
-default = ['fuso-rt-tokio', "fuso-clap", "fuso-log", "bytes"]
+default = ['fuso-rt-smol', "fuso-clap", "fuso-log", "bytes", "fuso-socks5"]
 # 只提供api，不提供web界面
 fuso-api = ["axum", "fuso-rt-tokio"]
 # web界面
@@ -70,7 +79,7 @@ fuso-toml = ["toml"]
 fuso-serde = ["serde"]
 # 使用clap进行参数解析
 fuso-clap = ["clap"]
-# smol运行时
+# 运行时
 fuso-rt-smol = ['smol', "futures"]
 # tokio运行时
 fuso-rt-tokio = ['tokio']
@@ -89,7 +98,7 @@ fuso-socks5 = []
 # rsa加密
 fuso-crypt-rsa = []
 # aes加密
-fuso-ctypr-aes = []
+fuso-crypt-aes = []
 
 
 [[bin]]

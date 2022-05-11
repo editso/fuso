@@ -1,45 +1,49 @@
-use std::{net::SocketAddr, task::Poll};
+use std::task::Poll;
 
-use crate::{traits::Executor, Accepter, Register};
+use tokio::net::TcpListener;
 
-#[derive(Default, Clone)]
-pub struct DefaultExecutor;
-pub struct DefaultRegister;
+use crate::{
+    handler::Handler,
+    listener::{ext::AccepterExt, Accepter},
+    ready,
+    server::{builder::FusoServer, server::Server},
+    service::{IntoService, IntoServiceFactory},
+    AsyncRead, AsyncWrite, Executor,
+};
 
-#[derive(Default, Clone)]
-pub struct DefaultListener;
+#[derive(Clone, Copy)]
+pub struct TokioExecutor;
 
-impl Executor for DefaultExecutor {
-    type Output = ();
-    fn spawn<F>(&self, fut: F) -> Self::Output
+impl Executor for TokioExecutor {
+    fn spawn<F, O>(&self, fut: F)
     where
-        F: std::future::Future<Output = Self::Output> + Send + 'static,
+        F: std::future::Future<Output = O> + Send + 'static,
+        O: Send + 'static,
     {
         tokio::spawn(fut);
-        ()
     }
 }
 
-impl Register for DefaultRegister {
-    type Output = SocketAddr;
-    type Metadata = DefaultListener;
-
-    fn poll_register(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        metadata: &Self::Metadata,
-    ) -> Poll<crate::Result<Self::Output>> {
-        unimplemented!()
+impl<S> FusoServer<S, TokioExecutor>
+where
+    S: AsyncWrite + AsyncRead + Unpin + Send + 'static,
+{
+    pub fn new() -> Self {
+        Self {
+            executor: TokioExecutor,
+            services: Default::default(),
+        }
     }
 }
 
-impl Accepter for DefaultListener {
+impl Accepter for TcpListener {
     type Stream = tokio::net::TcpStream;
 
     fn poll_accept(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-    ) -> Poll<crate::Result<Self::Stream>> {
-        unimplemented!()
+    ) -> std::task::Poll<crate::Result<Self::Stream>> {
+        let (tcp, addr) = ready!(self.get_mut().poll_accept(cx)?);
+        Poll::Ready(Ok(tcp))
     }
 }

@@ -1,20 +1,26 @@
 #[cfg(feature = "fuso-rt-tokio")]
 #[tokio::main]
-async fn main() {
-    use fuso::AsyncRecvPacket;
+async fn main() -> fuso::Result<()> {
+    use std::sync::Arc;
+
+    use fuso::{
+        net::{socks::Socks5, tun::Tun},
+        server::{self, builder::FusoServer},
+        Executor, TokioExecutor,
+    };
     use tokio::net::TcpListener;
 
-    let tcp = TcpListener::bind("0.0.0.0:80").await.unwrap();
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Debug)
+        .init();
 
-    loop {
-        let (mut tcp, addr) = tcp.accept().await.unwrap();
+    FusoServer::new()
+        .service(Tun::new())
+        // .service(Proxy::new())
+        .serve(TcpListener::bind("0.0.0.0:9999").await?)
+        .await?;
 
-        let a = tcp.recv_packet().await;
-
-        
-            
-
-    }
+    Ok(())
 }
 
 #[cfg(feature = "fuso-web")]
@@ -26,7 +32,24 @@ async fn main() {}
 async fn main() {}
 
 #[cfg(feature = "fuso-rt-smol")]
-fn main() {}
+fn main() -> fuso::Result<()> {
+    use fuso::{
+        net::tun::Tun, server::builder::FusoServer, service::Service, tun::TunProvider, TcpListener,
+    };
+
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Debug)
+        .init();
+
+    smol::block_on(async move {
+        // let tun = Tun::new();
+        FusoServer::new()
+            .encryption()
+            .service(Tun::new(TunProvider))
+            .serve(TcpListener::bind("0.0.0.0:9999").await?)
+            .await
+    })
+}
 
 #[cfg(feature = "fuso-rt-custom")]
 fn main() {}

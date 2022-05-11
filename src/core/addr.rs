@@ -20,7 +20,6 @@ impl From<([u8; 4], u16)> for Addr {
     }
 }
 
-
 impl From<(String, u16)> for Addr {
     fn from(addr: (String, u16)) -> Self {
         Self::Domain(addr.0, addr.1)
