@@ -1,69 +1,58 @@
 use std::sync::Arc;
 
-use async_mutex::Mutex;
-
 use crate::{
-    encryption::Encryption, handler::Handler, listener::Accepter, Addr, AsyncRead, AsyncWrite,
-    Executor,
+    encryption::Encryption,
+    listener::Accepter,
+    service::{Factory, ServerFactory},
+    Addr, AsyncRead, AsyncWrite, BoxedFuture, Executor, Fuso,
 };
 
-use super::server::Server;
+pub trait Stream: AsyncRead + AsyncWrite {}
 
-pub type BoxedService<S, E> =
-    Box<dyn Handler<Stream = S, Executor = E> + Send + Sync + Unpin + 'static>;
-pub type BoxedAccepter<S> = Box<dyn Accepter<Stream = S> + Send + Unpin + 'static>;
+impl<S> Stream for S where S: AsyncRead + AsyncWrite {}
 
-pub struct FusoServer<S, E> {
-    pub(crate) executor: E,
-    pub(crate) services: Vec<BoxedService<S, E>>,
+#[derive(Clone)]
+pub struct BoxedEncryption();
+
+#[derive(Default)]
+pub struct Builder {
+    encryption: Vec<BoxedEncryption>,
 }
 
-impl<S, E> FusoServer<S, E>
-where
-    E: Executor  + Clone + Send + 'static,
-    S: AsyncWrite + AsyncRead + Unpin + Send + 'static,
-{
-    pub fn encryption(self) -> Encryption<Self> {
-        Encryption {
-            factory: self,
-            ciphers: Default::default(),
-        }
-    }
-
-    pub fn service<H>(mut self, service: H) -> Self
-    where
-        H: Handler<Stream = S, Executor = E> + Unpin + Send + Sync + 'static,
-    {
-        self.services.push(Box::new(service));
+impl Builder {
+    pub fn filter(mut self) -> Self {
         self
     }
 
-    pub fn serve<A>(self, accepter: A) -> Server<S, E>
+    pub fn add_encryption<T>(mut self, encryption: T) -> Self
     where
-        A: Accepter<Stream = S> + Unpin + Send + 'static,
+        T: Into<BoxedEncryption>,
     {
-        
-        Server::new(accepter, self)
-    }
-}
-
-impl<S, E> Encryption<FusoServer<S, E>>
-where
-    E: Executor + Clone + Send + 'static,
-    S: AsyncWrite + AsyncRead + Unpin + Send + 'static,
-{
-    pub fn service<H>(mut self, service: H) -> Self
-    where
-        H: Handler<Stream = S, Executor = E> + Unpin + Send + Sync + 'static,
-    {
-        self.factory.services.push(Box::new(service));
+        self.encryption.push(encryption.into());
         self
     }
 
-    pub fn serve<A>(self, accepter: A) -> Server<S, E>
+    pub fn wrap(self) -> Self{
+        self
+    }
+
+    pub fn build<E, SF, CF, S, O>(
+        self,
+        executor: E,
+        factory: ServerFactory<SF, CF>,
+    ) -> Fuso<super::Server<E, SF, CF>>
     where
-        A: Accepter<Stream = S> + Unpin + Send + 'static,
+        SF: Factory<Addr, Output = S, Future = BoxedFuture<'static, crate::Result<S>>> + 'static,
+        CF: Factory<Addr, Output = O, Future = BoxedFuture<'static, crate::Result<O>>> + 'static,
+        E: Executor + 'static,
+        S: Accepter<Stream = O> + 'static,
+        O: Stream + 'static,
     {
-        Server::new(accepter, self.factory)
+        Fuso(super::Server {
+            executor,
+            factory,
+            bind: ([0, 0, 0, 0], 0).into(),
+            encryption: self.encryption,
+        })
     }
 }

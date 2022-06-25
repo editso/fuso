@@ -16,3 +16,8 @@ pub use self::error::*;
 pub use self::r#async::*;
 pub use self::runtime::*;
        
+
+
+pub fn new_penetrate_server() -> server::Builder{
+    Default::default()
+}

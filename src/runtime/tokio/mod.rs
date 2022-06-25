@@ -1,18 +1,19 @@
-use std::task::Poll;
+use std::{sync::Arc, task::Poll};
 
 use tokio::net::TcpListener;
 
 use crate::{
-    handler::Handler,
-    listener::{ext::AccepterExt, Accepter},
-    ready,
-    server::{builder::FusoServer, server::Server},
-    service::{IntoService, IntoServiceFactory},
-    AsyncRead, AsyncWrite, Executor,
+    listener::Accepter,
+    service::{Factory, ServerFactory},
+    Addr, BoxedFuture, Executor,
 };
 
 #[derive(Clone, Copy)]
 pub struct TokioExecutor;
+
+pub struct TokioServer(tokio::net::TcpListener);
+pub struct TokioAccepter;
+pub struct TokioConnector;
 
 impl Executor for TokioExecutor {
     fn spawn<F, O>(&self, fut: F)
@@ -24,26 +25,67 @@ impl Executor for TokioExecutor {
     }
 }
 
-impl<S> FusoServer<S, TokioExecutor>
-where
-    S: AsyncWrite + AsyncRead + Unpin + Send + 'static,
-{
-    pub fn new() -> Self {
-        Self {
-            executor: TokioExecutor,
-            services: Default::default(),
+impl Factory<Addr> for TokioAccepter {
+    type Output = TokioServer;
+    type Future = BoxedFuture<'static, crate::Result<Self::Output>>;
+
+    fn poll_ready(&self, _: &mut std::task::Context<'_>) -> Poll<Result<(), crate::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&self, cfg: Addr) -> Self::Future {
+        Box::pin(async move {
+            match cfg {
+                Addr::Socket(addr) => TcpListener::bind(addr)
+                    .await
+                    .map_err(Into::into)
+                    .map(|tcp| TokioServer(tcp)),
+                Addr::Domain(_, _) => Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "invalid socket address",
+                )
+                .into()),
+            }
+        })
+    }
+}
+
+impl Accepter for TokioServer {
+    type Stream = tokio::net::TcpStream;
+    fn poll_accept(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<crate::Result<Self::Stream>> {
+        match self.0.poll_accept(cx) {
+            Poll::Ready(Ok((tcp, _))) => Poll::Ready(Ok(tcp)),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
+            Poll::Pending => Poll::Pending,
         }
     }
 }
 
-impl Accepter for TcpListener {
-    type Stream = tokio::net::TcpStream;
+impl Factory<Addr> for TokioConnector {
+    type Output = tokio::net::TcpStream;
+    type Future = BoxedFuture<'static, crate::Result<Self::Output>>;
 
-    fn poll_accept(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<crate::Result<Self::Stream>> {
-        let (tcp, addr) = ready!(self.get_mut().poll_accept(cx)?);
-        Poll::Ready(Ok(tcp))
+    fn poll_ready(&self, _: &mut std::task::Context<'_>) -> Poll<Result<(), crate::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&self, cfg: Addr) -> Self::Future {
+        Box::pin(async move {
+            tokio::net::TcpStream::connect(format!("{}", cfg))
+                .await
+                .map_err(Into::into)
+        })
+    }
+}
+
+impl ServerFactory<TokioAccepter, TokioConnector> {
+    pub fn with_tokio() -> Self {
+        ServerFactory {
+            accepter_factory: Arc::new(TokioAccepter),
+            connector_factory: Arc::new(TokioConnector),
+        }
     }
 }

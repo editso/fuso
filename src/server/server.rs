@@ -1,110 +1,50 @@
-use std::{future::Future, marker::PhantomData, panic::AssertUnwindSafe, pin::Pin, sync::Arc};
+use std::time::Duration;
 
 use crate::{
-    guard::{ext::StreamGuardExt, Fallback, StreamGuard},
-    handler::Outcome,
-    listener::{ext::AccepterExt, Accepter},
-    request::Request,
-    AsyncRead, AsyncWrite, BoxedFuture, Executor,
+    core::listener::ext::AccepterExt,
+    guard::Timer,
+    listener::Accepter,
+    packet::AsyncRecvPacket,
+    service::{Factory, ServerFactory},
+    Addr, BoxedFuture, Executor, Stream,
 };
 
-use super::builder::FusoServer;
+use super::BoxedEncryption;
 
-pub struct ServerInner<S, E> {
-    _marked: PhantomData<(S, E)>,
+pub struct Server<E, S, C> {
+    pub bind: Addr,
+    pub executor: E,
+    pub factory: ServerFactory<S, C>,
+    pub encryption: Vec<BoxedEncryption>,
+    pub middleware: Option<usize>
 }
 
-pub struct Server<S, E> {
-    fut: BoxedFuture<'static, crate::Result<()>>,
-    _marked: PhantomData<(S, E)>,
-}
-
-impl<S, E> Server<S, E>
+impl<E, SF, CF, S, O> Server<E, SF, CF>
 where
-    S: AsyncWrite + AsyncRead + Send + Unpin + 'static,
-    E: Executor + Clone + Send + 'static,
+    E: Executor + Clone + 'static,
+    SF: Factory<Addr, Output = S, Future = BoxedFuture<'static, crate::Result<S>>> + 'static,
+    CF: Factory<Addr, Output = O, Future = BoxedFuture<'static, crate::Result<O>>> + 'static,
+    S: Accepter<Stream = O> + Unpin + 'static,
+    O: Stream + Send + 'static,
 {
-    pub fn new<A>(accepter: A, builder: FusoServer<S, E>) -> Self
-    where
-        A: Accepter<Stream = S> + Unpin + Send + 'static,
-    {
-        Server {
-            fut: Box::pin(ServerInner::run(accepter, builder)),
-            _marked: PhantomData,
-        }
+
+    pub fn wrap(self, middleware: usize) -> Self{
+        self
     }
-}
 
-impl<E, S> Future for Server<S, E>
-where
-    E: Unpin + 'static,
-    S: Unpin + 'static,
-{
-    type Output = crate::Result<()>;
-
-    fn poll(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        Pin::new(&mut Pin::into_inner(self).fut).poll(cx)
-    }
-}
-
-impl<E, S> ServerInner<S, E>
-where
-    E: Executor + Clone + Send + 'static,
-    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-{
-    async fn run<A>(mut accepter: A, builder: FusoServer<S, E>) -> crate::Result<()>
-    where
-        A: Accepter<Stream = S> + Unpin + Send + 'static,
-    {
-        log::debug!("started !");
-
-        let executor = builder.executor.clone();
-        let services = Arc::new(builder.services);
-
+    pub async fn run(self) -> crate::Result<()> {
+        let executor = self.executor.clone();
+        let factory = self.factory.clone();
+        let mut accepter = self.factory.bind(self.bind.clone()).await?;
         loop {
             let stream = accepter.accept().await?;
 
-            let services = services.clone();
+            log::debug!("....");
+            executor.spawn(async move {
+                let mut stream = Timer::with_read_write(stream, Duration::from_secs(30));
 
-            let fut = {
-                let executor = executor.clone();
-                async move {
-                    let mut stream = Fallback::new(stream);
-                    let mut services = services.iter();
-
-                    loop {
-                        let _ = stream.ward().await;
-
-                        if let Some(handler) = services.next() {
-                            match handler.can_handle(&mut stream).await {
-                                Ok(Outcome::Agree) => {
-                                    let stream = stream.into_inner();
-                                    let req = Request::new(stream);
-                                    executor.spawn(handler.handle(req, executor.clone()));
-                                    break;
-                                }
-                                Err(e) => {
-                                    log::error!("{:?}", e);
-                                    break;
-                                }
-                                _ => {}
-                            }
-                        } else {
-                            log::warn!("received an invalid connection");
-                            break;
-                        }
-
-                        let _ = stream.backward().await;
-                    }
-                }
-            };
-
-            if let Err(e) = std::panic::catch_unwind(AssertUnwindSafe(|| executor.spawn(fut))) {
-                log::error!("{:?}", e);
-            }
+               
+            })
         }
     }
 }

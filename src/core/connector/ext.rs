@@ -1,5 +1,5 @@
 use super::Connector;
-use crate::Result;
+use crate::{Result, Addr};
 use std::future::Future;
 
 pub struct Connect<'a, C, T> {
@@ -8,7 +8,7 @@ pub struct Connect<'a, C, T> {
 }
 
 pub trait ConnectorExt: Connector {
-    fn connect<'a>(&'a mut self, target: &'a Self::Socket) -> Connect<'a, Self, Self::Socket>
+    fn connect<'a>(&'a mut self, target: &'a Addr) -> Connect<'a, Self, Addr>
     where
         Self: Sized + Unpin,
     {
@@ -19,7 +19,7 @@ pub trait ConnectorExt: Connector {
     }
 }
 
-impl<'a, C> Future for Connect<'a, C, C::Socket>
+impl<'a, C> Future for Connect<'a, C, Addr>
 where
     C: Connector + Unpin,
 {

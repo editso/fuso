@@ -51,6 +51,38 @@ pub trait AsyncWrite {
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<crate::Result<()>>;
 }
 
+pub trait Stream: AsyncRead + AsyncWrite + Unpin {}
+
+impl AsyncRead for Box<dyn Stream> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<crate::Result<usize>> {
+        Pin::new(&mut **self).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for Box<dyn Stream> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<crate::Result<usize>> {
+        Pin::new(&mut **self).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<crate::Result<()>> {
+        Pin::new(&mut **self).poll_flush(cx)
+    }
+
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<crate::Result<()>> {
+        Pin::new(&mut **self).poll_close(cx)
+    }
+}
+
+impl<S> Stream for S where S: AsyncWrite + AsyncRead + Unpin {}
+
 #[cfg(feature = "fuso-rt-tokio")]
 impl<T> AsyncWrite for T
 where
@@ -181,6 +213,11 @@ impl<'a> ReadBuf<'a> {
     pub fn advance(&mut self, n: usize) {
         assert!(self.offset + n <= self.buf.len());
         self.offset += n;
+    }
+
+    #[cfg(any(feature = "fuso-rt-smol", feature = "fuso-rt-custom"))]
+    pub fn initialize_unfilled(&mut self) -> &mut [u8] {
+        &mut self.buf[self.offset..]
     }
 }
 

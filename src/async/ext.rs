@@ -30,7 +30,6 @@ pub struct WriteAll<'a, T> {
 }
 
 pub trait AsyncReadExt: super::AsyncRead {
-
     #[inline]
     fn read<'a>(&'a mut self, buf: &'a mut [u8]) -> Read<'a, Self>
     where

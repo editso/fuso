@@ -1,14 +1,52 @@
-use crate::{connector::Connector, listener::Accepter};
+use std::{
+    future::Future,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
-pub trait Service {
-    type Config;
-    type Socket;
-    type Stream;
-    type Accepter: Accepter<Stream = Self::Stream>;
-    type Connector: Connector<Stream = Self::Stream, Socket = Self::Socket>;
-    type Future: std::future::Future<Output = crate::Result<(Self::Accepter, Self::Connector)>>;
+use crate::{listener::Accepter, Addr, BoxedFuture, Stream};
 
-    fn create(&self, config: &Self::Config) -> Self::Future;
+pub trait Factory<C> {
+    type Output;
+    type Future: Future<Output = Result<Self::Output, crate::Error>>;
+
+    fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), crate::Error>>;
+
+    fn call(&self, cfg: C) -> Self::Future;
 }
 
+pub struct ServerFactory<S, C> {
+    pub accepter_factory: Arc<S>,
+    pub connector_factory: Arc<C>,
+}
 
+impl<SF, CF, S, O> ServerFactory<SF, CF>
+where
+    SF: Factory<Addr, Output = S, Future = BoxedFuture<'static, crate::Result<S>>> + 'static,
+    CF: Factory<Addr, Output = O, Future = BoxedFuture<'static, crate::Result<O>>> + 'static,
+    S: Accepter<Stream = O> + 'static,
+    O: Stream + Unpin + 'static,
+{
+    #[inline]
+    pub async fn bind<Socket: Into<Addr>>(&self, addr: Socket) -> crate::Result<S> {
+        let addr = addr.into();
+        log::debug!("{}", addr);
+        self.accepter_factory.call(addr).await
+    }
+
+    #[inline]
+    pub async fn connect<Socket: Into<Addr>>(&self, addr: Socket) -> crate::Result<O> {
+        let addr = addr.into();
+        log::debug!("{}", addr);
+        self.connector_factory.call(addr).await
+    }
+}
+
+impl<S, C> Clone for ServerFactory<S, C> {
+    fn clone(&self) -> Self {
+        Self {
+            accepter_factory: self.accepter_factory.clone(),
+            connector_factory: self.connector_factory.clone(),
+        }
+    }
+}

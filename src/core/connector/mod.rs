@@ -7,15 +7,12 @@ use std::{
 
 use crate::{Addr, Result};
 
-pub type BoxedConnector<Stream> = Box<dyn Connector<Socket = Addr, Stream = Stream>>;
-
-pub trait Connector: Send{
-    type Socket;
+pub trait Connector: Send {
     type Stream;
 
     fn poll_connect(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        socket: &Self::Socket,
+        socket: &Addr,
     ) -> Poll<Result<Self::Stream>>;
 }

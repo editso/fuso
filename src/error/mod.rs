@@ -14,6 +14,11 @@ pub enum InvalidAddr {
 }
 
 #[derive(Debug)]
+pub enum Sync {
+    Mutex,
+}
+
+#[derive(Debug)]
 pub enum Encoding {
     FromUtf8(std::string::FromUtf8Error),
 }
@@ -21,6 +26,12 @@ pub enum Encoding {
 #[derive(Debug)]
 pub enum Kind {
     IO(std::io::Error),
+    #[cfg(feature = "fuso-rt-tokio")]
+    Timeout(tokio::time::error::Elapsed),
+    #[cfg(feature = "fuso-rt-smol")]
+    Timeout(std::time::Instant),
+    Memory,
+    Sync(Sync),
     Deserialize(String),
     InvalidAddr(InvalidAddr),
     Encoding(Encoding),
@@ -36,6 +47,14 @@ impl From<InvalidAddr> for Error {
     fn from(addr: InvalidAddr) -> Self {
         Self {
             kind: Kind::InvalidAddr(addr),
+        }
+    }
+}
+
+impl From<Sync> for Error {
+    fn from(e: Sync) -> Self {
+        Self {
+            kind: Kind::Sync(e),
         }
     }
 }
@@ -61,6 +80,32 @@ impl From<std::string::FromUtf8Error> for Error {
 impl From<std::io::Error> for Error {
     fn from(e: std::io::Error) -> Self {
         Kind::IO(e).into()
+    }
+}
+
+impl<T> From<std::sync::PoisonError<T>> for Error {
+    fn from(_: std::sync::PoisonError<T>) -> Self {
+        Sync::Mutex.into()
+    }
+}
+
+impl From<std::cell::BorrowMutError> for Error {
+    fn from(_: std::cell::BorrowMutError) -> Self {
+        Sync::Mutex.into()
+    }
+}
+
+#[cfg(feature = "fuso-rt-tokio")]
+impl From<tokio::time::error::Elapsed> for Error {
+    fn from(e: tokio::time::error::Elapsed) -> Self {
+        Kind::Timeout(e).into()
+    }
+}
+
+#[cfg(feature = "fuso-rt-smol")]
+impl From<std::time::Instant> for Error{
+    fn from(e: std::time::Instant) -> Self {
+        Kind::Timeout(e).into()
     }
 }
 

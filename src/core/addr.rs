@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, str::FromStr};
+use std::{fmt::Display, net::SocketAddr, str::FromStr};
 
 use crate::{Error, InvalidAddr};
 
@@ -53,6 +53,16 @@ impl FromStr for Addr {
                 Ok((host.replace(":", ""), port).into())
             }
         }
+    }
+}
+
+impl Display for Addr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let fmt = match self {
+            Addr::Socket(addr) => format!("{}", addr),
+            Addr::Domain(domain, port) => format!("{}:{}", domain, port),
+        };
+        write!(f, "{}", fmt)
     }
 }
 
