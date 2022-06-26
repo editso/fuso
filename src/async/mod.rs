@@ -53,7 +53,7 @@ pub trait AsyncWrite {
 
 pub trait Stream: AsyncRead + AsyncWrite + Unpin {}
 
-impl AsyncRead for Box<dyn Stream> {
+impl AsyncRead for Box<dyn Stream + Send> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -63,7 +63,7 @@ impl AsyncRead for Box<dyn Stream> {
     }
 }
 
-impl AsyncWrite for Box<dyn Stream> {
+impl AsyncWrite for Box<dyn Stream + Send> {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -247,3 +247,4 @@ impl<'a> DerefMut for ReadBuf<'a> {
         &mut self.buf
     }
 }
+

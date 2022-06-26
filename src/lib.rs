@@ -11,13 +11,18 @@ pub mod http;
 
 pub mod net;
 
+use std::marker::PhantomData;
+
 pub use self::core::*;
 pub use self::error::*;
 pub use self::r#async::*;
 pub use self::runtime::*;
-       
 
-
-pub fn new_penetrate_server() -> server::Builder{
-    Default::default()
+pub fn new_penetrate_server<S>() -> server::Builder<S>
+{
+    server::Builder {
+        encryption: Default::default(),
+        middleware: Default::default(),
+        _marked: PhantomData
+    }
 }

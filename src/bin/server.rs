@@ -1,4 +1,9 @@
-use fuso::{AsyncRead, AsyncWrite};
+use fuso::{packet::AsyncRecvPacket, AsyncRead, AsyncWrite, Stream, service::Transfer, FusoStream};
+
+
+async fn t() -> impl Transfer<Output = FusoStream>{
+    tokio::net::TcpStream::connect("").await.unwrap()
+}
 
 #[cfg(feature = "fuso-rt-tokio")]
 #[tokio::main]
@@ -8,8 +13,11 @@ async fn main() -> fuso::Result<()> {
     use fuso::{
         ext::{AsyncReadExt, AsyncWriteExt},
         guard::{Fallback, Timer},
+        listener::ext::AccepterExt,
+        middleware::Handshake,
+        packet::AsyncRecvPacket,
         service::ServerFactory,
-        Stream, TokioExecutor,
+        Stream, TokioExecutor, FusoStream,
     };
 
     use tokio::net::TcpStream;
@@ -18,10 +26,14 @@ async fn main() -> fuso::Result<()> {
         .filter_level(log::LevelFilter::Debug)
         .init();
 
+    let t = t();
+
     fuso::new_penetrate_server()
-        .add_encryption(encryption)
+        .with_middleware(Handshake)
+        .with_middleware(Handshake)
+        .with_middleware(Handshake)
         .build(TokioExecutor, ServerFactory::with_tokio())
-        .bind(([0,0,0,0], 8888))
+        .bind(([0, 0, 0, 0], 8888))
         .run()
         .await
         .expect("Failed to start serve");

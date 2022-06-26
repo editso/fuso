@@ -1,18 +1,19 @@
-use std::{
-    future::Future,
-    sync::Arc,
-    task::{Context, Poll},
-};
+use std::{pin::Pin, sync::Arc};
 
-use crate::{listener::Accepter, Addr, BoxedFuture, Stream};
+use crate::Addr;
+
+type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>> + Send + 'static>>;
 
 pub trait Factory<C> {
     type Output;
-    type Future: Future<Output = Result<Self::Output, crate::Error>>;
 
-    fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), crate::Error>>;
+    fn call(&self, cfg: C) -> Self::Output;
+}
 
-    fn call(&self, cfg: C) -> Self::Future;
+pub trait Transfer {
+    type Output;
+
+    fn transfer(self) -> Self::Output;
 }
 
 pub struct ServerFactory<S, C> {
@@ -22,15 +23,16 @@ pub struct ServerFactory<S, C> {
 
 impl<SF, CF, S, O> ServerFactory<SF, CF>
 where
-    SF: Factory<Addr, Output = S, Future = BoxedFuture<'static, crate::Result<S>>> + 'static,
-    CF: Factory<Addr, Output = O, Future = BoxedFuture<'static, crate::Result<O>>> + 'static,
-    S: Accepter<Stream = O> + 'static,
-    O: Stream + Unpin + 'static,
+    SF: Factory<Addr, Output = BoxedFuture<S>> + 'static,
+    CF: Factory<Addr, Output = BoxedFuture<O>> + 'static,
+    S: 'static,
+    O: 'static,
 {
     #[inline]
     pub async fn bind<Socket: Into<Addr>>(&self, addr: Socket) -> crate::Result<S> {
         let addr = addr.into();
         log::debug!("{}", addr);
+
         self.accepter_factory.call(addr).await
     }
 

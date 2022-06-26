@@ -1,29 +1,29 @@
-use std::sync::Arc;
+use std::{marker::PhantomData, pin::Pin, sync::Arc};
 
 use crate::{
     encryption::Encryption,
     listener::Accepter,
-    service::{Factory, ServerFactory},
-    Addr, AsyncRead, AsyncWrite, BoxedFuture, Executor, Fuso,
+    middleware::{FactoryChain, FactoryTransfer, FactoryWrapper},
+    service::{Factory, ServerFactory, Transfer},
+    Addr, AsyncRead, AsyncWrite, FusoStream, Executor, Fuso, Stream,
 };
 
-pub trait Stream: AsyncRead + AsyncWrite {}
-
-impl<S> Stream for S where S: AsyncRead + AsyncWrite {}
+type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>> + Send + 'static>>;
 
 #[derive(Clone)]
 pub struct BoxedEncryption();
 
 #[derive(Default)]
-pub struct Builder {
-    encryption: Vec<BoxedEncryption>,
+pub struct Builder<S> {
+    pub(crate) encryption: Vec<BoxedEncryption>,
+    pub(crate) middleware: Option<FactoryTransfer<FusoStream>>,
+    pub(crate) _marked: PhantomData<S>,
 }
 
-impl Builder {
-    pub fn filter(mut self) -> Self {
-        self
-    }
-
+impl<S> Builder<S>
+where
+    S: Transfer<Output = FusoStream>,
+{
     pub fn add_encryption<T>(mut self, encryption: T) -> Self
     where
         T: Into<BoxedEncryption>,
@@ -32,27 +32,42 @@ impl Builder {
         self
     }
 
-    pub fn wrap(self) -> Self{
+    pub fn with_middleware<F>(mut self, middleware: F) -> Self
+    where
+        F: Factory<FusoStream, Output = BoxedFuture<FusoStream>> + Send + Sync + 'static,
+    {
+        match self.middleware.take() {
+            None => {
+                self.middleware = Some(FactoryTransfer::wrap(middleware));
+            }
+            Some(wrapper) => {
+                self.middleware = Some(FactoryTransfer::wrap(FactoryChain::chain(
+                    wrapper,
+                    middleware,
+                )));
+            }
+        }
         self
     }
 
-    pub fn build<E, SF, CF, S, O>(
+    pub fn build<E, A, SF, CF>(
         self,
         executor: E,
         factory: ServerFactory<SF, CF>,
-    ) -> Fuso<super::Server<E, SF, CF>>
+    ) -> Fuso<super::Server<E, SF, CF, S>>
     where
-        SF: Factory<Addr, Output = S, Future = BoxedFuture<'static, crate::Result<S>>> + 'static,
-        CF: Factory<Addr, Output = O, Future = BoxedFuture<'static, crate::Result<O>>> + 'static,
-        E: Executor + 'static,
-        S: Accepter<Stream = O> + 'static,
-        O: Stream + 'static,
+        SF: Factory<Addr, Output = BoxedFuture<A>> + Send + 'static,
+        CF: Factory<Addr, Output = BoxedFuture<S>> + Send + 'static,
+        E: Executor + Send + 'static,
+        A: Accepter<Stream = S> + Send + 'static,
     {
         Fuso(super::Server {
             executor,
             factory,
-            bind: ([0, 0, 0, 0], 0).into(),
+            middleware: self.middleware.map(Arc::new),
+            bind: Addr::from(([0, 0, 0, 0], 0)),
             encryption: self.encryption,
+            _marked: PhantomData,
         })
     }
 }
