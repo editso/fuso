@@ -3,10 +3,10 @@ use std::{pin::Pin, sync::Arc};
 use crate::{
     core::listener::ext::AccepterExt,
     io,
+    join::Join,
     listener::Accepter,
     middleware::FactoryTransfer,
     packet::{AsyncRecvPacket, AsyncSendPacket, Behavior, Bind},
-    select::Select,
     service::{Factory, ServerFactory},
     Addr, Executor, Stream,
 };
@@ -86,13 +86,15 @@ where
         loop {
             let (from, to) = accepter.accept().await?;
 
-            executor.spawn(async move {
-                let err = Select::select(io::copy(from, to), io::copy(to, from)).await;
-
-                if let Err(e) = err {
-                    log::debug!("{}", e);
-                }
-            });
+            executor.spawn(Join::join(
+                async move {
+                    let _ = io::copy(from, to).await;
+                },
+                async move {
+                    // let _ = io::copy(to, from).await;
+                    unimplemented!()
+                },
+            ));
         }
     }
 }

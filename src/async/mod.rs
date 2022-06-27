@@ -2,6 +2,7 @@ pub mod io;
 pub mod ext;
 pub mod r#macro;
 pub mod select;
+pub mod join;
 
 use std::{
     future::Future,
