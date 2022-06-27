@@ -4,7 +4,7 @@ use tokio::net::TcpListener;
 
 use crate::{
     listener::Accepter,
-    service::{Factory, ServerFactory, Transfer},
+    service::{Factory, ServerFactory, Transfer },
     Addr, FusoStream, Executor,
 };
 
@@ -48,13 +48,13 @@ impl Factory<Addr> for TokioAccepter {
 }
 
 impl Accepter for TokioTcpListener {
-    type Stream = tokio::net::TcpStream;
+    type Stream = FusoStream;
     fn poll_accept(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<crate::Result<Self::Stream>> {
         match self.0.poll_accept(cx) {
-            Poll::Ready(Ok((tcp, _))) => Poll::Ready(Ok(tcp)),
+            Poll::Ready(Ok((tcp, _))) => Poll::Ready(Ok(tcp.transfer())),
             Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
             Poll::Pending => Poll::Pending,
         }
@@ -62,12 +62,13 @@ impl Accepter for TokioTcpListener {
 }
 
 impl Factory<Addr> for TokioConnector {
-    type Output = BoxedFuture<tokio::net::TcpStream>;
+    type Output = BoxedFuture<FusoStream>;
 
     fn call(&self, cfg: Addr) -> Self::Output {
         Box::pin(async move {
             tokio::net::TcpStream::connect(format!("{}", cfg))
                 .await
+                .map(Transfer::transfer)
                 .map_err(Into::into)
         })
     }

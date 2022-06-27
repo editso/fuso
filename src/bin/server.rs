@@ -1,7 +1,6 @@
-use fuso::{packet::AsyncRecvPacket, AsyncRead, AsyncWrite, Stream, service::Transfer, FusoStream};
+use fuso::{packet::AsyncRecvPacket, service::Transfer, AsyncRead, AsyncWrite, FusoStream, Stream};
 
-
-async fn t() -> impl Transfer<Output = FusoStream>{
+async fn t() -> impl Transfer<Output = FusoStream> {
     tokio::net::TcpStream::connect("").await.unwrap()
 }
 
@@ -16,8 +15,9 @@ async fn main() -> fuso::Result<()> {
         listener::ext::AccepterExt,
         middleware::Handshake,
         packet::AsyncRecvPacket,
+        select::Select,
         service::ServerFactory,
-        Stream, TokioExecutor, FusoStream,
+        FusoStream, Stream, TokioExecutor,
     };
 
     use tokio::net::TcpStream;
@@ -26,11 +26,7 @@ async fn main() -> fuso::Result<()> {
         .filter_level(log::LevelFilter::Debug)
         .init();
 
-    let t = t();
-
     fuso::new_penetrate_server()
-        .with_middleware(Handshake)
-        .with_middleware(Handshake)
         .with_middleware(Handshake)
         .build(TokioExecutor, ServerFactory::with_tokio())
         .bind(([0, 0, 0, 0], 8888))

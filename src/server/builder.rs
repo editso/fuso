@@ -1,11 +1,10 @@
-use std::{marker::PhantomData, pin::Pin, sync::Arc};
+use std::{pin::Pin, sync::Arc};
 
 use crate::{
-    encryption::Encryption,
     listener::Accepter,
-    middleware::{FactoryChain, FactoryTransfer, FactoryWrapper},
-    service::{Factory, ServerFactory, Transfer},
-    Addr, AsyncRead, AsyncWrite, FusoStream, Executor, Fuso, Stream,
+    middleware::{FactoryChain, FactoryTransfer},
+    service::{Factory, ServerFactory},
+    Addr, Executor, Fuso, Stream,
 };
 
 type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>> + Send + 'static>>;
@@ -16,13 +15,12 @@ pub struct BoxedEncryption();
 #[derive(Default)]
 pub struct Builder<S> {
     pub(crate) encryption: Vec<BoxedEncryption>,
-    pub(crate) middleware: Option<FactoryTransfer<FusoStream>>,
-    pub(crate) _marked: PhantomData<S>,
+    pub(crate) middleware: Option<FactoryTransfer<S>>,
 }
 
 impl<S> Builder<S>
 where
-    S: Transfer<Output = FusoStream>,
+    S: Stream + Send + 'static,
 {
     pub fn add_encryption<T>(mut self, encryption: T) -> Self
     where
@@ -34,7 +32,7 @@ where
 
     pub fn with_middleware<F>(mut self, middleware: F) -> Self
     where
-        F: Factory<FusoStream, Output = BoxedFuture<FusoStream>> + Send + Sync + 'static,
+        F: Factory<S, Output = BoxedFuture<S>> + Send + Sync + 'static,
     {
         match self.middleware.take() {
             None => {
@@ -42,8 +40,7 @@ where
             }
             Some(wrapper) => {
                 self.middleware = Some(FactoryTransfer::wrap(FactoryChain::chain(
-                    wrapper,
-                    middleware,
+                    wrapper, middleware,
                 )));
             }
         }
@@ -64,10 +61,9 @@ where
         Fuso(super::Server {
             executor,
             factory,
-            middleware: self.middleware.map(Arc::new),
             bind: Addr::from(([0, 0, 0, 0], 0)),
+            middleware: self.middleware.map(Arc::new),
             encryption: self.encryption,
-            _marked: PhantomData,
         })
     }
 }

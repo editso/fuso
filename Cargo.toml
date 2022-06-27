@@ -9,7 +9,9 @@ repository = "https://mirrors.tuna.tsinghua.edu.cn/git/crates.io-index.git"
 
 [dependencies]
 log = "0.4.16"
+async-timer = "0.7.4"
 async-mutex = "1.4.0"
+async-channel = "1.6.1"
 pin-project = "1.0.10"
 
 [dependencies.futures]

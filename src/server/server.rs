@@ -1,16 +1,17 @@
-use std::{pin::Pin, sync::Arc, time::Duration, marker::PhantomData};
+use std::{pin::Pin, sync::Arc};
 
 use crate::{
     core::listener::ext::AccepterExt,
-    guard::{Fallback, Timer},
+    io,
     listener::Accepter,
-    middleware::{FactoryTransfer, FactoryWrapper},
+    middleware::FactoryTransfer,
     packet::{AsyncRecvPacket, AsyncSendPacket, Behavior, Bind},
-    service::{Factory, ServerFactory, Transfer},
-    Addr, FusoStream, Executor,
+    select::Select,
+    service::{Factory, ServerFactory},
+    Addr, Executor, Stream,
 };
 
-use super::BoxedEncryption;
+use super::{penetrate::Penetrate, BoxedEncryption};
 
 type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>> + Send + 'static>>;
 
@@ -19,8 +20,7 @@ pub struct Server<E, SF, CF, SI> {
     pub executor: E,
     pub factory: ServerFactory<SF, CF>,
     pub encryption: Vec<BoxedEncryption>,
-    pub middleware: Option<Arc<FactoryTransfer<FusoStream>>>,
-    pub _marked: PhantomData<SI>
+    pub middleware: Option<Arc<FactoryTransfer<SI>>>,
 }
 
 impl<E, A, SF, CF, SI> Server<E, SF, CF, SI>
@@ -29,7 +29,7 @@ where
     A: Accepter<Stream = SI> + Unpin + Send + 'static,
     SF: Factory<Addr, Output = BoxedFuture<A>> + Send + Sync + 'static,
     CF: Factory<Addr, Output = BoxedFuture<SI>> + Send + Sync + 'static,
-    SI: Transfer<Output = FusoStream> + Send + 'static
+    SI: Stream + Send + 'static,
 {
     pub async fn run(self) -> crate::Result<()> {
         let mut accepter = self.factory.bind(self.bind.clone()).await?;
@@ -44,8 +44,8 @@ where
 
             self.executor.spawn(async move {
                 let stream = match middleware.as_ref() {
-                    None => Ok(stream.transfer()),
-                    Some(factory) => factory.call(stream.transfer()).await,
+                    None => Ok(stream),
+                    Some(factory) => factory.call(stream).await,
                 };
 
                 let err = match stream {
@@ -61,17 +61,17 @@ where
     }
 
     async fn spawn_run(
-        stream: FusoStream,
+        stream: SI,
         executor: E,
         factory: ServerFactory<SF, CF>,
     ) -> crate::Result<()> {
-        let mut stream = Timer::with_read_write(stream, Duration::from_secs(30));
+        let mut stream = stream;
 
         let behavior = TryInto::<Behavior>::try_into(&stream.recv_packet().await?)?;
 
         let mut accepter = if let Behavior::Bind(Bind::Bind(addr)) = behavior {
             match factory.bind(addr.clone()).await {
-                Ok(stream) => stream,
+                Ok(accepter) => Penetrate::new(stream, accepter),
                 Err(err) => {
                     let err = err.to_string().as_bytes().to_vec();
                     return stream
@@ -84,9 +84,15 @@ where
         };
 
         loop {
-    
-            let stream = accepter.accept().await?.transfer();
-            let mut fallback = Fallback::new(stream);
+            let (from, to) = accepter.accept().await?;
+
+            executor.spawn(async move {
+                let err = Select::select(io::copy(from, to), io::copy(to, from)).await;
+
+                if let Err(e) = err {
+                    log::debug!("{}", e);
+                }
+            });
         }
     }
 }

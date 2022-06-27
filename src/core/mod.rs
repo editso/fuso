@@ -29,7 +29,7 @@ pub type RefContext = Rc<RefCell<Box<dyn Context + Send>>>;
 
 pub struct FusoStream(Box<dyn Stream + Send + 'static>);
 
-pub struct Fuso<T>(pub T);
+pub struct Fuso<T>(pub(crate) T);
 
 pub struct Serve {
     fut: Pin<Box<dyn std::future::Future<Output = crate::Result<()>> + 'static>>,
@@ -67,7 +67,7 @@ where
     SF: Factory<Addr, Output = BoxedFuture<A>> + Send + Sync + 'static,
     CF: Factory<Addr, Output = BoxedFuture<S>> + Send + Sync + 'static,
     A: Accepter<Stream = S> + Send + Unpin + 'static,
-    S: Transfer<Output = FusoStream> + Send + 'static,
+    S: Stream + Send + 'static,
 {
     pub fn bind<T: Into<Addr>>(self, bind: T) -> Self {
         Fuso(Server {
@@ -76,7 +76,6 @@ where
             executor: self.0.executor,
             encryption: self.0.encryption,
             middleware: self.0.middleware,
-            _marked: self.0._marked
         })
     }
 
@@ -144,7 +143,7 @@ impl FusoStream {
 impl<T> Transfer for T
 where
     T: Stream + Send + 'static,
-{   
+{
     type Output = FusoStream;
 
     fn transfer(self) -> Self::Output {

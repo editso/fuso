@@ -28,9 +28,9 @@ impl Factory<FusoStream> for Handshake
 
     fn call(&self, stream: FusoStream) -> Self::Output {
         Box::pin(async move {
-            let s = Timer::with_read_write(stream.transfer(), Duration::from_secs(10));
-
-            log::debug!("handhake");
+            let s = Timer::with_read_write(stream, Duration::from_secs(10));
+            
+           
 
             Ok(s.transfer())
         })

@@ -25,6 +25,7 @@ pub enum Encoding {
 
 #[derive(Debug)]
 pub enum Kind {
+    Channel,
     IO(std::io::Error),
     #[cfg(feature = "fuso-rt-tokio")]
     Timeout(tokio::time::error::Elapsed),
@@ -102,8 +103,14 @@ impl From<tokio::time::error::Elapsed> for Error {
     }
 }
 
+impl From<async_channel::RecvError> for Error {
+    fn from(e: async_channel::RecvError) -> Self {
+        Kind::Channel.into()
+    }
+}
+
 #[cfg(feature = "fuso-rt-smol")]
-impl From<std::time::Instant> for Error{
+impl From<std::time::Instant> for Error {
     fn from(e: std::time::Instant) -> Self {
         Kind::Timeout(e).into()
     }
