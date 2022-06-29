@@ -1,5 +1,3 @@
-
-
 use std::{future::Future, pin::Pin, task::Poll};
 
 #[pin_project::pin_project]
@@ -39,7 +37,7 @@ pub trait AsyncReadExt: super::AsyncRead {
     {
         Read {
             #[cfg(feature = "fuso-rt-tokio")]
-            buf: super::ReadBuf::new(tokio::io::ReadBuf::new(buf)),
+            buf: super::ReadBuf::new(buf),
             #[cfg(any(feature = "fuso-rt-smol", feature = "fuso-rt-custom"))]
             buf: super::ReadBuf::new(buf),
             reader: self,
@@ -53,7 +51,7 @@ pub trait AsyncReadExt: super::AsyncRead {
     {
         ReadExact {
             #[cfg(feature = "fuso-rt-tokio")]
-            buf: super::ReadBuf::new(tokio::io::ReadBuf::new(buf)),
+            buf: super::ReadBuf::new(buf),
             #[cfg(any(feature = "fuso-rt-smol", feature = "fuso-rt-custom"))]
             buf: super::ReadBuf::new(buf),
             reader: self,

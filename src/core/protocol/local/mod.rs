@@ -17,9 +17,9 @@ pub const MAGIC: u32 = 0xFC;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Packet {
-    magic: u32,
-    data_len: u32,
-    payload: Vec<u8>,
+    pub magic: u32,
+    pub data_len: u32,
+    pub payload: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -6,7 +6,7 @@ use crate::{
     join::Join,
     listener::Accepter,
     middleware::FactoryTransfer,
-    packet::{AsyncRecvPacket, AsyncSendPacket, Behavior, Bind},
+    protocol::{AsyncRecvPacket, AsyncSendPacket, Behavior, Bind},
     service::{Factory, ServerFactory},
     Addr, Executor, Stream,
 };
@@ -36,8 +36,7 @@ where
 
         loop {
             let stream = accepter.accept().await?;
-            log::debug!("[accepter::accept] handle connection");
-
+            
             let executor = self.executor.clone();
             let middleware = self.middleware.clone();
             let factory = self.factory.clone();

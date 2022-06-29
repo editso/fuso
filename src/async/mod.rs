@@ -1,8 +1,8 @@
-pub mod io;
 pub mod ext;
+pub mod io;
+pub mod join;
 pub mod r#macro;
 pub mod select;
-pub mod join;
 
 use std::{
     future::Future,
@@ -178,9 +178,13 @@ where
 
 impl<'a> ReadBuf<'a> {
     #[cfg(feature = "fuso-rt-tokio")]
-    pub fn new(buf: tokio::io::ReadBuf<'a>) -> Self {
-        Self { buf }
+    pub fn new(buf: &'a mut [u8]) -> Self {
+        Self {
+            buf: tokio::io::ReadBuf::new(buf),
+        }
     }
+
+  
 
     #[cfg(any(feature = "fuso-rt-smol", feature = "fuso-rt-custom"))]
     pub fn new(buf: &'a mut [u8]) -> Self {
@@ -250,4 +254,3 @@ impl<'a> DerefMut for ReadBuf<'a> {
         &mut self.buf
     }
 }
-

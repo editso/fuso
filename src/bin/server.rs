@@ -1,4 +1,4 @@
-use fuso::{packet::AsyncRecvPacket, service::Transfer, AsyncRead, AsyncWrite, FusoStream, Stream};
+use fuso::{protocol::AsyncRecvPacket, service::Transfer, AsyncRead, AsyncWrite, FusoStream, Stream};
 
 async fn t() -> impl Transfer<Output = FusoStream> {
     tokio::net::TcpStream::connect("").await.unwrap()
@@ -14,7 +14,7 @@ async fn main() -> fuso::Result<()> {
         guard::{Fallback, Timer},
         listener::ext::AccepterExt,
         middleware::Handshake,
-        packet::AsyncRecvPacket,
+        protocol::AsyncRecvPacket,
         select::Select,
         service::ServerFactory,
         FusoStream, Stream, TokioExecutor,
@@ -24,6 +24,8 @@ async fn main() -> fuso::Result<()> {
 
     env_logger::builder()
         .filter_level(log::LevelFilter::Debug)
+        .default_format()
+        .format_module_path(false)
         .init();
 
     fuso::new_penetrate_server()

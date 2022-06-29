@@ -24,6 +24,11 @@ pub enum Encoding {
 }
 
 #[derive(Debug)]
+pub enum PacketErr {
+    Head([u8;4]),
+}
+
+#[derive(Debug)]
 pub enum Kind {
     Channel,
     IO(std::io::Error),
@@ -36,6 +41,7 @@ pub enum Kind {
     Deserialize(String),
     InvalidAddr(InvalidAddr),
     Encoding(Encoding),
+    Packet(PacketErr),
 }
 
 impl Display for Error {
@@ -63,6 +69,12 @@ impl From<Sync> for Error {
 impl From<Kind> for Error {
     fn from(kind: Kind) -> Self {
         Self { kind }
+    }
+}
+
+impl From<std::io::ErrorKind> for Error{
+    fn from(e: std::io::ErrorKind) -> Self {
+        Kind::IO(e.into()).into()
     }
 }
 
@@ -108,6 +120,14 @@ impl From<async_channel::RecvError> for Error {
         Kind::Channel.into()
     }
 }
+
+impl From<PacketErr> for Error {
+    fn from(e: PacketErr) -> Self {
+        Kind::Packet(e).into()
+    }
+}
+
+
 
 #[cfg(feature = "fuso-rt-smol")]
 impl From<std::time::Instant> for Error {

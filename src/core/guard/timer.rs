@@ -25,6 +25,9 @@ where
     }
 
     pub fn with_read_write(target: T, timeout: Duration) -> Self {
+
+        log::debug!("[timer] overtime time read={}ms, write={}ms", timeout.as_millis(), timeout.as_millis());
+
         Self {
             target: Rc::new(RefCell::new(target)),
             read_fut: None,
@@ -35,6 +38,9 @@ where
     }
 
     pub fn with_read(target: T, timeout: Duration) -> Self {
+
+        log::debug!("[timer] overtime time read={}ms", timeout.as_millis());
+
         Self {
             target: Rc::new(RefCell::new(target)),
             read_fut: None,
@@ -45,6 +51,9 @@ where
     }
 
     pub fn with_write(target: T, timeout: Duration) -> Self {
+
+        log::debug!("[timer] overtime time write={}ms", timeout.as_millis());
+
         Self {
             target: Rc::new(RefCell::new(target)),
             read_fut: None,
@@ -107,21 +116,12 @@ where
                     }
                 };
 
-                #[cfg(feature = "fuso-rt-smol")]
-                {
-                    smol::future::race(
-                        async move { Err(smol::Timer::after(timeout).await.into()) },
-                        target.write(buf),
-                    )
-                    .await
-                }
-
-                #[cfg(feature = "fuso-rt-tokio")]
-                {
-                    match tokio::time::timeout(timeout, target.write(buf)).await {
-                        Ok(data) => data,
-                        Err(e) => Err(e.into()),
-                    }
+                match async_timer::timed(target.write(buf), timeout).await {
+                    Ok(ready) => ready,
+                    Err(e) => Err({
+                        log::warn!("[timer] write timeout {}", e);
+                        std::io::ErrorKind::TimedOut.into()
+                    }),
                 }
             }),
         };
@@ -185,21 +185,12 @@ where
                     }
                 };
 
-                #[cfg(feature = "fuso-rt-smol")]
-                {
-                    smol::future::race(
-                        async move { Err(smol::Timer::after(timeout).await.into()) },
-                        target.read(buf),
-                    )
-                    .await
-                }
-
-                #[cfg(feature = "fuso-rt-tokio")]
-                {
-                    match tokio::time::timeout(timeout, target.read(buf)).await {
-                        Ok(data) => data,
-                        Err(e) => Err(e.into()),
-                    }
+                match async_timer::timed(target.read(buf), timeout).await {
+                    Ok(ready) => ready,
+                    Err(e) => Err({
+                        log::warn!("[timer] read timeout {}", e);
+                        std::io::ErrorKind::TimedOut.into()
+                    }),
                 }
             }),
         };

@@ -5,7 +5,7 @@ pub mod guard;
 pub mod handler;
 pub mod listener;
 pub mod middleware;
-pub mod packet;
+pub mod protocol;
 pub mod request;
 pub mod service;
 

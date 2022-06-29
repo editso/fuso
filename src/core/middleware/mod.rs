@@ -30,7 +30,7 @@ impl Factory<FusoStream> for Handshake
         Box::pin(async move {
             let s = Timer::with_read_write(stream, Duration::from_secs(10));
             
-           
+            
 
             Ok(s.transfer())
         })
@@ -92,7 +92,6 @@ impl<A> Factory<A> for FactoryTransfer<A> {
     type Output = BoxedFuture<A>;
 
     fn call(&self, cfg: A) -> Self::Output {
-        log::debug!("transfer call");
         self.factory.call(cfg)
     }
 }
