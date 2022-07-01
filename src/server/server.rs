@@ -1,4 +1,4 @@
-use std::{pin::Pin, sync::Arc};
+use std::{pin::Pin, sync::Arc, time::Duration};
 
 use crate::{
     core::listener::ext::AccepterExt,
@@ -65,12 +65,12 @@ where
         factory: ServerFactory<SF, CF>,
     ) -> crate::Result<()> {
         let mut stream = stream;
-
+        
         let behavior = TryInto::<Behavior>::try_into(&stream.recv_packet().await?)?;
-
+        
         let mut accepter = if let Behavior::Bind(Bind::Bind(addr)) = behavior {
             match factory.bind(addr.clone()).await {
-                Ok(accepter) => Penetrate::new(stream, accepter),
+                Ok(accepter) => Penetrate::new(Duration::from_secs(30),stream, accepter),
                 Err(err) => {
                     let err = err.to_string().as_bytes().to_vec();
                     return stream

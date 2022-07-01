@@ -25,7 +25,7 @@ pub enum Encoding {
 
 #[derive(Debug)]
 pub enum PacketErr {
-    Head([u8;4]),
+    Head([u8; 4]),
 }
 
 #[derive(Debug)]
@@ -72,7 +72,7 @@ impl From<Kind> for Error {
     }
 }
 
-impl From<std::io::ErrorKind> for Error{
+impl From<std::io::ErrorKind> for Error {
     fn from(e: std::io::ErrorKind) -> Self {
         Kind::IO(e.into()).into()
     }
@@ -121,13 +121,23 @@ impl From<async_channel::RecvError> for Error {
     }
 }
 
+impl<T> From<async_channel::SendError<T>> for Error {
+    fn from(_: async_channel::SendError<T>) -> Self {
+        Kind::Channel.into()
+    }
+}
+
 impl From<PacketErr> for Error {
     fn from(e: PacketErr) -> Self {
         Kind::Packet(e).into()
     }
 }
 
-
+impl<F,T> From<async_timer::Expired<F, T>> for Error{
+    fn from(_: async_timer::Expired<F, T>) -> Self {
+        unimplemented!()
+    }
+}
 
 #[cfg(feature = "fuso-rt-smol")]
 impl From<std::time::Instant> for Error {

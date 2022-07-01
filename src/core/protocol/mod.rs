@@ -11,7 +11,7 @@ pub use self::local::*;
 mod stream;
 
 /// f => 0x66
-/// u => 0x756f
+/// u => 0x75
 /// s => 0x73
 /// o => 0x6f
 pub const MAGIC: [u8; 4] = [0x66, 0x75, 0x73, 0x6f];
