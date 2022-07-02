@@ -2,7 +2,6 @@ use std::marker::PhantomData;
 
 use crate::{
     ext::AsyncReadExt,
-    handler::{Handler, Outcome},
     AsyncRead, AsyncWrite
 };
 

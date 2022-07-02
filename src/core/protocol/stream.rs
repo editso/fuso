@@ -77,8 +77,9 @@ where
     ) -> std::task::Poll<Self::Output> {
         let mut this = self.project();
         let offset = this.offset;
-
         loop {
+            log::debug!("{:?} {:?}", offset, &this.buf[*offset..]);
+
             match Pin::new(&mut **this.writer).poll_write(cx, &this.buf[*offset..]) {
                 Poll::Pending => break Poll::Pending,
                 Poll::Ready(Err(e)) => break Poll::Ready(Err(e)),
@@ -86,6 +87,10 @@ where
                     *offset += n;
                 }
             };
+
+            if *offset == this.buf.len() {
+                break Poll::Ready(Ok(()));
+            }
         }
     }
 }

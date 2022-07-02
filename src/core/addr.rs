@@ -34,6 +34,11 @@ where
         Self::Domain(addr.0.to_string(), addr.1)
     }
 }
+impl From<u16> for Addr {
+    fn from(port: u16) -> Self {
+        ([0, 0, 0, 0], port).into()
+    }
+}
 
 impl FromStr for Addr {
     type Err = Error;

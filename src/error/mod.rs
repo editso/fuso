@@ -42,6 +42,7 @@ pub enum Kind {
     InvalidAddr(InvalidAddr),
     Encoding(Encoding),
     Packet(PacketErr),
+    Fallback(Vec<Vec<u8>>)
 }
 
 impl Display for Error {
@@ -134,8 +135,8 @@ impl From<PacketErr> for Error {
 }
 
 impl<F,T> From<async_timer::Expired<F, T>> for Error{
-    fn from(_: async_timer::Expired<F, T>) -> Self {
-        unimplemented!()
+    fn from(e: async_timer::Expired<F, T>) -> Self {
+        Kind::Channel.into()
     }
 }
 

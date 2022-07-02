@@ -1,32 +1,31 @@
-use std::{pin::Pin, sync::Arc, time::Duration};
+use crate::{generator::GeneratorEx, Serve};
+use std::{pin::Pin, sync::Arc};
 
 use crate::{
     core::listener::ext::AccepterExt,
-    io,
-    join::Join,
+    generator::Generator,
     listener::Accepter,
     middleware::FactoryTransfer,
-    protocol::{AsyncRecvPacket, AsyncSendPacket, Behavior, Bind},
     service::{Factory, ServerFactory},
-    Addr, Executor, Stream,
+    Addr, Executor, Fuso, Stream,
 };
-
-use super::{penetrate::Penetrate, BoxedEncryption};
 
 type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>> + Send + 'static>>;
 
-pub struct Server<E, SF, CF, SI> {
-    pub bind: Addr,
-    pub executor: E,
-    pub factory: ServerFactory<SF, CF>,
-    pub encryption: Vec<BoxedEncryption>,
-    pub middleware: Option<Arc<FactoryTransfer<SI>>>,
+pub struct Server<E, H, SF, CF, SI> {
+    pub(crate) bind: Addr,
+    pub(crate) executor: E,
+    pub(crate) handler: Arc<H>,
+    pub(crate) factory: ServerFactory<SF, CF>,
+    pub(crate) handshake: Option<Arc<FactoryTransfer<SI>>>,
 }
 
-impl<E, A, SF, CF, SI> Server<E, SF, CF, SI>
+impl<E, H, A, G, SF, CF, SI> Server<E, H, SF, CF, SI>
 where
     E: Executor + Send + Clone + 'static,
     A: Accepter<Stream = SI> + Unpin + Send + 'static,
+    H: Factory<(ServerFactory<SF, CF>, SI), Output = BoxedFuture<G>> + Send + Sync + 'static,
+    G: Generator<Output = Option<BoxedFuture<()>>> + Unpin + Send + 'static,
     SF: Factory<Addr, Output = BoxedFuture<A>> + Send + Sync + 'static,
     CF: Factory<Addr, Output = BoxedFuture<SI>> + Send + Sync + 'static,
     SI: Stream + Send + 'static,
@@ -36,64 +35,70 @@ where
 
         loop {
             let stream = accepter.accept().await?;
-            
+
             let executor = self.executor.clone();
-            let middleware = self.middleware.clone();
+            let handshake = self.handshake.clone();
             let factory = self.factory.clone();
+            let handler = self.handler.clone();
 
             self.executor.spawn(async move {
-                let stream = match middleware.as_ref() {
+                let stream = match handshake.as_ref() {
                     None => Ok(stream),
                     Some(factory) => factory.call(stream).await,
                 };
 
-                let err = match stream {
+                let generator = match stream {
                     Err(e) => Err(e),
-                    Ok(stream) => Self::spawn_run(stream, executor, factory).await,
+                    Ok(stream) => handler.call((factory.clone(), stream)).await,
                 };
 
-                if let Err(e) = err {
-                    log::warn!("[accepter] {}", e);
+                if generator.is_err() {
+                    log::warn!("failed to handler {}", stringify!(H));
+                    return;
+                }
+
+                let mut generator = unsafe { generator.unwrap_unchecked() };
+
+                loop {
+                    match generator.next().await {
+                        Ok(None) => break,
+                        Err(e) => {
+                            log::warn!("stop processing");
+                            break;
+                        }
+                        Ok(Some(fut)) => {
+                            executor.spawn(fut);
+                        }
+                    }
                 }
             })
         }
     }
+}
 
-    async fn spawn_run(
-        stream: SI,
-        executor: E,
-        factory: ServerFactory<SF, CF>,
-    ) -> crate::Result<()> {
-        let mut stream = stream;
-        
-        let behavior = TryInto::<Behavior>::try_into(&stream.recv_packet().await?)?;
-        
-        let mut accepter = if let Behavior::Bind(Bind::Bind(addr)) = behavior {
-            match factory.bind(addr.clone()).await {
-                Ok(accepter) => Penetrate::new(Duration::from_secs(30),stream, accepter),
-                Err(err) => {
-                    let err = err.to_string().as_bytes().to_vec();
-                    return stream
-                        .send_packet(&Vec::from(&Behavior::Bind(Bind::Failed(addr, err))))
-                        .await;
-                }
-            }
-        } else {
-            return Ok(());
-        };
+impl<E, H, A, G, SF, CF, SI> Fuso<Server<E, H, SF, CF, SI>>
+where
+    E: Executor + Send + Clone + 'static,
+    A: Accepter<Stream = SI> + Unpin + Send + 'static,
+    H: Factory<(ServerFactory<SF, CF>, SI), Output = BoxedFuture<G>> + Send + Sync + 'static,
+    G: Generator<Output = Option<BoxedFuture<()>>> + Unpin + Send + 'static,
+    SF: Factory<Addr, Output = BoxedFuture<A>> + Send + Sync + 'static,
+    CF: Factory<Addr, Output = BoxedFuture<SI>> + Send + Sync + 'static,
+    SI: Stream + Send + 'static,
+{
+    pub fn bind<T: Into<Addr>>(self, bind: T) -> Self {
+        Fuso(Server {
+            bind: bind.into(),
+            factory: self.0.factory,
+            executor: self.0.executor,
+            handshake: self.0.handshake,
+            handler: self.0.handler,
+        })
+    }
 
-        loop {
-            let (from, to) = accepter.accept().await?;
-
-            executor.spawn(Join::join(
-                async move {
-                    let _ = io::copy(from, to).await;
-                },
-                async move {
-                    // let _ = io::copy(to, from).await;
-                    unimplemented!()
-                },
-            ));
-        }
+    pub fn run(self) -> Fuso<Serve> {
+        Fuso(Serve {
+            fut: Box::pin(self.0.run()),
+        })
     }
 }

@@ -24,9 +24,22 @@ where
         unsafe { self.target.as_ptr().read() }
     }
 
-    pub fn with_read_write(target: T, timeout: Duration) -> Self {
+    pub fn new(target: T, read_timeout: Option<Duration>, write_timeout: Option<Duration>) -> Self {
+        Self {
+            target: Rc::new(RefCell::new(target)),
+            read_timeout,
+            write_timeout,
+            read_fut: None,
+            write_fut: None,
+        }
+    }
 
-        log::debug!("[timer] overtime time read={}ms, write={}ms", timeout.as_millis(), timeout.as_millis());
+    pub fn with_read_write(target: T, timeout: Duration) -> Self {
+        log::debug!(
+            "[timer] overtime time read={}ms, write={}ms",
+            timeout.as_millis(),
+            timeout.as_millis()
+        );
 
         Self {
             target: Rc::new(RefCell::new(target)),
@@ -38,7 +51,6 @@ where
     }
 
     pub fn with_read(target: T, timeout: Duration) -> Self {
-
         log::debug!("[timer] overtime time read={}ms", timeout.as_millis());
 
         Self {
@@ -51,7 +63,6 @@ where
     }
 
     pub fn with_write(target: T, timeout: Duration) -> Self {
-
         log::debug!("[timer] overtime time write={}ms", timeout.as_millis());
 
         Self {

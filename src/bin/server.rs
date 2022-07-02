@@ -1,4 +1,6 @@
-use fuso::{protocol::AsyncRecvPacket, service::Transfer, AsyncRead, AsyncWrite, FusoStream, Stream};
+use fuso::{
+    protocol::AsyncRecvPacket, service::Transfer, AsyncRead, AsyncWrite, FusoStream, Stream,
+};
 
 async fn t() -> impl Transfer<Output = FusoStream> {
     tokio::net::TcpStream::connect("").await.unwrap()
@@ -16,6 +18,7 @@ async fn main() -> fuso::Result<()> {
         middleware::Handshake,
         protocol::AsyncRecvPacket,
         select::Select,
+        server::penetrate::{PenetrateFactory, PeerFactory},
         service::ServerFactory,
         FusoStream, Stream, TokioExecutor,
     };
@@ -28,13 +31,15 @@ async fn main() -> fuso::Result<()> {
         .format_module_path(false)
         .init();
 
-    fuso::new_penetrate_server()
-        .with_middleware(Handshake)
-        .build(TokioExecutor, ServerFactory::with_tokio())
+    fuso::builder_server_with_tokio()
+        .with_penetrate()
+        .max_wait_time(Duration::from_secs(5))
+        .heartbeat_timeout(Duration::from_secs(20))
+        .build(PeerFactory)
         .bind(([0, 0, 0, 0], 8888))
         .run()
         .await
-        .expect("Failed to start serve");
+        .expect("server start failed");
 
     Ok(())
 }

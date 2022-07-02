@@ -1,12 +1,11 @@
 pub mod addr;
 pub mod connector;
 pub mod encryption;
+pub mod generator;
 pub mod guard;
-pub mod handler;
 pub mod listener;
 pub mod middleware;
 pub mod protocol;
-pub mod request;
 pub mod service;
 
 use std::cell::RefCell;
@@ -16,14 +15,10 @@ use std::sync::Arc;
 
 use std::future::Future;
 
-use crate::server::Server;
 use crate::{AsyncRead, AsyncWrite, Stream};
 
 pub use self::addr::*;
-use self::listener::Accepter;
-use self::service::{Factory, Transfer};
-
-type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>> + Send + 'static>>;
+use self::service::Transfer;
 
 pub type RefContext = Rc<RefCell<Box<dyn Context + Send>>>;
 
@@ -32,7 +27,7 @@ pub struct FusoStream(Box<dyn Stream + Send + 'static>);
 pub struct Fuso<T>(pub(crate) T);
 
 pub struct Serve {
-    fut: Pin<Box<dyn std::future::Future<Output = crate::Result<()>> + 'static>>,
+    pub(crate) fut: Pin<Box<dyn std::future::Future<Output = crate::Result<()>> + 'static>>,
 }
 
 pub trait Executor {
@@ -58,31 +53,6 @@ where
         O: Send + 'static,
     {
         (**self).spawn(fut)
-    }
-}
-
-impl<E, SF, CF, A, S> Fuso<Server<E, SF, CF, S>>
-where
-    E: Executor + Send + Clone + 'static,
-    SF: Factory<Addr, Output = BoxedFuture<A>> + Send + Sync + 'static,
-    CF: Factory<Addr, Output = BoxedFuture<S>> + Send + Sync + 'static,
-    A: Accepter<Stream = S> + Send + Unpin + 'static,
-    S: Stream + Send + 'static,
-{
-    pub fn bind<T: Into<Addr>>(self, bind: T) -> Self {
-        Fuso(Server {
-            bind: bind.into(),
-            factory: self.0.factory,
-            executor: self.0.executor,
-            encryption: self.0.encryption,
-            middleware: self.0.middleware,
-        })
-    }
-
-    pub fn run(self) -> Fuso<Serve> {
-        Fuso(Serve {
-            fut: Box::pin(self.0.run()),
-        })
     }
 }
 
@@ -139,6 +109,8 @@ impl FusoStream {
         Self(Box::new(t))
     }
 }
+
+unsafe impl Sync for FusoStream{}
 
 impl<T> Transfer for T
 where

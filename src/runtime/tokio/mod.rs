@@ -4,6 +4,7 @@ use tokio::net::TcpListener;
 
 use crate::{
     listener::Accepter,
+    server,
     service::{Factory, ServerFactory, Transfer},
     Addr, Executor, FusoStream,
 };
@@ -89,5 +90,14 @@ impl ServerFactory<TokioAccepter, TokioConnector> {
 impl From<tokio::net::TcpStream> for FusoStream {
     fn from(t: tokio::net::TcpStream) -> Self {
         Self::new(t)
+    }
+}
+
+pub fn builder_server_with_tokio(
+) -> server::ServerBuilder<TokioExecutor, TokioAccepter, TokioConnector, FusoStream> {
+    server::ServerBuilder {
+        executor: TokioExecutor,
+        handshake: None,
+        server_factory: ServerFactory::with_tokio(),
     }
 }

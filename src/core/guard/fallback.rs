@@ -7,6 +7,7 @@ use crate::r#async::{AsyncRead, AsyncWrite};
 
 pub struct Fallback<T> {
     target: T,
+    strict: bool,
     rest_buf: Option<std::io::Cursor<Vec<u8>>>,
     begin_buf: Option<std::io::Cursor<Vec<u8>>>,
 }
@@ -20,6 +21,16 @@ impl<T> Fallback<T> {
     pub fn new(t: T) -> Self {
         Fallback {
             target: t,
+            strict: false,
+            rest_buf: Default::default(),
+            begin_buf: Default::default(),
+        }
+    }
+
+    pub fn with_strict(t: T) -> Self {
+        Fallback {
+            target: t,
+            strict: true,
             rest_buf: Default::default(),
             begin_buf: Default::default(),
         }
@@ -46,6 +57,10 @@ impl<T> Fallback<T> {
         Self: Sized + Unpin,
     {
         Backward(self)
+    }
+
+    pub fn back_data(&self) -> Option<&Vec<u8>> {
+        self.begin_buf.as_ref().map(|buf| buf.get_ref())
     }
 }
 
@@ -100,8 +115,26 @@ where
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<crate::Result<usize>> {
-        drop(self.begin_buf.take());
-        drop(self.rest_buf.take());
+        if self.strict && (self.rest_buf.is_some() || self.begin_buf.is_some()) {
+
+            log::warn!("write data in strict mode while buffer data has not been processed");
+
+            let mut buffers = Vec::new();
+
+            if let Some(buf) = self.begin_buf.take() {
+                buffers.push(buf.into_inner())
+            }
+
+            if let Some(buf) = self.rest_buf.take() {
+                buffers.push(buf.into_inner())
+            }
+
+            return Poll::Ready(Err(crate::error::Kind::Fallback(buffers).into()));
+        } else {
+
+            drop(self.begin_buf.take());
+            drop(self.rest_buf.take());
+        }
 
         Pin::new(&mut self.target).poll_write(cx, buf)
     }
