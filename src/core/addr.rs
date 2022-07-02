@@ -8,6 +8,15 @@ pub enum Addr {
     Domain(String, u16),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Socket {
+    Default,
+    Udp(Option<Addr>),
+    Tcp(Option<Addr>),
+    Kcp(Option<Addr>),
+    Quic(Option<Addr>),
+}
+
 impl From<SocketAddr> for Addr {
     fn from(addr: SocketAddr) -> Self {
         Self::Socket(addr)

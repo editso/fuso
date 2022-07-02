@@ -18,10 +18,10 @@ pub struct Backward<'a, IO>(&'a mut Fallback<IO>);
 
 impl<T> Fallback<T> {
     #[inline]
-    pub fn new(t: T) -> Self {
+    pub fn new(t: T, strict: bool) -> Self {
         Fallback {
             target: t,
-            strict: false,
+            strict: strict,
             rest_buf: Default::default(),
             begin_buf: Default::default(),
         }

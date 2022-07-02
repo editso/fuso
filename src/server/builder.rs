@@ -21,6 +21,7 @@ pub struct PenetrateBuilder<E, SF, CF, S> {
     heartbeat_timeout: Duration,
     read_timeout: Option<Duration>,
     write_timeout: Option<Duration>,
+    fallback_strict_mode: bool,
     server_builder: ServerBuilder<E, SF, CF, S>,
 }
 
@@ -73,6 +74,7 @@ impl<E, SF, CF, S> ServerBuilder<E, SF, CF, S> {
             read_timeout: None,
             max_wait_time: Duration::from_secs(10),
             heartbeat_timeout: Duration::from_secs(60),
+            fallback_strict_mode: true,
             server_builder: self,
         }
     }
@@ -106,6 +108,16 @@ where
         self
     }
 
+    pub fn enable_fallback_strict_mode(mut self) -> Self{
+        self.fallback_strict_mode = true;
+        self
+    }
+
+    pub fn disable_fallback_strict_mode(mut self) -> Self{
+        self.fallback_strict_mode = false;
+        self
+    }
+
     pub fn build<F>(self, factory: F) -> Fuso<Server<E, PenetrateFactory<S>, SF, CF, S>>
     where
         F: Factory<Peer<Fallback<S>>, Output = BoxedFuture<Peer<Fallback<S>>>>
@@ -119,6 +131,7 @@ where
                 heartbeat_timeout: self.heartbeat_timeout,
                 read_timeout: self.read_timeout,
                 write_timeout: self.write_timeout,
+                fallback_strict_mode: self.fallback_strict_mode,
             },
             factory: Arc::new(FactoryTransfer::wrap(factory)),
         })

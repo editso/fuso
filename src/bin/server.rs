@@ -32,6 +32,7 @@ async fn main() -> fuso::Result<()> {
         .init();
 
     fuso::builder_server_with_tokio()
+        .with_handshake(Handshake)
         .with_penetrate()
         .max_wait_time(Duration::from_secs(5))
         .heartbeat_timeout(Duration::from_secs(20))

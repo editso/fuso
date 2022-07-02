@@ -7,12 +7,13 @@ use crate::{
     ext::AsyncWriteExt,
     generator::Generator,
     guard::{Fallback, Timer},
+    io,
     listener::Accepter,
     middleware::FactoryTransfer,
-    protocol::{AsyncRecvPacket, AsyncSendPacket},
+    protocol::{AsyncRecvPacket, AsyncSendPacket, Message, ToVec},
     ready,
     service::{Factory, ServerFactory},
-    Addr, Stream,
+    Addr, Socket, Stream,
 };
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
@@ -26,7 +27,7 @@ pub enum State<T> {
 }
 
 pub enum Peer<T> {
-    Visit(T, Option<Addr>),
+    Visit(T, Socket),
     Client(u32, T),
 }
 
@@ -42,6 +43,7 @@ pub struct Config {
     pub heartbeat_timeout: Duration,
     pub read_timeout: Option<Duration>,
     pub write_timeout: Option<Duration>,
+    pub fallback_strict_mode: bool,
 }
 
 pub struct PenetrateFactory<T> {
@@ -98,14 +100,18 @@ where
         target: T,
         accepter: A,
     ) -> Self {
-
-        log::debug!("config: {}", config);
+        log::debug!("{}", config);
 
         let target = Arc::new(Mutex::new({
             Timer::new(target, config.read_timeout, config.write_timeout)
         }));
 
-        let recv_fut = Self::poll_handle_recv(target.clone());
+        let wait_for = WaitFor {
+            identify: Default::default(),
+            wait_list: Default::default(),
+        };
+
+        let recv_fut = Self::poll_handle_recv(wait_for.clone(), target.clone());
         let write_fut = Self::poll_heartbeat_future(target.clone(), config.heartbeat_timeout);
 
         Self {
@@ -113,19 +119,26 @@ where
             config,
             factory,
             accepter,
-            wait_for: WaitFor {
-                identify: Default::default(),
-                wait_list: Default::default(),
-            },
+            wait_for,
             futures: vec![Box::pin(recv_fut), Box::pin(write_fut)],
         }
     }
 
-    async fn poll_handle_recv(stream: Arc<Mutex<Timer<T>>>) -> crate::Result<State<T>> {
+    async fn poll_handle_recv(
+        wait_for: WaitFor<async_channel::Sender<Fallback<T>>>,
+        stream: Arc<Mutex<Timer<T>>>,
+    ) -> crate::Result<State<T>> {
         loop {
-            if let Err(e) = stream.lock().await.recv_packet().await {
-                break Ok(State::Error(e));
+            let packet = stream.lock().await.recv_packet().await;
+            if packet.is_err() {
+                let err = unsafe { packet.unwrap_err_unchecked() };
+                log::warn!("client error {}", err);
+                return Err(err.into());
             }
+
+            let packet = unsafe { packet.unwrap_unchecked() };
+
+            log::debug!("{:?}", packet);
         }
     }
 
@@ -135,7 +148,13 @@ where
     ) -> crate::Result<State<T>> {
         loop {
             let stream = stream.clone();
-            stream.lock().await.send_packet(b"ping").await?;
+
+            log::trace!("send heartbeat packet to client");
+
+            if let Err(e) = stream.lock().await.send_packet(b"ping").await {
+                log::warn!("failed to send heartbeat packet to client");
+                break Err(e.into());
+            }
 
             tokio::time::sleep(timeout).await;
         }
@@ -156,20 +175,32 @@ where
         match Pin::new(&mut self.accepter).poll_accept(cx)? {
             Poll::Pending => {}
             Poll::Ready(stream) => {
-                let target = self.target.clone();
+                let client = self.target.clone();
                 let factory = self.factory.clone();
                 let timeout = self.config.max_wait_time;
                 let wait_for = self.wait_for.clone();
-                let fut: BoxedFuture<State<T>> = Box::pin(async move {
-                    let fallback = Fallback::with_strict(stream);
-                    match factory.call(Peer::Visit(fallback, None)).await? {
-                        Peer::Visit(stream, addr) => {
+                let fallback_strict_mode = self.config.fallback_strict_mode;
+                let fut = Box::pin(async move {
+                    let fallback = Fallback::new(stream, fallback_strict_mode);
+                    match factory.call(Peer::Visit(fallback, Socket::Default)).await? {
+                        Peer::Visit(stream, socket) => {
                             let (accept_tx, accept_ax) = async_channel::bounded(1);
                             let id = wait_for.push(accept_tx).await;
 
+                            let message = Message::Map(id, socket).to_vec();
+
+                            if let Err(e) = client.lock().await.send_packet(&message).await {
+                                log::warn!(
+                                    "notify the client that the connection establishment failed"
+                                );
+                                return Ok(State::Error(e));
+                            }
+
                             let future = async move {
                                 // 通知客户端建立连接
-                                // let _ = target.lock().await.send_packet(buf);
+
+                                log::debug!("client notified, waiting for mapping");
+
                                 let mut s1 = stream;
                                 let mut s2 = accept_ax.recv().await?;
 
@@ -177,7 +208,12 @@ where
 
                                 if let Some(data) = s1.back_data() {
                                     log::debug!("copy data to peer {}bytes", data.len());
-                                    s2.write_all(data).await?;
+                                    if let Err(e) = s2.write_all(data).await {
+                                        log::warn!(
+                                            "mapping failed, the client has closed the connection"
+                                        );
+                                        return Err(e.into());
+                                    }
                                 }
 
                                 Ok::<_, crate::Error>(State::Map(s1.into_inner(), s2.into_inner()))
@@ -186,20 +222,31 @@ where
                             let r = match async_timer::timed(future, timeout).await {
                                 Ok(Ok(r)) => Ok(r),
                                 Ok(Err(e)) => Err(e),
-                                Err(e) => Err(e.into()),
+                                Err(e) => {
+                                    log::warn!("mapping timed out");
+                                    Err(e.into())
+                                }
                             };
 
                             match r {
-                                Ok(e) => Ok(e),
+                                Ok(s) => {
+                                    log::debug!("mapping was established successfully");
+                                    Ok(s)
+                                }
                                 Err(e) => {
+                                    log::debug!("mapping failed, clear mapping information");
                                     wait_for.remove(id).await.map(|r| r.close());
                                     Err(e)
                                 }
                             }
                         }
                         Peer::Client(id, stream) => match wait_for.remove(id).await {
-                            None => Ok(State::Close(stream.into_inner())),
+                            None => {
+                                log::warn!("the client established a mapping request, but the peer was closed");
+                                Ok(State::Close(stream.into_inner()))
+                            }
                             Some(sender) => {
+                                log::warn!("mapping request established");
                                 sender.send(stream).await?;
                                 Ok(State::Transferred)
                             }
@@ -230,7 +277,7 @@ where
                     log::warn!("Transferred");
                 }
                 Poll::Ready(Err(e)) => {
-                    log::warn!("{}", e);
+                    log::warn!("encountered other errors {}", e);
                 }
             }
         }
@@ -250,20 +297,28 @@ where
 {
     type Output = BoxedFuture<PenetrateGenerator<S, A>>;
 
-    fn call(&self, (factory, target): (ServerFactory<SF, CF>, S)) -> Self::Output {
+    fn call(&self, (factory, mut target): (ServerFactory<SF, CF>, S)) -> Self::Output {
         let peer_factory = self.factory.clone();
         let config = self.config.clone();
 
         Box::pin(async move {
-            let accepter = factory.bind(9999).await?;
-            log::debug!("start listening");
+            match target.recv_packet().await {
+                Err(e) => {
+                    log::warn!("client error {}", e);
+                    return Err(e);
+                }
+                Ok(packet) => {
+                    let accepter = factory.bind(9999).await?;
+                    log::debug!("start listening");
 
-            Ok(PenetrateGenerator(Penetrate::new(
-                config,
-                peer_factory,
-                target,
-                accepter,
-            )))
+                    Ok(PenetrateGenerator(Penetrate::new(
+                        config,
+                        peer_factory,
+                        target,
+                        accepter,
+                    )))
+                }
+            }
         })
     }
 }
@@ -279,10 +334,11 @@ where
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context,
     ) -> Poll<crate::Result<Self::Output>> {
-        let (poll) = ready!(Pin::new(&mut self.0).poll_accept(cx)?);
+        let (s1, s2) = ready!(Pin::new(&mut self.0).poll_accept(cx)?);
         Poll::Ready(Ok(Some(Box::pin(async move {
-            log::debug!("start forwarding");
-            unimplemented!()
+            let results = io::forward(s1, s2).await;
+            log::debug!("{:?}", results);
+            Ok(())
         }))))
     }
 }
@@ -299,7 +355,7 @@ where
                 Peer::Visit(mut s, _) => {
                     let _ = s.backward().await;
                     let a = s.recv_packet().await;
-                    Ok(Peer::Visit(s, None))
+                    Ok(Peer::Visit(s, Socket::Default))
                 }
                 Peer::Client(_, _) => todo!(),
             }
