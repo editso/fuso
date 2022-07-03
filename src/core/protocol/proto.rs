@@ -1,17 +1,7 @@
-use std::{
-    io::Read,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
-};
+use bytes::{BufMut, BytesMut};
+use serde::{Deserialize, Serialize};
 
-use bytes::{Buf, BufMut};
-
-use crate::{Addr, Error, Kind, Result, Socket};
-
-macro_rules! invalid {
-    () => {
-        Err(Kind::Deserialize("invalid data".to_owned()).into())
-    };
-}
+use crate::{Addr, Socket};
 
 pub const MAGIC: u32 = 0xFC;
 
@@ -22,37 +12,60 @@ pub struct Packet {
     pub payload: Vec<u8>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Connect {
     TCP(Option<Addr>),
     UDP(Addr),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Bind {
     Bind(Addr),
     Failed(Addr, Vec<u8>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Auth {
     Auth(Vec<u8>),
     NoAuth,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Message {
+    Ping,
+    MapError(u32, String),
     Bind(Bind),
     Map(u32, Socket),
     Connect(Connect, Auth),
 }
 
-pub trait ToVec {
-    fn to_vec(self) -> Vec<u8>;
+impl Packet {
+    pub fn encode(self) -> Vec<u8> {
+        let mut packet = BytesMut::new();
+        packet.put_u32(self.magic);
+        packet.put_u32_le(self.data_len);
+        packet.put_slice(&self.payload);
+        packet.to_vec()
+    }
 }
 
-impl ToVec for Message{
-    fn to_vec(self) -> Vec<u8> {
-        unimplemented!()
+pub trait ToPacket {
+    fn to_packet_vec(self) -> Vec<u8>;
+}
+
+pub trait TryToMessage {
+    fn try_message(self) -> crate::Result<Message>;
+}
+
+impl ToPacket for Message {
+    fn to_packet_vec(self) -> Vec<u8> {
+        let data = unsafe { bincode::serialize(&self).unwrap() };
+        super::make_packet(data).encode()
+    }
+}
+
+impl TryToMessage for Packet {
+    fn try_message(self) -> crate::Result<Message> {
+        bincode::deserialize(&self.payload).map_err(Into::into)
     }
 }

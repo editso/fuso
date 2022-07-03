@@ -1,19 +1,23 @@
 use std::{pin::Pin, sync::Arc};
 
-use crate::Addr;
+use crate::{Addr, Socket, client::Outcome};
 
 type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>> + Send + 'static>>;
 
 pub trait Factory<C> {
     type Output;
 
-    fn call(&self, cfg: C) -> Self::Output;
+    fn call(&self, arg: C) -> Self::Output;
 }
 
 pub trait Transfer {
     type Output;
 
     fn transfer(self) -> Self::Output;
+}
+
+pub struct ClientFactory<C> {
+    pub connect_factory: Arc<C>,
 }
 
 pub struct ServerFactory<S, C> {
@@ -39,7 +43,6 @@ where
     #[inline]
     pub async fn connect<Socket: Into<Addr>>(&self, addr: Socket) -> crate::Result<O> {
         let addr = addr.into();
-        log::debug!("{}", addr);
         self.connector_factory.call(addr).await
     }
 }
@@ -49,6 +52,24 @@ impl<S, C> Clone for ServerFactory<S, C> {
         Self {
             accepter_factory: self.accepter_factory.clone(),
             connector_factory: self.connector_factory.clone(),
+        }
+    }
+}
+
+impl<C, O> ClientFactory<C>
+where
+    C: Factory<Socket, Output = BoxedFuture<Outcome<O>>>,
+    O: Send + 'static,
+{
+    pub async fn connect<A: Into<Socket>>(&self, socket: A) -> crate::Result<Outcome<O>> {
+        self.connect_factory.call(socket.into()).await
+    }
+}
+
+impl<C> Clone for ClientFactory<C> {
+    fn clone(&self) -> Self {
+        Self {
+            connect_factory: self.connect_factory.clone(),
         }
     }
 }

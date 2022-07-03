@@ -78,8 +78,7 @@ where
         let mut this = self.project();
         let offset = this.offset;
         loop {
-            log::debug!("{:?} {:?}", offset, &this.buf[*offset..]);
-
+            
             match Pin::new(&mut **this.writer).poll_write(cx, &this.buf[*offset..]) {
                 Poll::Pending => break Poll::Pending,
                 Poll::Ready(Err(e)) => break Poll::Ready(Err(e)),
@@ -124,34 +123,34 @@ where
                 }
                 State::Head => unsafe {
                     #[allow(unused)]
-                    union Head {
-                        raw: [u8; 8],
+                    #[repr(C)]
+                    struct Head {
                         magic: [u8; 4],
-                        length: u32,
+                        data_len: u32,
                     }
 
-                    let head = (buf.as_ptr() as *const Head).as_ref().unwrap_unchecked();
+                    let head = (buf.as_ptr() as *const Head).as_ref().unwrap();
 
                     if !super::good(&head.magic) {
                         log::warn!("[protocol] received illegal package {:x?}", head.magic);
                         break Poll::Ready(Err(PacketErr::Head(head.magic).into()));
                     }
 
-                    log::debug!(
-                        "[protocol] received legal packet, data size {}bytes",
-                        head.length
-                    );
+                    let len = head.data_len;
 
-                    if head.length == 0 {
+                    log::debug!("[protocol] received legal packet, data size {}bytes", len);
+
+                    if len == 0 {
                         break Poll::Ready(Ok(super::empty()));
                     }
 
                     drop(std::mem::replace(buf, {
-                        let mut buf = Vec::with_capacity(head.length as usize);
-                        buf.set_len(head.length as usize);
+                        let mut buf = Vec::with_capacity(len as usize);
+                        buf.set_len(len as usize);
                         buf
                     }));
-
+                    
+                    *offset = 0;
                     drop(std::mem::replace(this.state, State::Body));
                 },
                 State::Body if *offset == buf.len() => {
@@ -171,7 +170,14 @@ where
 
             match Pin::new(&mut **this.reader).poll_read(cx, &mut buf) {
                 Poll::Ready(Err(e)) => break Poll::Ready(Err(e)),
-                Poll::Pending => break Poll::Pending,
+                Poll::Pending => {
+                    break Poll::Pending
+                },
+                Poll::Ready(Ok(0)) => {
+                    break Poll::Ready(Err({
+                        Into::<std::io::Error>::into(std::io::ErrorKind::ConnectionReset).into()
+                    }))
+                }
                 Poll::Ready(Ok(n)) => {
                     *offset += n;
                 }

@@ -25,6 +25,7 @@ where
     }
 
     pub fn new(target: T, read_timeout: Option<Duration>, write_timeout: Option<Duration>) -> Self {
+
         Self {
             target: Rc::new(RefCell::new(target)),
             read_timeout,
@@ -104,6 +105,7 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<crate::Result<usize>> {
+        log::debug!("poll timer write");
         let timeout = match self.read_timeout.as_ref() {
             None => {
                 let mut target = self.target.try_borrow_mut()?;
@@ -172,6 +174,7 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &mut crate::ReadBuf<'_>,
     ) -> std::task::Poll<crate::Result<usize>> {
+        log::debug!("poll timer read");
         let timeout = match self.read_timeout.as_ref() {
             None => {
                 let mut target = self.target.try_borrow_mut()?;

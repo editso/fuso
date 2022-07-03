@@ -32,6 +32,10 @@ version =  "1.0.136"
 optional = true
 features = ["derive"] 
 
+[dependencies.bincode]
+version = "1.3.3"
+optional = true
+
 [dependencies.axum]
 version = "0.5.1"
 optional = true
@@ -70,7 +74,7 @@ debug = false
 
 [features]
 # 默认开启tokio异步 & clap参数解析器
-default = ['fuso-rt-tokio', "fuso-clap", "fuso-log", "bytes", "fuso-socks5"]
+default = ['fuso-rt-tokio', "fuso-clap", "fuso-log", "bytes", "fuso-serde", "fuso-socks5"]
 # 只提供api，不提供web界面
 fuso-api = ["axum", "fuso-rt-tokio"]
 # web界面
@@ -78,7 +82,7 @@ fuso-web = ["fuso-api", "toml", "serde"]
 # 配置文件的方式运行
 fuso-toml = ["toml"]
 # 使用serde序列化进行数据传输
-fuso-serde = ["serde"]
+fuso-serde = ["serde", "bincode"]
 # 使用clap进行参数解析
 fuso-clap = ["clap"]
 # 运行时

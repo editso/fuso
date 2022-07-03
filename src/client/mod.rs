@@ -1,4 +1,113 @@
-use std::sync::Arc;
+mod builder;
 
+use std::{future::Future, ops::Add, pin::Pin, sync::Arc, time::Duration};
 
-use async_mutex::Mutex;
+pub use builder::*;
+
+use crate::{
+    error,
+    factory::{FactoryTransfer, FactoryWrapper},
+    generator::{Generator, GeneratorEx},
+    protocol::AsyncRecvPacket,
+    service::{ClientFactory, Factory},
+    Addr, Executor, Fuso, Serve, Socket, Stream,
+};
+
+pub type BoxedFuture<T> = Pin<Box<dyn Future<Output = crate::Result<T>> + Send + 'static>>;
+
+pub enum Outcome<S> {
+    Stream(S),
+    Customize(FactoryWrapper<S, ()>),
+}
+
+pub struct Client<E, H, CF, S> {
+    pub(crate) server_addr: Addr,
+    pub(crate) executor: Arc<E>,
+    pub(crate) handler: Arc<H>,
+    pub(crate) handshake: Option<FactoryTransfer<S>>,
+    pub(crate) client_factory: ClientFactory<CF>,
+}
+
+impl<E, H, CF, S, G> Client<E, H, CF, S>
+where
+    E: Executor + 'static,
+    H: Factory<(ClientFactory<CF>, S), Output = BoxedFuture<G>> + Send + Sync + 'static,
+    CF: Factory<Socket, Output = BoxedFuture<Outcome<S>>> + Send + Sync + 'static,
+    S: Stream + Send + 'static,
+    G: Generator<Output = Option<BoxedFuture<()>>> + Unpin + Send + 'static,
+{
+    async fn run(self) -> crate::Result<()> {
+        let executor = self.executor;
+        let factory = self.client_factory.clone();
+        let handshake = self.handshake;
+
+        loop {
+            let addr = self.server_addr.clone();
+
+            let outcome = match self.client_factory.connect(Socket::Tcp(Some(addr))).await {
+                Ok(outcome) => outcome,
+                Err(e) => {
+                    log::warn!("{}", e);
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                    continue;
+                }
+            };
+
+            let stream = match outcome {
+                Outcome::Stream(s) => s,
+                Outcome::Customize(c) => {
+                    return Err(error::Kind::AlreadyUsed.into());
+                }
+            };
+
+            let stream = match handshake.as_ref() {
+                Some(handshake) => handshake.call(stream).await,
+                None => Ok(stream),
+            };
+
+            let stream = match stream {
+                Ok(stream) => stream,
+                Err(e) => {
+                    log::error!("handshake failed {}", e);
+                    break Ok(());
+                }
+            };
+
+            let mut generate = match self.handler.call((factory.clone(), stream)).await {
+                Ok(generate) => generate,
+                Err(e) => {
+                    log::warn!("{}", e);
+                    continue;
+                }
+            };
+
+            loop {
+                match generate.next().await {
+                    Ok(None) => break,
+                    Ok(Some(fut)) => {
+                        executor.spawn(fut);
+                    }
+                    Err(e) => {
+                        log::error!("{}", e);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl<E, H, CF, S, G> Fuso<Client<E, H, CF, S>>
+where
+    E: Executor + 'static,
+    H: Factory<(ClientFactory<CF>, S), Output = BoxedFuture<G>> + Send + Sync + 'static,
+    CF: Factory<Socket, Output = BoxedFuture<Outcome<S>>> + Send + Sync + 'static,
+    S: Stream + Send + 'static,
+    G: Generator<Output = Option<BoxedFuture<()>>> + Unpin + Send + 'static,
+{
+    pub fn run(self) -> Fuso<Serve> {
+        Fuso(Serve {
+            fut: Box::pin(self.0.run()),
+        })
+    }
+}

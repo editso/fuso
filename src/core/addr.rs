@@ -1,17 +1,21 @@
 use std::{fmt::Display, net::SocketAddr, str::FromStr};
 
+use serde::{Deserialize, Serialize};
+
 use crate::{Error, InvalidAddr};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Deserialize, Serialize)]
 pub enum Addr {
     Socket(SocketAddr),
     Domain(String, u16),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Deserialize, Serialize)]
 pub enum Socket {
     Default,
-    Udp(Option<Addr>),
+    Udp(Addr),
     Tcp(Option<Addr>),
     Kcp(Option<Addr>),
     Quic(Option<Addr>),

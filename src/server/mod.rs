@@ -1,17 +1,14 @@
 mod builder;
 pub use builder::*;
 
-
-pub mod penetrate;
-
 use crate::{generator::GeneratorEx, Serve};
 use std::{pin::Pin, sync::Arc};
 
 use crate::{
     core::listener::ext::AccepterExt,
+    factory::FactoryTransfer,
     generator::Generator,
     listener::Accepter,
-    middleware::FactoryTransfer,
     service::{Factory, ServerFactory},
     Addr, Executor, Fuso, Stream,
 };
@@ -53,18 +50,18 @@ where
                     Some(factory) => {
                         log::debug!("start shaking hands");
                         factory.call(stream).await
-                    },
+                    }
                 };
 
                 let generator = match stream {
                     Err(e) => {
                         log::warn!("handshake failed {}", e);
                         Err(e)
-                    },
+                    }
                     Ok(stream) => {
                         log::debug!("start processing the connection");
                         handler.call((factory.clone(), stream)).await
-                    },
+                    }
                 };
 
                 if generator.is_err() {
@@ -74,7 +71,7 @@ where
                     return;
                 }
 
-                let mut generator = unsafe { generator.unwrap_unchecked() };
+                let mut generator = unsafe { generator.unwrap() };
 
                 loop {
                     match generator.next().await {

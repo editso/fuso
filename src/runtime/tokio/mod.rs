@@ -3,10 +3,11 @@ use std::{pin::Pin, sync::Arc, task::Poll};
 use tokio::net::TcpListener;
 
 use crate::{
+    client::{self, Outcome},
     listener::Accepter,
     server,
-    service::{Factory, ServerFactory, Transfer},
-    Addr, Executor, FusoStream,
+    service::{self, Factory, ServerFactory, Transfer},
+    Addr, Executor, FusoStream, Socket,
 };
 
 type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>> + Send + 'static>>;
@@ -17,6 +18,8 @@ pub struct TokioExecutor;
 pub struct TokioTcpListener(tokio::net::TcpListener);
 pub struct TokioAccepter;
 pub struct TokioConnector;
+
+pub struct TokioClientConnector;
 
 impl Executor for TokioExecutor {
     fn spawn<F, O>(&self, fut: F)
@@ -87,6 +90,29 @@ impl ServerFactory<TokioAccepter, TokioConnector> {
     }
 }
 
+impl Factory<Socket> for TokioClientConnector {
+    type Output = BoxedFuture<Outcome<FusoStream>>;
+
+    fn call(&self, socket: Socket) -> Self::Output {
+        Box::pin(async move {
+            match socket {
+                Socket::Default => todo!(),
+                Socket::Udp(_) => todo!(),
+                Socket::Kcp(_) => todo!(),
+                Socket::Quic(_) => todo!(),
+                Socket::Tcp(None) => todo!(),
+                Socket::Tcp(Some(addr)) => Ok({
+                    Outcome::Stream(
+                        tokio::net::TcpStream::connect(format!("{}", addr))
+                            .await?
+                            .transfer(),
+                    )
+                }),
+            }
+        })
+    }
+}
+
 impl From<tokio::net::TcpStream> for FusoStream {
     fn from(t: tokio::net::TcpStream) -> Self {
         Self::new(t)
@@ -99,5 +125,16 @@ pub fn builder_server_with_tokio(
         executor: TokioExecutor,
         handshake: None,
         server_factory: ServerFactory::with_tokio(),
+    }
+}
+
+pub fn builder_client_with_tokio(
+) -> client::ClientBuilder<TokioExecutor, TokioClientConnector, FusoStream> {
+    client::ClientBuilder {
+        executor: TokioExecutor,
+        handshake: None,
+        client_factory: service::ClientFactory {
+            connect_factory: Arc::new(TokioClientConnector),
+        },
     }
 }

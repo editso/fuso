@@ -22,23 +22,18 @@ pub struct FactoryChain<A> {
 #[derive(Default)]
 pub struct Handshake;
 
-impl Factory<FusoStream> for Handshake
-{
+impl Factory<FusoStream> for Handshake {
     type Output = BoxedFuture<FusoStream>;
 
     fn call(&self, stream: FusoStream) -> Self::Output {
         Box::pin(async move {
-            let s = Timer::with_read_write(stream, Duration::from_secs(10));
-            
-            
-
-            Ok(s.transfer())
+            log::debug!("handshake");
+            Ok(stream)
         })
     }
 }
 
-impl<A, O> FactoryWrapper<A, O>
-{
+impl<A, O> FactoryWrapper<A, O> {
     pub fn wrap<F>(factory: F) -> Self
     where
         F: Factory<A, Output = BoxedFuture<O>> + Send + Sync + 'static,
@@ -49,9 +44,7 @@ impl<A, O> FactoryWrapper<A, O>
     }
 }
 
-
-impl<A> FactoryTransfer<A>
-{
+impl<A> FactoryTransfer<A> {
     pub fn wrap<F>(factory: F) -> Self
     where
         F: Factory<A, Output = BoxedFuture<A>> + Send + Sync + 'static,
@@ -62,8 +55,7 @@ impl<A> FactoryTransfer<A>
     }
 }
 
-impl<A> FactoryChain<A>
-{
+impl<A> FactoryChain<A> {
     pub fn chain<F1, F2>(factory: F1, next: F2) -> Self
     where
         F1: Factory<A, Output = BoxedFuture<A>> + Send + Sync + 'static,

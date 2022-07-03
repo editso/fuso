@@ -11,3 +11,5 @@ pub mod tun;
 
 #[cfg(feature = "fuso-proxy")]
 pub mod proxy;
+
+pub mod penetrate;

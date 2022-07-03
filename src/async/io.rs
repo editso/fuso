@@ -1,6 +1,4 @@
-use std::{future::Future, pin::Pin, sync::Arc, task::Poll};
-
-use async_mutex::Mutex;
+use std::{future::Future, ops::Deref, pin::Pin, sync::Arc, task::Poll};
 
 use crate::{
     ext::{AsyncReadExt, AsyncWriteExt},
@@ -9,10 +7,25 @@ use crate::{
 
 type BoxedFuture = Pin<Box<dyn Future<Output = crate::Result<()>> + Send + 'static>>;
 
+macro_rules! unwrap {
+    ($r: expr) => {
+        match $r {
+            Ok(r) => r,
+            Err(e) => return Poll::Ready(Err(e.into())),
+        }
+    };
+}
+
 pub struct Forward {
     results: Vec<crate::Result<()>>,
     futures: Vec<BoxedFuture>,
 }
+
+pub struct Inner<S>(std::sync::Mutex<S>);
+
+pub struct ReadHalf<R>(Arc<Inner<R>>);
+
+pub struct WriteHalf<W>(Arc<Inner<W>>);
 
 impl Future for Forward {
     type Output = Vec<crate::Result<()>>;
@@ -48,16 +61,16 @@ where
     S1: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     S2: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    let s1 = Arc::new(Mutex::new(s1));
-    let s2 = Arc::new(Mutex::new(s2));
+    let (s1_reader, s1_writer) = split(s1);
+    let (s2_reader, s2_writer) = split(s2);
 
-    fn copy<S1, S2>(s1: Arc<Mutex<S1>>, s2: Arc<Mutex<S2>>) -> BoxedFuture
+    fn copy<R, W>(mut reader: R, mut writer: W) -> BoxedFuture
     where
-        S1: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-        S2: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+        R: AsyncRead + Unpin + Send + 'static,
+        W: AsyncWrite + Unpin + Send + 'static,
     {
         Box::pin(async move {
-            let mut buf = unsafe{
+            let mut buf = unsafe {
                 let mut buf = Vec::with_capacity(1500);
                 buf.set_len(1500);
                 buf
@@ -66,7 +79,7 @@ where
             log::debug!("start forwarding ...");
 
             loop {
-                let r = s1.lock().await.read(&mut buf).await;
+                let r = reader.read(&mut buf).await;
 
                 if r.is_err() {
                     return Err(unsafe { r.unwrap_err_unchecked() });
@@ -78,7 +91,7 @@ where
                     return Ok(());
                 }
 
-                let r = s2.lock().await.write_all(&buf[..n]).await;
+                let r = writer.write_all(&buf[..n]).await;
 
                 if r.is_err() {
                     return Err(unsafe { r.unwrap_err_unchecked() });
@@ -89,6 +102,79 @@ where
 
     Forward {
         results: Default::default(),
-        futures: vec![copy(s1.clone(), s2.clone()), copy(s1, s2)],
+        futures: vec![copy(s1_reader, s2_writer), copy(s2_reader, s1_writer)],
+    }
+}
+
+impl<T> Deref for Inner<T> {
+    type Target = std::sync::Mutex<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<R> AsyncRead for ReadHalf<R>
+where
+    R: AsyncRead + Unpin,
+{
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut crate::ReadBuf<'_>,
+    ) -> Poll<crate::Result<usize>> {
+        let mut inner = unwrap!(self.0.lock());
+        Pin::new(&mut *inner).poll_read(cx, buf)
+    }
+}
+
+impl<W> AsyncWrite for WriteHalf<W>
+where
+    W: AsyncWrite + Unpin,
+{
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<crate::Result<usize>> {
+        let mut inner = unwrap!(self.0.lock());
+        Pin::new(&mut *inner).poll_write(cx, buf)
+    }
+
+    fn poll_close(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<crate::Result<()>> {
+        let mut inner = unwrap!(self.0.lock());
+        Pin::new(&mut *inner).poll_close(cx)
+    }
+
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<crate::Result<()>> {
+        let mut inner = unwrap!(self.0.lock());
+        Pin::new(&mut *inner).poll_flush(cx)
+    }
+}
+
+pub fn split<T>(t: T) -> (ReadHalf<T>, WriteHalf<T>)
+where
+    T: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+{
+    let inner = Arc::new(Inner(std::sync::Mutex::new(t)));
+
+    (ReadHalf(inner.clone()), WriteHalf(inner))
+}
+
+impl<T> Clone for ReadHalf<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<T> Clone for WriteHalf<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
     }
 }

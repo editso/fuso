@@ -31,6 +31,7 @@ pub enum PacketErr {
 #[derive(Debug)]
 pub enum Kind {
     Channel,
+    AlreadyUsed,
     IO(std::io::Error),
     #[cfg(feature = "fuso-rt-tokio")]
     Timeout(tokio::time::error::Elapsed),
@@ -109,6 +110,12 @@ impl From<std::cell::BorrowMutError> for Error {
     }
 }
 
+impl From<bincode::Error> for Error{
+    fn from(e: bincode::Error) -> Self {
+        Kind::Deserialize(e.to_string()).into()
+    }
+}
+
 #[cfg(feature = "fuso-rt-tokio")]
 impl From<tokio::time::error::Elapsed> for Error {
     fn from(e: tokio::time::error::Elapsed) -> Self {
@@ -133,6 +140,7 @@ impl From<PacketErr> for Error {
         Kind::Packet(e).into()
     }
 }
+
 
 impl<F,T> From<async_timer::Expired<F, T>> for Error{
     fn from(e: async_timer::Expired<F, T>) -> Self {

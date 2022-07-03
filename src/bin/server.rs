@@ -15,12 +15,11 @@ async fn main() -> fuso::Result<()> {
         ext::{AsyncReadExt, AsyncWriteExt},
         guard::{Fallback, Timer},
         listener::ext::AccepterExt,
-        middleware::Handshake,
+        factory::Handshake,
         protocol::AsyncRecvPacket,
         select::Select,
-        server::penetrate::{PenetrateFactory, PeerFactory},
         service::ServerFactory,
-        FusoStream, Stream, TokioExecutor,
+        FusoStream, Stream, TokioExecutor, penetrate::{NormalUnpacker, SocksUnpacker},
     };
 
     use tokio::net::TcpStream;
@@ -31,12 +30,18 @@ async fn main() -> fuso::Result<()> {
         .format_module_path(false)
         .init();
 
+        
+
     fuso::builder_server_with_tokio()
         .with_handshake(Handshake)
         .with_penetrate()
+        .read_timeout(None)
         .max_wait_time(Duration::from_secs(5))
-        .heartbeat_timeout(Duration::from_secs(20))
-        .build(PeerFactory)
+        .heartbeat_timeout(Duration::from_secs(1))
+        .with_unpacker_adapter_mode()
+        .append_unpacker_adapter(SocksUnpacker)
+        .append_unpacker_adapter(NormalUnpacker)
+        .build()
         .bind(([0, 0, 0, 0], 8888))
         .run()
         .await
@@ -44,6 +49,8 @@ async fn main() -> fuso::Result<()> {
 
     Ok(())
 }
+
+
 
 #[cfg(feature = "fuso-web")]
 #[tokio::main]

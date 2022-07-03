@@ -4,7 +4,7 @@ pub mod encryption;
 pub mod generator;
 pub mod guard;
 pub mod listener;
-pub mod middleware;
+pub mod factory;
 pub mod protocol;
 pub mod service;
 
