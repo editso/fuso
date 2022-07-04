@@ -154,6 +154,7 @@ where
                     drop(std::mem::replace(this.state, State::Body));
                 },
                 State::Body if *offset == buf.len() => {
+                    log::debug!("[protocol] packet reception completed {}bytes", buf.len());
                     break Poll::Ready(Ok(make_packet(std::mem::replace(buf, Default::default()))));
                 }
                 _ => {

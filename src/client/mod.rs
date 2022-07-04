@@ -32,7 +32,7 @@ impl<E, H, CF, S, G> Client<E, H, CF, S>
 where
     E: Executor + 'static,
     H: Factory<(ClientFactory<CF>, S), Output = BoxedFuture<G>> + Send + Sync + 'static,
-    CF: Factory<Socket, Output = BoxedFuture<Outcome<S>>> + Send + Sync + 'static,
+    CF: Factory<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
     S: Stream + Send + 'static,
     G: Generator<Output = Option<BoxedFuture<()>>> + Unpin + Send + 'static,
 {
@@ -44,19 +44,12 @@ where
         loop {
             let addr = self.server_addr.clone();
 
-            let outcome = match self.client_factory.connect(Socket::Tcp(Some(addr))).await {
-                Ok(outcome) => outcome,
+            let stream = match self.client_factory.connect(Socket::Tcp(Some(addr))).await {
+                Ok(stream) => stream,
                 Err(e) => {
                     log::warn!("{}", e);
                     tokio::time::sleep(Duration::from_secs(10)).await;
                     continue;
-                }
-            };
-
-            let stream = match outcome {
-                Outcome::Stream(s) => s,
-                Outcome::Customize(c) => {
-                    return Err(error::Kind::AlreadyUsed.into());
                 }
             };
 
@@ -101,7 +94,7 @@ impl<E, H, CF, S, G> Fuso<Client<E, H, CF, S>>
 where
     E: Executor + 'static,
     H: Factory<(ClientFactory<CF>, S), Output = BoxedFuture<G>> + Send + Sync + 'static,
-    CF: Factory<Socket, Output = BoxedFuture<Outcome<S>>> + Send + Sync + 'static,
+    CF: Factory<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
     S: Stream + Send + 'static,
     G: Generator<Output = Option<BoxedFuture<()>>> + Unpin + Send + 'static,
 {

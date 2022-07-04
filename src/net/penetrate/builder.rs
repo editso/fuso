@@ -1,6 +1,6 @@
 use std::{time::Duration, sync::Arc};
 
-use crate::{server::{ServerBuilder, Server}, Executor, service::Factory, Addr, listener::Accepter, Stream, Fuso, guard::Fallback, factory::{FactoryTransfer, FactoryWrapper}};
+use crate::{server::{ServerBuilder, Server}, Executor, service::Factory, Addr, listener::Accepter, Stream, Fuso, guard::Fallback, factory::{FactoryWrapper}};
 
 use super::{BoxedFuture, PenetrateFactory, Peer, Config};
 

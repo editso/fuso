@@ -141,7 +141,6 @@ where
 
         loop {
             let rem = buf.remaining();
-            log::debug!("poll read");
             if rem != 0 {
                 match Pin::new(&mut **reader).poll_read(cx, buf)? {
                     Poll::Pending => break Poll::Pending,

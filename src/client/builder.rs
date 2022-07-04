@@ -7,7 +7,7 @@ use crate::{
     Addr, Executor, Fuso, Socket, Stream,
 };
 
-use super::{BoxedFuture, Client, Outcome};
+use super::{BoxedFuture, Client};
 
 pub struct ClientBuilder<E, CF, S> {
     pub(crate) executor: E,
@@ -18,7 +18,7 @@ pub struct ClientBuilder<E, CF, S> {
 impl<E, CF, S> ClientBuilder<E, CF, S>
 where
     E: Executor + 'static,
-    CF: Factory<Socket, Output = BoxedFuture<Outcome<S>>> + Send + Sync + 'static,
+    CF: Factory<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
     S: Stream + Send + 'static,
 {
     pub fn build<A: Into<Addr>, H, G>(self, addr: A, handler: H) -> Fuso<Client<E, H, CF, S>>

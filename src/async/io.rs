@@ -17,7 +17,6 @@ macro_rules! unwrap {
 }
 
 pub struct Forward {
-    results: Vec<crate::Result<()>>,
     futures: Vec<BoxedFuture>,
 }
 
@@ -28,29 +27,23 @@ pub struct ReadHalf<R>(Arc<Inner<R>>);
 pub struct WriteHalf<W>(Arc<Inner<W>>);
 
 impl Future for Forward {
-    type Output = Vec<crate::Result<()>>;
+    type Output = crate::Result<()>;
 
     fn poll(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
-        let mut results = std::mem::replace(&mut self.results, Default::default());
         let mut futures = Vec::new();
         while let Some(mut future) = self.futures.pop() {
             match Pin::new(&mut future).poll(cx) {
                 Poll::Pending => futures.push(future),
                 Poll::Ready(r) => {
-                    results.push(r);
+                    return Poll::Ready(r);
                 }
             }
         }
 
-        if futures.is_empty() {
-            return Poll::Ready(results);
-        }
-
         drop(std::mem::replace(&mut self.futures, futures));
-        drop(std::mem::replace(&mut self.results, results));
 
         Poll::Pending
     }
@@ -85,7 +78,7 @@ where
                     return Err(unsafe { r.unwrap_err_unchecked() });
                 }
 
-                let n = r.unwrap();
+                let n = unsafe { r.unwrap_unchecked() };
 
                 if n == 0 {
                     return Ok(());
@@ -101,10 +94,10 @@ where
     }
 
     Forward {
-        results: Default::default(),
         futures: vec![copy(s1_reader, s2_writer), copy(s2_reader, s1_writer)],
     }
 }
+
 
 impl<T> Deref for Inner<T> {
     type Target = std::sync::Mutex<T>;

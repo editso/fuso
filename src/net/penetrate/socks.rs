@@ -37,7 +37,7 @@ where
             return Box::pin(async move { Err(err) });
         }
 
-        let s2 = unsafe { lock.unwrap() }.take();
+        let s2 = unsafe { lock.unwrap_unchecked() }.take();
 
         let fut = async move {
             if s2.is_none() {
@@ -45,7 +45,7 @@ where
             }
 
             let s1 = s1.into_inner();
-            let s2 = unsafe { s2.unwrap() }.into_inner();
+            let s2 = unsafe { s2.unwrap_unchecked() }.into_inner();
 
             
             Ok(())

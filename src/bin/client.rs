@@ -1,4 +1,8 @@
-use fuso::penetrate::client::PenetrateClientFactory;
+use std::sync::Arc;
+
+use fuso::{
+    penetrate::client::PenetrateClientFactory, TokioClientConnector, TokioClientForwardConnector,
+};
 
 fn main() {
     env_logger::builder()
@@ -11,10 +15,16 @@ fn main() {
         .expect("failed to runtime")
         .block_on(async move {
             fuso::builder_client_with_tokio()
-                .build(([0, 0, 0, 0], 8888), PenetrateClientFactory {})
+                .build(
+                    ([0, 0, 0, 0], 8888),
+                    PenetrateClientFactory {
+                        connector_factory: Arc::new(TokioClientForwardConnector),
+                    },
+                )
                 .run()
                 .await
-        });
+        })
+        .expect("failed to tokio")
 }
 
 #[cfg(feature = "fuso-web")]

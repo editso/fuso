@@ -1,6 +1,6 @@
 use std::{pin::Pin, sync::Arc};
 
-use crate::{Addr, Socket, client::Outcome};
+use crate::{Addr, Socket};
 
 type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>> + Send + 'static>>;
 
@@ -58,11 +58,15 @@ impl<S, C> Clone for ServerFactory<S, C> {
 
 impl<C, O> ClientFactory<C>
 where
-    C: Factory<Socket, Output = BoxedFuture<Outcome<O>>>,
+    C: Factory<Socket, Output = BoxedFuture<O>>,
     O: Send + 'static,
 {
-    pub async fn connect<A: Into<Socket>>(&self, socket: A) -> crate::Result<Outcome<O>> {
+    pub async fn connect<A: Into<Socket>>(&self, socket: A) -> crate::Result<O> {
         self.connect_factory.call(socket.into()).await
+    }
+
+    pub fn call_connect<A: Into<Socket>>(&self, socket: A) -> C::Output {
+        self.connect_factory.call(socket.into())
     }
 }
 

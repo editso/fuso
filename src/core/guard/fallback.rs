@@ -60,7 +60,7 @@ impl<T> Fallback<T> {
     }
 
     pub fn back_data(&self) -> Option<&Vec<u8>> {
-        self.begin_buf.as_ref().map(|buf| buf.get_ref())
+        self.rest_buf.as_ref().map(|buf| buf.get_ref())
     }
 }
 

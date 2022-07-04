@@ -43,7 +43,9 @@ pub enum Kind {
     InvalidAddr(InvalidAddr),
     Encoding(Encoding),
     Packet(PacketErr),
-    Fallback(Vec<Vec<u8>>)
+    Fallback(Vec<Vec<u8>>),
+    Unexpected(String),
+    Message(String)
 }
 
 impl Display for Error {
@@ -110,7 +112,7 @@ impl From<std::cell::BorrowMutError> for Error {
     }
 }
 
-impl From<bincode::Error> for Error{
+impl From<bincode::Error> for Error {
     fn from(e: bincode::Error) -> Self {
         Kind::Deserialize(e.to_string()).into()
     }
@@ -141,8 +143,7 @@ impl From<PacketErr> for Error {
     }
 }
 
-
-impl<F,T> From<async_timer::Expired<F, T>> for Error{
+impl<F, T> From<async_timer::Expired<F, T>> for Error {
     fn from(e: async_timer::Expired<F, T>) -> Self {
         Kind::Channel.into()
     }
@@ -156,3 +157,16 @@ impl From<std::time::Instant> for Error {
 }
 
 impl std::error::Error for Error {}
+
+impl Error {
+    pub fn kind(&self) -> &Kind {
+        &self.kind
+    }
+
+    pub fn is_packet_err(&self) -> bool {
+        match &self.kind {
+            Kind::Packet(_) => true,
+            _ => false,
+        }
+    }
+}

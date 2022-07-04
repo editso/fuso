@@ -71,7 +71,7 @@ where
                     return;
                 }
 
-                let mut generator = unsafe { generator.unwrap() };
+                let mut generator = unsafe { generator.unwrap_unchecked() };
 
                 loop {
                     match generator.next().await {

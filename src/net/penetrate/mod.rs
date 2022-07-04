@@ -13,6 +13,7 @@ use std::future::Future;
 use tokio::sync::Mutex;
 
 use crate::io::{ReadHalf, WriteHalf};
+use crate::Kind;
 use crate::{
     ext::AsyncWriteExt,
     factory::FactoryWrapper,
@@ -149,19 +150,19 @@ where
             let packet = stream.recv_packet().await;
 
             if packet.is_err() {
-                let err = unsafe { packet.unwrap_err() };
+                let err = unsafe { packet.unwrap_err_unchecked() };
                 log::warn!("client error {}", err);
                 return Ok(State::Error(err));
             }
 
-            let packet = unsafe { packet.unwrap() }.try_message();
+            let packet = unsafe { packet.unwrap_unchecked() }.try_message();
 
             if packet.is_err() {
                 log::warn!("The client sent an invalid packet");
-                return Ok(State::Error(unsafe { packet.unwrap_err() }));
+                return Ok(State::Error(unsafe { packet.unwrap_err_unchecked() }));
             }
 
-            let message = unsafe { packet.unwrap() };
+            let message = unsafe { packet.unwrap_unchecked() };
 
             match message {
                 Message::Ping => {
@@ -204,7 +205,8 @@ where
         let fallback_strict_mode = self.config.fallback_strict_mode;
 
         let fut = async move {
-            let fallback = Fallback::new(stream, fallback_strict_mode);
+            let mut fallback = Fallback::new(stream, fallback_strict_mode);
+            let _ = fallback.mark().await?;
             match factory.call(fallback).await? {
                 Peer::Visit(visit, socket) => {
                     let (accept_tx, accept_ax) = async_channel::bounded(1);
@@ -317,8 +319,6 @@ where
             }
         }
 
-        log::debug!("poll_accept");
-
         let mut futures = Vec::new();
         while let Some(mut future) = self.futures.pop() {
             match Pin::new(&mut future).poll(cx) {
@@ -351,10 +351,12 @@ where
             }
         }
 
-        
         self.futures.extend(futures);
-        
-        log::debug!("futures = {}", self.futures.len());
+
+        log::debug!(
+            "the remaining {} futures are not completed",
+            self.futures.len()
+        );
         status
     }
 }
@@ -375,25 +377,49 @@ where
         Box::pin(async move {
             let message = client.recv_packet().await?.try_message()?;
 
-            let accepter = match message {
+            let (addr, accepter) = match message {
                 Message::Bind(Bind::Bind(addr)) => {
                     log::debug!("try to bind the server to {}", addr);
-                    factory.bind(addr).await
+                    (addr.clone(), factory.bind(addr).await)
                 }
-                _ => unreachable!(),
+                message => {
+                    log::debug!("received an invalid message {}", message);
+                    return Err(Kind::Unexpected(format!("{}", message)).into());
+                }
             };
 
             match accepter {
                 Err(e) => {
-                    log::warn!("bind failed");
+                    let message = Message::Bind(Bind::Failed(addr, e.to_string())).to_packet_vec();
+
+                    log::warn!("failed to create listener err={}", e);
+
+                    if let Err(e) = client.send_packet(&message).await {
+                        log::warn!("failed to send failure message to client err={}", e);
+                    }
+
                     return Err(e);
                 }
-                Ok(accepter) => Ok(PenetrateGenerator(Penetrate::new(
-                    config,
-                    peer_factory,
-                    client,
-                    accepter,
-                ))),
+                Ok(accepter) => {
+                    let message = Message::Bind(Bind::Bind(addr.clone())).to_packet_vec();
+                    if let Err(e) = client.send_packet(&message).await {
+                        drop(accepter);
+                        log::warn!("failed to send message to client err={}", e);
+                        Err(e)
+                    } else {
+                        log::info!(
+                            "the listener was created successfully and bound to {}",
+                            addr
+                        );
+
+                        Ok(PenetrateGenerator(Penetrate::new(
+                            config,
+                            peer_factory,
+                            client,
+                            accepter,
+                        )))
+                    }
+                }
             }
         })
     }
@@ -410,17 +436,14 @@ where
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context,
     ) -> Poll<crate::Result<Self::Output>> {
-        loop {
-            match ready!(Pin::new(&mut self.0).poll_accept(cx)?) {
-                PenetrateOutcome::Customize(fut) => break Poll::Ready(Ok(Some(fut))),
-                PenetrateOutcome::Map(s1, s2) => {
-                    return Poll::Ready(Ok(Some(Box::pin(async move {
-                        let results = io::forward(s1, s2).await;
-                        log::debug!("{:?}", results);
-                        Ok(())
-                    }))))
-                }
-            }
+        match ready!(Pin::new(&mut self.0).poll_accept(cx)?) {
+            PenetrateOutcome::Customize(fut) => Poll::Ready(Ok(Some(fut))),
+            PenetrateOutcome::Map(s1, s2) => Poll::Ready(Ok(Some(Box::pin(async move {
+                log::debug!("start forwarding");
+                let results = io::forward(s1, s2).await;
+                log::debug!("forwarding ends {:?}", results);
+                Ok(())
+            })))),
         }
     }
 }
@@ -441,7 +464,32 @@ where
 {
     type Output = BoxedFuture<UnpackerAdapterOutcome<S>>;
 
-    fn call(&self, fallback: Fallback<S>) -> Self::Output {
-        Box::pin(async move { unimplemented!() })
+    fn call(&self, stream: Fallback<S>) -> Self::Output {
+        Box::pin(async move {
+            let mut stream = stream;
+            match stream.recv_packet().await {
+                Ok(packet) => match packet.try_message() {
+                    Err(_) => Ok(UnpackerAdapterOutcome::Unacceptable(stream)),
+                    Ok(message) => match message {
+                        Message::Map(id, socket) => {
+                            log::debug!("client establishes mapping to {}", socket);
+                            Ok(UnpackerAdapterOutcome::Accepted(Peer::Client(id, stream)))
+                        }
+                        _ => Ok(UnpackerAdapterOutcome::Unacceptable(stream)),
+                    },
+                },
+                Err(e) => {
+                    if !e.is_packet_err() {
+                        Ok(UnpackerAdapterOutcome::Unacceptable(stream))
+                    } else {
+                        log::debug!("need to notify the client to create a mapping");
+                        Ok(UnpackerAdapterOutcome::Accepted(Peer::Visit(
+                            Visit::Forward(stream),
+                            Socket::Default,
+                        )))
+                    }
+                }
+            }
+        })
     }
 }

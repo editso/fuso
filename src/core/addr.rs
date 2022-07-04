@@ -1,18 +1,20 @@
-use std::{fmt::Display, net::SocketAddr, str::FromStr};
+use std::{
+    fmt::{Debug, Display},
+    net::SocketAddr,
+    str::FromStr,
+};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{Error, InvalidAddr};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Addr {
     Socket(SocketAddr),
     Domain(String, u16),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[derive(Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Socket {
     Default,
     Udp(Addr),
@@ -74,12 +76,32 @@ impl FromStr for Addr {
     }
 }
 
+impl Debug for Addr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
 impl Display for Addr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let fmt = match self {
             Addr::Socket(addr) => format!("{}", addr),
             Addr::Domain(domain, port) => format!("{}:{}", domain, port),
         };
+        write!(f, "{}", fmt)
+    }
+}
+
+impl Display for Socket {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let fmt = match self {
+            Socket::Default => format!("<socket@default>"),
+            Socket::Udp(udp) => format!("<socket@udp({})>", udp),
+            Socket::Tcp(tcp) => format!("<socket@tcp({:?})>", tcp),
+            Socket::Kcp(kcp) => format!("<socket@kcp({:?})>", kcp),
+            Socket::Quic(quic) => format!("<socket@quic({:?})>", quic),
+        };
+
         write!(f, "{}", fmt)
     }
 }

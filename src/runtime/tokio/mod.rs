@@ -1,6 +1,6 @@
 use std::{pin::Pin, sync::Arc, task::Poll};
 
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 
 use crate::{
     client::{self, Outcome},
@@ -18,8 +18,8 @@ pub struct TokioExecutor;
 pub struct TokioTcpListener(tokio::net::TcpListener);
 pub struct TokioAccepter;
 pub struct TokioConnector;
-
 pub struct TokioClientConnector;
+pub struct TokioClientForwardConnector;
 
 impl Executor for TokioExecutor {
     fn spawn<F, O>(&self, fut: F)
@@ -91,7 +91,7 @@ impl ServerFactory<TokioAccepter, TokioConnector> {
 }
 
 impl Factory<Socket> for TokioClientConnector {
-    type Output = BoxedFuture<Outcome<FusoStream>>;
+    type Output = BoxedFuture<FusoStream>;
 
     fn call(&self, socket: Socket) -> Self::Output {
         Box::pin(async move {
@@ -102,11 +102,9 @@ impl Factory<Socket> for TokioClientConnector {
                 Socket::Quic(_) => todo!(),
                 Socket::Tcp(None) => todo!(),
                 Socket::Tcp(Some(addr)) => Ok({
-                    Outcome::Stream(
-                        tokio::net::TcpStream::connect(format!("{}", addr))
-                            .await?
-                            .transfer(),
-                    )
+                    tokio::net::TcpStream::connect(format!("{}", addr))
+                        .await?
+                        .transfer()
                 }),
             }
         })
@@ -136,5 +134,15 @@ pub fn builder_client_with_tokio(
         client_factory: service::ClientFactory {
             connect_factory: Arc::new(TokioClientConnector),
         },
+    }
+}
+
+impl Factory<Socket> for TokioClientForwardConnector {
+    type Output = BoxedFuture<Outcome<FusoStream>>;
+
+    fn call(&self, arg: Socket) -> Self::Output {
+        Box::pin(async move {
+            Ok({ Outcome::Stream(TcpStream::connect("127.0.0.1:8080").await?.transfer()) })
+        })
     }
 }

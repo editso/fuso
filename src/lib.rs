@@ -25,23 +25,9 @@ mod test{
     #[test]
     fn test_ptr(){
         
-        #[repr(C)]
-        struct a{
-            magic: [u8;4],
-            len: u32
-        }
-
-        let b  = 10u32.to_le_bytes();
-
-        let b = make_packet(b.to_vec()).encode();
-
+        let a = Ok::<_,std::io::Error>(1);;
         unsafe{
-
-            let a = (b.as_ptr() as *const _ as *const a).as_ref().unwrap();
-            println!("{:?}", String::from_utf8_lossy(&a.magic));
-
-            println!("{:?}", a.len);
+            a.unwrap_err_unchecked();
         }
-
     }
 }

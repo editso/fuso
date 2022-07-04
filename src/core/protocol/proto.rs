@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use bytes::{BufMut, BytesMut};
 use serde::{Deserialize, Serialize};
 
@@ -21,7 +23,7 @@ pub enum Connect {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Bind {
     Bind(Addr),
-    Failed(Addr, Vec<u8>),
+    Failed(Addr, String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -59,7 +61,7 @@ pub trait TryToMessage {
 
 impl ToPacket for Message {
     fn to_packet_vec(self) -> Vec<u8> {
-        let data = unsafe { bincode::serialize(&self).unwrap() };
+        let data = unsafe { bincode::serialize(&self).unwrap_unchecked() };
         super::make_packet(data).encode()
     }
 }
@@ -67,5 +69,11 @@ impl ToPacket for Message {
 impl TryToMessage for Packet {
     fn try_message(self) -> crate::Result<Message> {
         bincode::deserialize(&self.payload).map_err(Into::into)
+    }
+}
+
+impl Display for Message{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:#?}", self)
     }
 }
