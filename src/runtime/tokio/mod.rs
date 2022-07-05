@@ -31,21 +31,20 @@ impl Executor for TokioExecutor {
     }
 }
 
-impl Factory<Addr> for TokioAccepter {
+impl Factory<Socket> for TokioAccepter {
     type Output = BoxedFuture<TokioTcpListener>;
 
-    fn call(&self, cfg: Addr) -> Self::Output {
+    fn call(&self, socket: Socket) -> Self::Output {
         Box::pin(async move {
-            match cfg {
-                Addr::Socket(addr) => TcpListener::bind(addr)
-                    .await
-                    .map_err(Into::into)
-                    .map(|tcp| TokioTcpListener(tcp)),
-                Addr::Domain(_, _) => Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "invalid socket address",
-                )
-                .into()),
+            match socket {
+                Socket::Tcp(addr) => match addr.inner() {
+                    crate::InnerAddr::Socket(addr) => TcpListener::bind(addr)
+                        .await
+                        .map_err(Into::into)
+                        .map(|tcp| TokioTcpListener(tcp)),
+                    crate::InnerAddr::Domain(_, _) => unimplemented!(),
+                },
+                _ => unimplemented!(),
             }
         })
     }
@@ -68,10 +67,10 @@ impl Accepter for TokioTcpListener {
     }
 }
 
-impl Factory<Addr> for TokioConnector {
+impl Factory<Socket> for TokioConnector {
     type Output = BoxedFuture<FusoStream>;
 
-    fn call(&self, cfg: Addr) -> Self::Output {
+    fn call(&self, cfg: Socket) -> Self::Output {
         Box::pin(async move {
             tokio::net::TcpStream::connect(format!("{}", cfg))
                 .await
@@ -96,12 +95,10 @@ impl Factory<Socket> for TokioClientConnector {
     fn call(&self, socket: Socket) -> Self::Output {
         Box::pin(async move {
             match socket {
-                Socket::Default => todo!(),
                 Socket::Udp(_) => todo!(),
                 Socket::Kcp(_) => todo!(),
                 Socket::Quic(_) => todo!(),
-                Socket::Tcp(None) => todo!(),
-                Socket::Tcp(Some(addr)) => Ok({
+                Socket::Tcp(addr) => Ok({
                     tokio::net::TcpStream::connect(format!("{}", addr))
                         .await?
                         .transfer()

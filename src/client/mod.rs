@@ -1,14 +1,12 @@
 mod builder;
 
-use std::{future::Future, ops::Add, pin::Pin, sync::Arc, time::Duration};
+use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
 pub use builder::*;
 
 use crate::{
-    error,
     factory::{FactoryTransfer, FactoryWrapper},
     generator::{Generator, GeneratorEx},
-    protocol::AsyncRecvPacket,
     service::{ClientFactory, Factory},
     Addr, Executor, Fuso, Serve, Socket, Stream,
 };
@@ -21,7 +19,7 @@ pub enum Outcome<S> {
 }
 
 pub struct Client<E, H, CF, S> {
-    pub(crate) server_addr: Addr,
+    pub(crate) socket: Socket,
     pub(crate) executor: Arc<E>,
     pub(crate) handler: Arc<H>,
     pub(crate) handshake: Option<FactoryTransfer<S>>,
@@ -42,9 +40,9 @@ where
         let handshake = self.handshake;
 
         loop {
-            let addr = self.server_addr.clone();
+            let socket = self.socket.clone();
 
-            let stream = match self.client_factory.connect(Socket::Tcp(Some(addr))).await {
+            let stream = match self.client_factory.connect(socket).await {
                 Ok(stream) => stream,
                 Err(e) => {
                     log::warn!("{}", e);

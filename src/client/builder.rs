@@ -21,13 +21,13 @@ where
     CF: Factory<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
     S: Stream + Send + 'static,
 {
-    pub fn build<A: Into<Addr>, H, G>(self, addr: A, handler: H) -> Fuso<Client<E, H, CF, S>>
+    pub fn build<A: Into<Socket>, H, G>(self, socket: A, handler: H) -> Fuso<Client<E, H, CF, S>>
     where
         H: Factory<(ClientFactory<CF>, S), Output = BoxedFuture<G>> + Send + Sync + 'static,
         G: Generator<Output = Option<BoxedFuture<()>>> + Unpin + Send + 'static,
     {
         Fuso(Client {
-            server_addr: addr.into(),
+            socket: socket.into(),
             handler: Arc::new(handler),
             executor: Arc::new(self.executor),
             handshake: self.handshake,

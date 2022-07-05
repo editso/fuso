@@ -1,8 +1,15 @@
-use std::{time::Duration, sync::Arc};
+use std::{sync::Arc, time::Duration};
 
-use crate::{server::{ServerBuilder, Server}, Executor, service::Factory, Addr, listener::Accepter, Stream, Fuso, guard::Fallback, factory::{FactoryWrapper}};
+use crate::{
+    factory::FactoryWrapper,
+    guard::Fallback,
+    listener::Accepter,
+    server::{Server, ServerBuilder},
+    service::Factory,
+    Executor, Fuso, Socket, Stream,
+};
 
-use super::{BoxedFuture, PenetrateFactory, Peer, Config};
+use super::{BoxedFuture, Config, Peer, PenetrateFactory};
 
 pub struct PenetrateBuilder<E, SF, CF, S> {
     max_wait_time: Duration,
@@ -29,8 +36,8 @@ impl<E, SF, CF, S> ServerBuilder<E, SF, CF, S> {
 impl<E, SF, CF, A, S> PenetrateBuilder<E, SF, CF, S>
 where
     E: Executor + 'static,
-    SF: Factory<Addr, Output = BoxedFuture<A>> + Send + Sync + 'static,
-    CF: Factory<Addr, Output = BoxedFuture<S>> + Send + Sync + 'static,
+    SF: Factory<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
+    CF: Factory<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
     A: Accepter<Stream = S> + Unpin + Send + 'static,
     S: Stream + Send + Sync + 'static,
 {
@@ -66,10 +73,7 @@ where
 
     pub fn build<F>(self, unpacker_factory: F) -> Fuso<Server<E, PenetrateFactory<S>, SF, CF, S>>
     where
-        F: Factory<Fallback<S>, Output = BoxedFuture<Peer<Fallback<S>>>>
-            + Send
-            + Sync
-            + 'static,
+        F: Factory<Fallback<S>, Output = BoxedFuture<Peer<Fallback<S>>>> + Send + Sync + 'static,
     {
         self.server_builder.build(PenetrateFactory {
             config: Config {

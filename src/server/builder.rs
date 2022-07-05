@@ -1,10 +1,10 @@
 use std::{pin::Pin, sync::Arc};
 
 use crate::{
-    generator::Generator,
     factory::{FactoryChain, FactoryTransfer},
+    generator::Generator,
     service::{Factory, ServerFactory},
-    Fuso, Stream,
+    Fuso, Stream, Socket,
 };
 
 use super::Server;
@@ -25,16 +25,12 @@ where
     where
         F: Factory<S, Output = BoxedFuture<S>> + Send + Sync + 'static,
     {
-        match self.handshake.take() {
-            None => {
-                self.handshake = Some(FactoryTransfer::wrap(handshake));
-            }
-            Some(wrapper) => {
-                self.handshake = Some(FactoryTransfer::wrap(FactoryChain::chain(
-                    wrapper, handshake,
-                )));
-            }
-        }
+        self.handshake = match self.handshake.take() {
+            None => Some(FactoryTransfer::wrap(handshake)),
+            Some(wrapper) => Some(FactoryTransfer::wrap(FactoryChain::chain(
+                wrapper, handshake,
+            ))),
+        };
         self
     }
 
@@ -45,7 +41,7 @@ where
     {
         Fuso(Server {
             handler: Arc::new(handler),
-            bind: ([0, 0, 0, 0], 0).into(),
+            bind: Socket::Tcp(([0, 0, 0, 0], 0).into()),
             executor: self.executor,
             factory: self.server_factory,
             handshake: self.handshake.map(Arc::new),

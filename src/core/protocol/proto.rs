@@ -22,8 +22,8 @@ pub enum Connect {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Bind {
-    Bind(Addr),
-    Failed(Addr, String),
+    Bind(Socket),
+    Failed(Socket, String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]

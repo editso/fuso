@@ -9,28 +9,15 @@ async fn t() -> impl Transfer<Output = FusoStream> {
 #[cfg(feature = "fuso-rt-tokio")]
 #[tokio::main]
 async fn main() -> fuso::Result<()> {
-    use std::{sync::Arc, time::Duration};
+    use std::time::Duration;
 
-    use fuso::{
-        ext::{AsyncReadExt, AsyncWriteExt},
-        guard::{Fallback, Timer},
-        listener::ext::AccepterExt,
-        factory::Handshake,
-        protocol::AsyncRecvPacket,
-        select::Select,
-        service::ServerFactory,
-        FusoStream, Stream, TokioExecutor, penetrate::{NormalUnpacker, SocksUnpacker},
-    };
-
-    use tokio::net::TcpStream;
+    use fuso::{factory::Handshake, penetrate::NormalUnpacker, Socket};
 
     env_logger::builder()
         .filter_level(log::LevelFilter::Debug)
         .default_format()
         .format_module_path(false)
         .init();
-
-        
 
     fuso::builder_server_with_tokio()
         .with_handshake(Handshake)
@@ -42,15 +29,13 @@ async fn main() -> fuso::Result<()> {
         // .append_unpacker_adapter(SocksUnpacker)
         .append_unpacker_adapter(NormalUnpacker)
         .build()
-        .bind(([0, 0, 0, 0], 8888))
+        .bind(Socket::Tcp(([0, 0, 0, 0], 8888).into()))
         .run()
         .await
         .expect("server start failed");
 
     Ok(())
 }
-
-
 
 #[cfg(feature = "fuso-web")]
 #[tokio::main]
@@ -61,39 +46,7 @@ async fn main() {}
 async fn main() {}
 
 #[cfg(feature = "fuso-rt-smol")]
-fn main() -> fuso::Result<()> {
-    use std::time::Duration;
-
-    use fuso::{
-        ext::{AsyncReadExt, AsyncWriteExt},
-        guard::{Fallback, Timer},
-        net::tun::Tun,
-        tun::TunProvider,
-        Fuso, SmolExecutor, Stream, TcpListener,
-    };
-    use smol::net::TcpStream;
-
-    env_logger::builder()
-        .filter_level(log::LevelFilter::Debug)
-        .init();
-
-    smol::block_on(async move {
-        let tcp = TcpStream::connect("xxtests.xyz:80").await?;
-
-        // let fallback = Fallback::new(tcp);
-        let tcp = Timer::with_read_write(tcp, Duration::from_secs(10));
-
-        let mut f: Box<dyn Stream> = Box::new(tcp);
-        f.write(b"GET / HTTP/1.1\r\n\r\n").await;
-        let mut buf = Vec::new();
-        buf.resize(10, 0);
-        f.read(&mut buf).await;
-
-        println!("{:?}", buf);
-
-        Ok(())
-    })
-}
+fn main() -> fuso::Result<()> {}
 
 #[cfg(feature = "fuso-rt-custom")]
 fn main() {}

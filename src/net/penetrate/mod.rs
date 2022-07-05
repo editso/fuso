@@ -361,12 +361,14 @@ where
     }
 }
 
+
 impl<SF, CF, A, S> Factory<(ServerFactory<SF, CF>, S)> for PenetrateFactory<S>
 where
-    SF: Factory<Addr, Output = BoxedFuture<A>> + Send + Sync + 'static,
-    CF: Factory<Addr, Output = BoxedFuture<S>> + Send + Sync + 'static,
+    SF: Factory<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
+    CF: Factory<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
     A: Accepter<Stream = S> + Send + Unpin + 'static,
     S: Stream + Sync + Send + 'static,
+    
 {
     type Output = BoxedFuture<PenetrateGenerator<S, A>>;
 
@@ -377,7 +379,7 @@ where
         Box::pin(async move {
             let message = client.recv_packet().await?.try_message()?;
 
-            let (addr, accepter) = match message {
+            let (socket, accepter) = match message {
                 Message::Bind(Bind::Bind(addr)) => {
                     log::debug!("try to bind the server to {}", addr);
                     (addr.clone(), factory.bind(addr).await)
@@ -390,7 +392,7 @@ where
 
             match accepter {
                 Err(e) => {
-                    let message = Message::Bind(Bind::Failed(addr, e.to_string())).to_packet_vec();
+                    let message = Message::Bind(Bind::Failed(socket, e.to_string())).to_packet_vec();
 
                     log::warn!("failed to create listener err={}", e);
 
@@ -401,7 +403,7 @@ where
                     return Err(e);
                 }
                 Ok(accepter) => {
-                    let message = Message::Bind(Bind::Bind(addr.clone())).to_packet_vec();
+                    let message = Message::Bind(Bind::Bind(socket.clone())).to_packet_vec();
                     if let Err(e) = client.send_packet(&message).await {
                         drop(accepter);
                         log::warn!("failed to send message to client err={}", e);
@@ -409,7 +411,7 @@ where
                     } else {
                         log::info!(
                             "the listener was created successfully and bound to {}",
-                            addr
+                            socket
                         );
 
                         Ok(PenetrateGenerator(Penetrate::new(
@@ -485,7 +487,7 @@ where
                         log::debug!("need to notify the client to create a mapping");
                         Ok(UnpackerAdapterOutcome::Accepted(Peer::Visit(
                             Visit::Forward(stream),
-                            Socket::Default,
+                            Socket::default(),
                         )))
                     }
                 }

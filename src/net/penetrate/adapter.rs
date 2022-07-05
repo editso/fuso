@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     factory::FactoryWrapper, guard::Fallback, listener::Accepter, server::Server, service::Factory,
-    Addr, Executor, Fuso, Stream,
+    Executor, Fuso, Socket, Stream,
 };
 
 use super::{BoxedFuture, Peer, PenetrateBuilder, PenetrateFactory};
@@ -33,8 +33,8 @@ impl<E, SF, CF, S> PenetrateBuilder<E, SF, CF, S> {
 impl<E, A, SF, CF, S> PenetrateAdapterBuilder<E, SF, CF, S>
 where
     E: Executor + 'static,
-    SF: Factory<Addr, Output = BoxedFuture<A>> + Send + Sync + 'static,
-    CF: Factory<Addr, Output = BoxedFuture<S>> + Send + Sync + 'static,
+    SF: Factory<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
+    CF: Factory<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
     A: Accepter<Stream = S> + Unpin + Send + 'static,
     S: Stream + Send + Sync + 'static,
 {

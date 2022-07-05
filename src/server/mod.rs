@@ -1,7 +1,7 @@
 mod builder;
 pub use builder::*;
 
-use crate::{generator::GeneratorEx, Serve};
+use crate::{generator::GeneratorEx, Serve, Socket};
 use std::{pin::Pin, sync::Arc};
 
 use crate::{
@@ -10,13 +10,13 @@ use crate::{
     generator::Generator,
     listener::Accepter,
     service::{Factory, ServerFactory},
-    Addr, Executor, Fuso, Stream,
+    Executor, Fuso, Stream,
 };
 
 type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>> + Send + 'static>>;
 
 pub struct Server<E, H, SF, CF, SI> {
-    pub(crate) bind: Addr,
+    pub(crate) bind: Socket,
     pub(crate) executor: E,
     pub(crate) handler: Arc<H>,
     pub(crate) factory: ServerFactory<SF, CF>,
@@ -29,8 +29,8 @@ where
     A: Accepter<Stream = SI> + Unpin + Send + 'static,
     H: Factory<(ServerFactory<SF, CF>, SI), Output = BoxedFuture<G>> + Send + Sync + 'static,
     G: Generator<Output = Option<BoxedFuture<()>>> + Unpin + Send + 'static,
-    SF: Factory<Addr, Output = BoxedFuture<A>> + Send + Sync + 'static,
-    CF: Factory<Addr, Output = BoxedFuture<SI>> + Send + Sync + 'static,
+    SF: Factory<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
+    CF: Factory<Socket, Output = BoxedFuture<SI>> + Send + Sync + 'static,
     SI: Stream + Send + 'static,
 {
     pub async fn run(self) -> crate::Result<()> {
@@ -99,11 +99,11 @@ where
     A: Accepter<Stream = SI> + Unpin + Send + 'static,
     H: Factory<(ServerFactory<SF, CF>, SI), Output = BoxedFuture<G>> + Send + Sync + 'static,
     G: Generator<Output = Option<BoxedFuture<()>>> + Unpin + Send + 'static,
-    SF: Factory<Addr, Output = BoxedFuture<A>> + Send + Sync + 'static,
-    CF: Factory<Addr, Output = BoxedFuture<SI>> + Send + Sync + 'static,
+    SF: Factory<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
+    CF: Factory<Socket, Output = BoxedFuture<SI>> + Send + Sync + 'static,
     SI: Stream + Send + 'static,
 {
-    pub fn bind<T: Into<Addr>>(self, bind: T) -> Self {
+    pub fn bind<T: Into<Socket>>(self, bind: T) -> Self {
         Fuso(Server {
             bind: bind.into(),
             factory: self.0.factory,

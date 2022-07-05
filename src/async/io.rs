@@ -69,8 +69,6 @@ where
                 buf
             };
 
-            log::debug!("start forwarding ...");
-
             loop {
                 let r = reader.read(&mut buf).await;
 
