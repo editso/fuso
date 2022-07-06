@@ -13,9 +13,9 @@ use crate::{
 
 pub type BoxedFuture<T> = Pin<Box<dyn Future<Output = crate::Result<T>> + Send + 'static>>;
 
-pub enum Outcome<S> {
-    Stream(S),
-    Customize(FactoryWrapper<S, ()>),
+pub enum Mapper<S> {
+    Forward(S),
+    Consume(FactoryWrapper<S, ()>),
 }
 
 pub struct Client<E, H, CF, S> {

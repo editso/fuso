@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration, pin::Pin};
 
 use crate::{
     factory::FactoryWrapper,
@@ -9,7 +9,9 @@ use crate::{
     Executor, Fuso, Socket, Stream,
 };
 
-use super::{BoxedFuture, Config, Peer, PenetrateFactory};
+use super::server::{PenetrateFactory, Peer, Config};
+
+type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
 
 pub struct PenetrateBuilder<E, SF, CF, S> {
     max_wait_time: Duration,
@@ -71,7 +73,7 @@ where
         self
     }
 
-    pub fn build<F>(self, unpacker_factory: F) -> Fuso<Server<E, PenetrateFactory<S>, SF, CF, S>>
+    pub fn build<F>(self, adapter: F) -> Fuso<Server<E, PenetrateFactory<S>, SF, CF, S>>
     where
         F: Factory<Fallback<S>, Output = BoxedFuture<Peer<Fallback<S>>>> + Send + Sync + 'static,
     {
@@ -83,7 +85,7 @@ where
                 write_timeout: self.write_timeout,
                 fallback_strict_mode: self.fallback_strict_mode,
             },
-            unpacker_factory: Arc::new(FactoryWrapper::wrap(unpacker_factory)),
+            unpacker: Arc::new(FactoryWrapper::wrap(adapter)),
         })
     }
 }

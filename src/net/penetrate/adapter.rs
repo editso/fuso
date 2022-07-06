@@ -1,30 +1,33 @@
-use std::sync::Arc;
+use std::{pin::Pin, sync::Arc};
 
 use crate::{
     factory::FactoryWrapper, guard::Fallback, listener::Accepter, server::Server, service::Factory,
     Executor, Fuso, Socket, Stream,
 };
 
-use super::{BoxedFuture, Peer, PenetrateBuilder, PenetrateFactory};
+use super::{
+    server::{Peer, PenetrateFactory},
+    PenetrateBuilder,
+};
 
-pub type UnpackerAdapterFactory<S> = FactoryWrapper<Fallback<S>, UnpackerAdapterOutcome<S>>;
+type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
 
-pub struct UnpackerAdapter<S>(Arc<Vec<UnpackerAdapterFactory<S>>>);
-
-pub enum UnpackerAdapterOutcome<O> {
-    Accepted(Peer<Fallback<O>>),
-    Unacceptable(Fallback<O>),
+pub enum Adapter<O> {
+    Accept(Peer<Fallback<O>>),
+    Reject(Fallback<O>),
 }
 
+pub struct PenetrateAdapter<A>(Arc<Vec<A>>);
+
 pub struct PenetrateAdapterBuilder<E, SF, CF, S> {
-    adapters: Vec<UnpackerAdapterFactory<S>>,
-    penetrate_builder: PenetrateBuilder<E, SF, CF, S>,
+   pub(crate) adapters: Vec<FactoryWrapper<Fallback<S>, Adapter<S>>>,
+   pub(crate) penetrate_builder: PenetrateBuilder<E, SF, CF, S>,
 }
 
 impl<E, SF, CF, S> PenetrateBuilder<E, SF, CF, S> {
-    pub fn with_unpacker_adapter_mode(self) -> PenetrateAdapterBuilder<E, SF, CF, S> {
+    pub fn with_adapter_mode(self) -> PenetrateAdapterBuilder<E, SF, CF, S> {
         PenetrateAdapterBuilder {
-            adapters: Vec::new(),
+            adapters: Default::default(),
             penetrate_builder: self,
         }
     }
@@ -38,27 +41,17 @@ where
     A: Accepter<Stream = S> + Unpin + Send + 'static,
     S: Stream + Send + Sync + 'static,
 {
-    pub fn append_unpacker_adapter<F>(mut self, factory: F) -> Self
-    where
-        F: Factory<Fallback<S>, Output = BoxedFuture<UnpackerAdapterOutcome<S>>>
-            + Send
-            + Sync
-            + 'static,
-    {
-        self.adapters.push(FactoryWrapper::wrap(factory));
-        self
-    }
-
     pub fn build(self) -> Fuso<Server<E, PenetrateFactory<S>, SF, CF, S>> {
         self.penetrate_builder
             .disable_fallback_strict_mode()
-            .build(UnpackerAdapter(Arc::new(self.adapters)))
+            .build(PenetrateAdapter(Arc::new(self.adapters)))
     }
 }
 
-impl<S> Factory<Fallback<S>> for UnpackerAdapter<S>
+impl<S, A> Factory<Fallback<S>> for PenetrateAdapter<A>
 where
     S: Stream + Send + Unpin + 'static,
+    A: Factory<Fallback<S>, Output = BoxedFuture<Adapter<S>>> + Sync + Send + 'static,
 {
     type Output = BoxedFuture<Peer<Fallback<S>>>;
 
@@ -68,21 +61,17 @@ where
             let mut fallback = arg;
 
             for adapter in adapters.iter() {
-                fallback = match adapter
-                    .call({
-                        let _ = fallback.mark().await?;
-                        fallback
-                    })
-                    .await?
-                {
-                    UnpackerAdapterOutcome::Accepted(acc) => {
-                        return Ok(acc);
+                fallback.mark().await?;
+
+                fallback = match adapter.call(fallback).await? {
+                    Adapter::Reject(fallback) => fallback,
+                    Adapter::Accept(peer) => {
+                        return Ok(peer);
                     }
-                    UnpackerAdapterOutcome::Unacceptable(fallback) => fallback,
-                }
+                };
             }
 
-            Ok(Peer::Unexpected(fallback))
+            Ok(Peer::Unknown(fallback))
         })
     }
 }

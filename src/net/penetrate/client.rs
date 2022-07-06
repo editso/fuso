@@ -5,7 +5,7 @@ use std::{future::Future, task::Poll};
 
 use crate::io::{ReadHalf, WriteHalf};
 use crate::{
-    client::Outcome,
+    client::Mapper,
     generator::Generator,
     protocol::{AsyncRecvPacket, AsyncSendPacket, Bind, Message, ToPacket, TryToMessage},
     service::{ClientFactory, Factory},
@@ -13,7 +13,7 @@ use crate::{
 };
 use crate::{io, join};
 
-use super::BoxedFuture;
+type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
 
 macro_rules! async_connect {
     ($writer: expr, $connector: expr, $id: expr, $socket: expr) => {{
@@ -58,7 +58,7 @@ pub struct PenetrateClient<CF, C, S> {
 impl<CF, C, S> Factory<(ClientFactory<CF>, S)> for PenetrateClientFactory<C>
 where
     CF: Factory<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
-    C: Factory<Socket, Output = BoxedFuture<Outcome<S>>> + Send + Sync + 'static,
+    C: Factory<Socket, Output = BoxedFuture<Mapper<S>>> + Send + Sync + 'static,
     S: Stream + Send + 'static,
 {
     type Output = BoxedFuture<PenetrateClient<CF, C, S>>;
@@ -203,7 +203,7 @@ where
 impl<CF, C, S> Generator for PenetrateClient<CF, C, S>
 where
     CF: Factory<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
-    C: Factory<Socket, Output = BoxedFuture<Outcome<S>>> + Unpin + Send + Sync + 'static,
+    C: Factory<Socket, Output = BoxedFuture<Mapper<S>>> + Unpin + Send + Sync + 'static,
     S: Stream + Send + 'static,
 {
     type Output = Option<BoxedFuture<()>>;
@@ -248,8 +248,8 @@ where
 
                         Ok(State::Ready({
                             match s2 {
-                                Outcome::Stream(s2) => Box::pin(io::forward(s1, s2)),
-                                Outcome::Customize(s2) => s2.call(s1),
+                                Mapper::Forward(s2) => Box::pin(io::forward(s1, s2)),
+                                Mapper::Consume(s2) => s2.call(s1),
                             }
                         }))
                     };
@@ -270,7 +270,7 @@ where
             }
         }
 
-        log::debug!("rem {}", self.futures.len());
+        log::debug!("{} futures remaining", self.futures.len());
 
         Poll::Pending
     }

@@ -3,7 +3,7 @@ use std::{pin::Pin, sync::Arc, task::Poll};
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::{
-    client::{self, Outcome},
+    client::{self, Mapper},
     listener::Accepter,
     server,
     service::{self, Factory, ServerFactory, Transfer},
@@ -135,12 +135,12 @@ pub fn builder_client_with_tokio(
 }
 
 impl Factory<Socket> for TokioClientForwardConnector {
-    type Output = BoxedFuture<Outcome<FusoStream>>;
+    type Output = BoxedFuture<Mapper<FusoStream>>;
 
     fn call(&self, socket: Socket) -> Self::Output {
         Box::pin(async move {
             match socket {
-                Socket::Tcp(addr) => Ok(Outcome::Stream(
+                Socket::Tcp(addr) => Ok(Mapper::Forward(
                     TcpStream::connect(format!("{}", addr)).await?.transfer(),
                 )),
                 _ => unimplemented!(),

@@ -1,6 +1,18 @@
-use crate::{error, factory::FactoryWrapper, guard::Fallback, service::Factory, Socket, Stream};
+use std::pin::Pin;
 
-use super::{BoxedFuture, Peer, UnpackerAdapterOutcome, Visit};
+use crate::{
+    error,
+    factory::FactoryWrapper,
+    guard::Fallback,
+    penetrate::{
+        server::{Peer, Visitor},
+        Adapter,
+    },
+    service::Factory,
+    Socket, Stream,
+};
+
+type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
 
 pub struct SocksUnpacker;
 pub struct UdpForwardFactory<S>(std::sync::Mutex<Option<S>>);
@@ -9,11 +21,11 @@ impl<S> Factory<Fallback<S>> for SocksUnpacker
 where
     S: Stream + Send + 'static,
 {
-    type Output = BoxedFuture<UnpackerAdapterOutcome<S>>;
+    type Output = BoxedFuture<Adapter<S>>;
     fn call(&self, stream: Fallback<S>) -> Self::Output {
         Box::pin(async move {
-            Ok(UnpackerAdapterOutcome::Accepted(Peer::Visit(
-                Visit::Customize({
+            Ok(Adapter::Accept(Peer::Visitor(
+                Visitor::Consume({
                     let wrap = UdpForwardFactory(std::sync::Mutex::new(Some(stream)));
                     FactoryWrapper::wrap(wrap)
                 }),
@@ -47,7 +59,6 @@ where
             let s1 = s1.into_inner();
             let s2 = unsafe { s2.unwrap_unchecked() }.into_inner();
 
-            
             Ok(())
         };
 

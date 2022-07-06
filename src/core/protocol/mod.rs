@@ -179,7 +179,7 @@ where
 
                     let len = head.data_len;
 
-                    log::debug!("received legal packet, data size {}bytes", len);
+                    log::trace!("received legal packet, data size {}bytes", len);
 
                     if len == 0 {
                         break Poll::Ready(Ok(self::empty_packet()));

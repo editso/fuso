@@ -3,13 +3,13 @@ pub mod io;
 pub mod join;
 pub mod r#macro;
 pub mod select;
+pub mod time;
 
 use std::{
     future::Future,
     ops::{Deref, DerefMut},
     pin::Pin,
-    task::{Context, Poll},
-    time::Duration,
+    task::{Context, Poll}
 };
 
 pub type BoxedFuture<'lifetime, T> = Pin<Box<dyn Future<Output = T> + 'lifetime>>;

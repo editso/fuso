@@ -38,6 +38,7 @@ impl Future for Forward {
             match Pin::new(&mut future).poll(cx) {
                 Poll::Pending => futures.push(future),
                 Poll::Ready(r) => {
+                    log::debug!("forwarding completed");
                     return Poll::Ready(r);
                 }
             }
@@ -45,7 +46,12 @@ impl Future for Forward {
 
         drop(std::mem::replace(&mut self.futures, futures));
 
-        Poll::Pending
+        if self.futures.is_empty() {
+            log::debug!("forwarding completed");
+            Poll::Ready(Ok(()))
+        } else {
+            Poll::Pending
+        }
     }
 }
 
@@ -69,6 +75,8 @@ where
                 buf
             };
 
+            log::debug!("start forwarding");
+
             loop {
                 let r = reader.read(&mut buf).await;
 
@@ -82,12 +90,16 @@ where
                     return Ok(());
                 }
 
-                log::debug!("forward {}bytes data", n);
+                log::trace!("forward {}bytes data", n);
 
                 let r = writer.write_all(&buf[..n]).await;
 
                 if r.is_err() {
-                    return Err(unsafe { r.unwrap_err_unchecked() });
+                    return Err(unsafe {
+                        let err = r.unwrap_err_unchecked();
+                        log::warn!("forward error {}", err);
+                        err
+                    });
                 }
             }
         })
