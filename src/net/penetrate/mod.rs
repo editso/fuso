@@ -24,7 +24,7 @@ use crate::{
     protocol::{AsyncRecvPacket, AsyncSendPacket, Bind, Message, ToPacket, TryToMessage},
     ready,
     service::{Factory, ServerFactory},
-    Addr, Socket, Stream,
+    Socket, Stream,
 };
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
@@ -309,58 +309,60 @@ where
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<crate::Result<Self::Stream>> {
-        let mut status = Poll::Pending;
+        let mut futures = std::mem::replace(&mut self.futures, Default::default());
 
-        match Pin::new(&mut self.accepter).poll_accept(cx)? {
-            Poll::Pending => {}
-            Poll::Ready(stream) => {
-                let future = self.async_handle(stream);
-                self.futures.push(future);
+        // 至少进行一次轮询，
+        // accept如果就绪后没有再次poll，将会导致对端连接卡顿，甚至最坏的情况下可能能无法建议连接
+        let mut poll_accepter = true;
+
+        while poll_accepter {
+            poll_accepter = match Pin::new(&mut self.accepter).poll_accept(cx)? {
+                Poll::Pending => false,
+                Poll::Ready(stream) => {
+                    futures.push(self.async_handle(stream));
+                    true
+                }
+            };
+
+            while let Some(mut future) = futures.pop() {
+                match Pin::new(&mut future).poll(cx) {
+                    Poll::Pending => {
+                        self.futures.push(future);
+                    }
+                    Poll::Ready(Ok(State::Map(s1, s2))) => {
+                        self.futures.extend(futures);
+                        return Poll::Ready(Ok::<_, crate::Error>(PenetrateOutcome::Map(s1, s2)));
+                    }
+                    Poll::Ready(Ok(State::Customize(fut))) => {
+                        self.futures.extend(futures);
+                        return Poll::Ready(Ok::<_, crate::Error>(PenetrateOutcome::Customize(
+                            fut,
+                        )));
+                    }
+                    Poll::Ready(Ok(State::Stop)) => {
+                        log::warn!("client closes connection");
+                        return Poll::Ready(Err(crate::error::Kind::Channel.into()));
+                    }
+                    Poll::Ready(Ok(State::Error(e))) => {
+                        log::warn!("client error {}", e);
+                        return Poll::Ready(Err(e));
+                    }
+                    Poll::Ready(Ok(State::Close(_))) => {
+                        log::warn!("Peer is closed");
+                    }
+                    Poll::Ready(Ok(State::Transferred)) => {
+                        log::warn!("Transferred");
+                    }
+                    Poll::Ready(Err(e)) => {
+                        log::warn!("encountered other errors {}", e);
+                    }
+                }
             }
         }
 
-        let mut futures = Vec::new();
-        while let Some(mut future) = self.futures.pop() {
-            match Pin::new(&mut future).poll(cx) {
-                Poll::Pending => futures.push(future),
-                Poll::Ready(Ok(State::Map(s1, s2))) => {
-                    status = Poll::Ready(Ok::<_, crate::Error>(PenetrateOutcome::Map(s1, s2)));
-                    break;
-                }
-                Poll::Ready(Ok(State::Customize(fut))) => {
-                    status = Poll::Ready(Ok::<_, crate::Error>(PenetrateOutcome::Customize(fut)));
-                    break;
-                }
-                Poll::Ready(Ok(State::Stop)) => {
-                    log::warn!("client closes connection");
-                    return Poll::Ready(Err(crate::error::Kind::Channel.into()));
-                }
-                Poll::Ready(Ok(State::Error(e))) => {
-                    log::warn!("client error {}", e);
-                    return Poll::Ready(Err(e));
-                }
-                Poll::Ready(Ok(State::Close(_))) => {
-                    log::warn!("Peer is closed");
-                }
-                Poll::Ready(Ok(State::Transferred)) => {
-                    log::warn!("Transferred");
-                }
-                Poll::Ready(Err(e)) => {
-                    log::warn!("encountered other errors {}", e);
-                }
-            }
-        }
-
-        self.futures.extend(futures);
-
-        log::debug!(
-            "the remaining {} futures are not completed",
-            self.futures.len()
-        );
-        status
+        Poll::Pending
     }
 }
-
 
 impl<SF, CF, A, S> Factory<(ServerFactory<SF, CF>, S)> for PenetrateFactory<S>
 where
@@ -368,7 +370,6 @@ where
     CF: Factory<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
     A: Accepter<Stream = S> + Send + Unpin + 'static,
     S: Stream + Sync + Send + 'static,
-    
 {
     type Output = BoxedFuture<PenetrateGenerator<S, A>>;
 
@@ -392,7 +393,8 @@ where
 
             match accepter {
                 Err(e) => {
-                    let message = Message::Bind(Bind::Failed(socket, e.to_string())).to_packet_vec();
+                    let message =
+                        Message::Bind(Bind::Failed(socket, e.to_string())).to_packet_vec();
 
                     log::warn!("failed to create listener err={}", e);
 

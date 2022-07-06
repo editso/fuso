@@ -55,32 +55,32 @@ impl Future for Join {
     }
 }
 
-impl<O1, O2> Future for JoinOutput<O1, O2>
+impl<O1, O2> Future for JoinOutput<crate::Result<O1>, crate::Result<O2>>
 where
     O1: Unpin + 'static,
     O2: Unpin + 'static,
 {
-    type Output = (O1, O2);
+    type Output = crate::Result<(O1, O2)>;
 
     fn poll(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
         loop {
-            
             match self.fut1.take() {
                 None if self.fut2.is_none() => break,
                 Some(mut fut) => match Pin::new(&mut fut).poll(cx) {
-                    std::task::Poll::Pending => {
+                    Poll::Pending => {
                         drop(std::mem::replace(&mut self.fut1, Some(fut)));
                         if self.fut2.is_none() {
                             break;
                         }
                     }
-                    std::task::Poll::Ready(r) => {
-                        log::debug!("[join::output] future 1 ready ");
-                        drop(std::mem::replace(&mut self.result.0, Some(r)))
+                    Poll::Ready(Err(e)) => {
+                        // 都出错了还 poll？？？，退出！
+                        return Poll::Ready(Err(e));
                     }
+                    Poll::Ready(r) => drop(std::mem::replace(&mut self.result.0, Some(r))),
                 },
                 _ => {}
             }
@@ -92,8 +92,11 @@ where
                         drop(std::mem::replace(&mut self.fut2, Some(fut)));
                         break;
                     }
+                    Poll::Ready(Err(e)) => {
+                        // 都出错了还 poll？？？，退出！
+                        return Poll::Ready(Err(e));
+                    }
                     Poll::Ready(r) => {
-                        log::debug!("[join::output] future 2 ready ");
                         drop(std::mem::replace(&mut self.result.1, Some(r)));
                     }
                 },
@@ -102,9 +105,10 @@ where
         }
 
         if self.fut1.is_none() && self.fut2.is_none() {
-            let r1 = unsafe { self.result.0.take().unwrap_unchecked() };
-            let r2 = unsafe { self.result.1.take().unwrap_unchecked() };
-            Poll::Ready((r1, r2))
+            // unwrap_unchecked真丑，考虑下次更换
+            let r1 = unsafe { self.result.0.take().unwrap_unchecked().unwrap_unchecked() };
+            let r2 = unsafe { self.result.1.take().unwrap_unchecked().unwrap_unchecked() };
+            Poll::Ready(Ok((r1, r2)))
         } else {
             Poll::Pending
         }

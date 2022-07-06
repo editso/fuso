@@ -8,7 +8,7 @@ use crate::{
     factory::{FactoryTransfer, FactoryWrapper},
     generator::{Generator, GeneratorEx},
     service::{ClientFactory, Factory},
-    Addr, Executor, Fuso, Serve, Socket, Stream,
+    Executor, Fuso, Serve, Socket, Stream,
 };
 
 pub type BoxedFuture<T> = Pin<Box<dyn Future<Output = crate::Result<T>> + Send + 'static>>;
@@ -76,6 +76,7 @@ where
                 match generate.next().await {
                     Ok(None) => break,
                     Ok(Some(fut)) => {
+                        log::debug!("spawn task");
                         executor.spawn(fut);
                     }
                     Err(e) => {

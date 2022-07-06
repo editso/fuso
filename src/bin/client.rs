@@ -23,7 +23,7 @@ fn main() {
                         socket: {
                             (
                                 Socket::Tcp(([0, 0, 0, 0], 9999).into()),
-                                Socket::Tcp(([127, 0, 0, 1], 8080).into()),
+                                Socket::Tcp(([127, 0, 0, 1], 22).into()),
                             )
                         },
                     },

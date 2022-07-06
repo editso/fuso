@@ -137,9 +137,14 @@ pub fn builder_client_with_tokio(
 impl Factory<Socket> for TokioClientForwardConnector {
     type Output = BoxedFuture<Outcome<FusoStream>>;
 
-    fn call(&self, arg: Socket) -> Self::Output {
+    fn call(&self, socket: Socket) -> Self::Output {
         Box::pin(async move {
-            Ok({ Outcome::Stream(TcpStream::connect("127.0.0.1:8080").await?.transfer()) })
+            match socket {
+                Socket::Tcp(addr) => Ok(Outcome::Stream(
+                    TcpStream::connect(format!("{}", addr)).await?.transfer(),
+                )),
+                _ => unimplemented!(),
+            }
         })
     }
 }

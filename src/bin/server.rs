@@ -24,7 +24,7 @@ async fn main() -> fuso::Result<()> {
         .with_penetrate()
         .read_timeout(None)
         .max_wait_time(Duration::from_secs(5))
-        .heartbeat_timeout(Duration::from_secs(60))
+        .heartbeat_timeout(Duration::from_secs(10))
         .with_unpacker_adapter_mode()
         // .append_unpacker_adapter(SocksUnpacker)
         .append_unpacker_adapter(NormalUnpacker)

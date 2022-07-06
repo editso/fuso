@@ -82,6 +82,8 @@ where
                     return Ok(());
                 }
 
+                log::debug!("forward {}bytes data", n);
+
                 let r = writer.write_all(&buf[..n]).await;
 
                 if r.is_err() {
@@ -95,7 +97,6 @@ where
         futures: vec![copy(s1_reader, s2_writer), copy(s2_reader, s1_writer)],
     }
 }
-
 
 impl<T> Deref for Inner<T> {
     type Target = std::sync::Mutex<T>;

@@ -1,4 +1,3 @@
-use std::net::IpAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,47 +16,13 @@ use crate::{io, join};
 use super::BoxedFuture;
 
 macro_rules! async_connect {
-    (local $writer: expr, $connector: expr, $id: expr, $socket: expr) => {{
+    ($writer: expr, $connector: expr, $id: expr, $socket: expr) => {{
+        let socket = $socket.clone();
         let mut writer = $writer.clone();
         async move {
-            log::debug!("try to connect to {}", $socket);
-            match $connector.call($socket).await {
+            log::debug!("try to connect to {}", socket);
+            match $connector.call(socket).await {
                 Ok(ok) => Ok(ok),
-                Err(err) => {
-                    let message = Message::MapError($id, err.to_string()).to_packet_vec();
-                    return match writer.send_packet(&message).await {
-                        Ok(_) => Err(err),
-                        Err(err) => Err(err),
-                    };
-                }
-            }
-        }
-    }};
-    (remote $writer: expr, $connector: expr, $id: expr, $remote: expr, $local: expr) => {{
-        let remote = $remote.clone();
-        let local = $local.clone();
-        let mut writer = $writer.clone();
-        
-        async move {
-            log::debug!("try to connect to {}", remote);
-            match $connector.call($remote).await {
-                Ok(mut remote) => {
-                    let message = Message::Map($id, local).to_packet_vec();
-                    let remote = match remote.send_packet(&message).await {
-                        Ok(()) => Ok(remote),
-                        Err(err) => {
-                            let message = Message::MapError($id, err.to_string()).to_packet_vec();
-                            return match writer.send_packet(&message).await {
-                                Ok(_) => Err(err),
-                                Err(err) => Err(err),
-                            };
-                        }
-                    };
-                    match remote {
-                        Ok(remote) => Ok(remote),
-                        Err(err) => Err(err),
-                    }
-                }
                 Err(err) => {
                     let message = Message::MapError($id, err.to_string()).to_packet_vec();
                     return match writer.send_packet(&message).await {
@@ -183,8 +148,8 @@ where
     ) -> Self {
         let (reader, writer) = io::split(conn);
 
-        let fut1 = Box::pin(Self::async_server_message(reader.clone()));
-        let fut2 = Box::pin(Self::async_heartbeat(writer.clone()));
+        let fut1 = Box::pin(Self::register_server_handle(reader.clone()));
+        let fut2 = Box::pin(Self::guard_server_heartbeat(writer.clone()));
 
         Self {
             socket,
@@ -196,7 +161,7 @@ where
         }
     }
 
-    async fn async_heartbeat(mut writer: WriteHalf<S>) -> crate::Result<State> {
+    async fn guard_server_heartbeat(mut writer: WriteHalf<S>) -> crate::Result<State> {
         let ping = Message::Ping.to_packet_vec();
 
         loop {
@@ -209,7 +174,7 @@ where
         }
     }
 
-    async fn async_server_message(mut reader: ReadHalf<S>) -> crate::Result<State> {
+    async fn register_server_handle(mut reader: ReadHalf<S>) -> crate::Result<State> {
         loop {
             let message = match reader.recv_packet().await {
                 Ok(packet) => packet.try_message(),
@@ -218,7 +183,7 @@ where
 
             if let Err(e) = message.as_ref() {
                 log::warn!("server error {}", e);
-                return Err(unsafe { message.unwrap_err_unchecked() });
+                return Ok(State::Error(unsafe { message.unwrap_err_unchecked() }));
             }
 
             let message = unsafe { message.unwrap_unchecked() };
@@ -246,12 +211,11 @@ where
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context,
     ) -> std::task::Poll<crate::Result<Self::Output>> {
-        let mut futures = Vec::new();
-        let mut poll_status = Poll::Pending;
+        let mut futures = std::mem::replace(&mut self.futures, Default::default());
 
-        while let Some(mut future) = self.futures.pop() {
+        while let Some(mut future) = futures.pop() {
             match Pin::new(&mut future).poll(cx) {
-                Poll::Pending => futures.push(future),
+                Poll::Pending => self.futures.push(future),
                 Poll::Ready(Ok(State::Error(e))) => {
                     log::warn!("server stops talking");
                     return Poll::Ready(Err(e));
@@ -264,30 +228,41 @@ where
                     let s2_connector = self.connector_factory.clone();
                     let writer = self.writer.clone();
 
-                    let server_fut =
-                        { async_connect!(remote writer, s1_connector, id, s1_socket, s2_socket) };
-                        
-                    let client_fut = async_connect!(local writer, s2_connector, id, s2_socket);
+                    let server_fut = async_connect!(writer, s1_connector, id, s1_socket);
+                    let client_fut = async_connect!(writer, s2_connector, id, s2_socket);
 
                     let future = async move {
-                        let (s1, s2) = join::join_output(server_fut, client_fut).await;
+                        let mut writer = writer;
+                        let (mut s1, s2) = join::join_output(server_fut, client_fut).await?;
+                        let message = Message::Map(id, s2_socket).to_packet_vec();
+
+                        if let Err(e) = s1.send_packet(&message).await {
+                            drop(s2);
+                            let message = Message::MapError(id, e.to_string()).to_packet_vec();
+                            if let Err(e) = writer.send_packet(&message).await {
+                                return Ok(State::Error(e));
+                            } else {
+                                return Err(e);
+                            }
+                        }
+
                         Ok(State::Ready({
-                            match s2? {
-                                Outcome::Stream(s2) => Box::pin(io::forward(s1?, s2)),
-                                Outcome::Customize(s2) => s2.call(s1?),
+                            match s2 {
+                                Outcome::Stream(s2) => Box::pin(io::forward(s1, s2)),
+                                Outcome::Customize(s2) => s2.call(s1),
                             }
                         }))
                     };
 
                     let fut1 = Box::pin(future);
-                    let fut2 = Box::pin(Self::async_server_message(self.reader.clone()));
+                    let fut2 = Box::pin(Self::register_server_handle(self.reader.clone()));
 
-                    self.futures.push(fut1);
-                    self.futures.push(fut2);
+                    futures.push(fut1);
+                    futures.push(fut2);
                 }
                 Poll::Ready(Ok(State::Ready(fut))) => {
-                    poll_status = Poll::Ready(Ok(Some(fut)));
-                    break;
+                    self.futures.extend(futures);
+                    return Poll::Ready(Ok(Some(fut)));
                 }
                 Poll::Ready(Err(e)) => {
                     log::warn!("{:?}", e);
@@ -295,8 +270,8 @@ where
             }
         }
 
-        self.futures.extend(futures);
+        log::debug!("rem {}", self.futures.len());
 
-        poll_status
+        Poll::Pending
     }
 }
