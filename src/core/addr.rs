@@ -1,8 +1,7 @@
 use std::{
     fmt::{Debug, Display},
-    hint,
     net::{IpAddr, SocketAddr},
-    ops::{Add, Deref, DerefMut},
+    ops::{Deref, DerefMut},
     str::FromStr,
 };
 
@@ -100,10 +99,10 @@ impl Display for Addr {
 impl Display for Socket {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let fmt = match self {
-            Socket::Udp(udp) => format!("<socket@udp({})>", udp),
-            Socket::Tcp(tcp) => format!("<socket@tcp({:?})>", tcp),
-            Socket::Kcp(kcp) => format!("<socket@kcp({:?})>", kcp),
-            Socket::Quic(quic) => format!("<socket@quic({:?})>", quic),
+            Socket::Udp(udp) => format!("<udp({})>", udp),
+            Socket::Tcp(tcp) => format!("<tcp({})>", tcp),
+            Socket::Kcp(kcp) => format!("<kcp({})>", kcp),
+            Socket::Quic(quic) => format!("<quic({})>", quic),
         };
 
         write!(f, "{}", fmt)
@@ -231,3 +230,5 @@ impl Default for Socket {
         Self::Tcp(([0, 0, 0, 0], 0).into())
     }
 }
+
+

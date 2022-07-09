@@ -5,10 +5,9 @@ use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 pub use builder::*;
 
 use crate::{
-    factory::{FactoryTransfer, FactoryWrapper},
     generator::{Generator, GeneratorEx},
-    service::{ClientFactory, Factory},
-    Executor, Fuso, Serve, Socket, Stream,
+    time, ClientFactory, Executor, Factory, FactoryTransfer, FactoryWrapper, Fuso, Serve, Socket,
+    Stream,
 };
 
 pub type BoxedFuture<T> = Pin<Box<dyn Future<Output = crate::Result<T>> + Send + 'static>>;
@@ -46,7 +45,7 @@ where
                 Ok(stream) => stream,
                 Err(e) => {
                     log::warn!("{}", e);
-                    tokio::time::sleep(Duration::from_secs(10)).await;
+                    time::sleep(Duration::from_secs(2)).await;
                     continue;
                 }
             };

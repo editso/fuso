@@ -1,15 +1,12 @@
-use std::{sync::Arc, time::Duration, pin::Pin};
+use std::{pin::Pin, sync::Arc, time::Duration};
 
 use crate::{
-    factory::FactoryWrapper,
     guard::Fallback,
-    listener::Accepter,
     server::{Server, ServerBuilder},
-    service::Factory,
-    Executor, Fuso, Socket, Stream,
+    Accepter, Executor, Factory, FactoryWrapper, Fuso, Socket, Stream,
 };
 
-use super::server::{PenetrateFactory, Peer, Config};
+use super::server::{Config, Peer, PenetrateFactory};
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
 
@@ -73,7 +70,7 @@ where
         self
     }
 
-    pub fn build<F>(self, adapter: F) -> Fuso<Server<E, PenetrateFactory<S>, SF, CF, S>>
+    pub fn build<F>(self, unpacker: F) -> Fuso<Server<E, PenetrateFactory<S>, SF, CF, S>>
     where
         F: Factory<Fallback<S>, Output = BoxedFuture<Peer<Fallback<S>>>> + Send + Sync + 'static,
     {
@@ -85,7 +82,7 @@ where
                 write_timeout: self.write_timeout,
                 fallback_strict_mode: self.fallback_strict_mode,
             },
-            unpacker: Arc::new(FactoryWrapper::wrap(adapter)),
+            unpacker: Arc::new(FactoryWrapper::wrap(unpacker)),
         })
     }
 }

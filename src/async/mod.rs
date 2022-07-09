@@ -4,6 +4,7 @@ pub mod join;
 pub mod r#macro;
 pub mod select;
 pub mod time;
+pub mod sync;
 
 use std::{
     future::Future,
@@ -15,7 +16,7 @@ use std::{
 pub type BoxedFuture<'lifetime, T> = Pin<Box<dyn Future<Output = T> + 'lifetime>>;
 
 #[cfg(feature = "fuso-rt-smol")]
-mod io {
+mod smol_io {
     pub use smol::io::{AsyncRead, AsyncWrite};
 }
 
@@ -134,7 +135,7 @@ where
 #[cfg(any(feature = "fuso-rt-smol", feature = "fuso-rt-custom"))]
 impl<T> AsyncWrite for T
 where
-    T: io::AsyncWrite,
+    T: smol_io::AsyncWrite,
 {
     #[inline]
     fn poll_write(
@@ -159,7 +160,7 @@ where
 #[cfg(any(feature = "fuso-rt-smol", feature = "fuso-rt-custom"))]
 impl<T> AsyncRead for T
 where
-    T: io::AsyncRead,
+    T: smol_io::AsyncRead,
 {
     #[inline]
     fn poll_read(

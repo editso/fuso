@@ -1,10 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    factory::FactoryTransfer,
-    generator::Generator,
-    service::{ClientFactory, Factory},
-    Addr, Executor, Fuso, Socket, Stream,
+    generator::Generator, ClientFactory, Executor, Factory, FactoryTransfer, Fuso, Socket, Stream,
 };
 
 use super::{BoxedFuture, Client};

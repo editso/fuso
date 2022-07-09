@@ -1,34 +1,40 @@
-pub mod tun;
+use std::{net::SocketAddr, pin::Pin, sync::Arc, task::Poll};
 
-use std::{
-    net::SocketAddr,
-    ops::{Deref, DerefMut},
-    pin::Pin,
-    task::Poll,
+use futures::Future;
+use smol::net::{AsyncToSocketAddrs, TcpStream};
+
+use crate::{
+    client::{ClientBuilder, Mapper},
+    server::ServerBuilder,
+    Accepter, ClientFactory, Executor, Factory, FusoStream, ServerFactory, Socket, Transfer,
 };
 
-use futures::{Future, FutureExt};
-use smol::net::{AsyncToSocketAddrs, Incoming, TcpStream};
-
-use crate::{listener::Accepter, AsyncRead, AsyncWrite, Executor};
+type BoxedFuture<T> = Pin<Box<dyn Future<Output = crate::Result<T>> + Send + 'static>>;
 
 #[derive(Default, Clone)]
 pub struct SmolExecutor;
+pub struct SmolListener;
+pub struct SmolAccepter;
 
-pub struct TcpListener {
-    inner: smol::net::TcpListener,
-    fut: Option<Pin<Box<dyn Future<Output = std::io::Result<TcpStream>> + Send + 'static>>>,
+pub struct SmolPenetrateConnector;
+
+pub struct SmolTcpListener {
+    tcp: smol::net::TcpListener,
+    accept_fut: Option<BoxedFuture<(TcpStream, SocketAddr)>>,
 }
 
-impl TcpListener {
+pub struct SmolConnector;
+
+impl SmolTcpListener {
     pub async fn bind<A>(addr: A) -> std::io::Result<Self>
     where
         A: AsyncToSocketAddrs,
     {
         let tcp = smol::net::TcpListener::bind(addr).await?;
+
         Ok(Self {
-            inner: tcp,
-            fut: None,
+            tcp,
+            accept_fut: None,
         })
     }
 }
@@ -43,58 +49,108 @@ impl Executor for SmolExecutor {
     }
 }
 
-// impl<S> FusoServer<S, SmolExecutor>
-// where
-//     S: AsyncWrite + AsyncRead + Unpin + Send + 'static,
-// {
-//     pub fn new() -> Self {
-//         Self {
-//             executor: SmolExecutor,
-//             services: Default::default(),
-//         }
-//     }
-// }
+impl Factory<Socket> for SmolAccepter {
+    type Output = BoxedFuture<SmolTcpListener>;
 
-// impl<'a> Accepter for TcpListener {
-//     type Stream = smol::net::TcpStream;
+    fn call(&self, socket: Socket) -> Self::Output {
+        Box::pin(async move {
+            match socket {
+                Socket::Tcp(addr) => SmolTcpListener::bind(format!("{}", addr))
+                    .await
+                    .map_err(Into::into),
+                _ => todo!(),
+            }
+        })
+    }
+}
 
-//     fn poll_accept(
-//         mut self: std::pin::Pin<&mut Self>,
-//         cx: &mut std::task::Context<'_>,
-//     ) -> std::task::Poll<crate::Result<Self::Stream>> {
-//         let mut fut = if let Some(fut) = self.fut.take() {
-//             fut
-//         } else {
-//             let tcp = self.inner.clone();
-//             Box::pin(async move {
-//                 let tcp = tcp.accept().await;
-//                 match tcp {
-//                     Ok((tcp, _)) => Ok(tcp),
-//                     Err(e) => Err(e),
-//                 }
-//             })
-//         };
+impl Accepter for SmolTcpListener {
+    type Stream = FusoStream;
 
-//         match fut.poll_unpin(cx)? {
-//             Poll::Ready(r) => Poll::Ready(Ok(r)),
-//             Poll::Pending => {
-//                 drop(std::mem::replace(&mut self.fut, Some(fut)));
-//                 Poll::Pending
-//             }
-//         }
-//     }
-// }
+    fn poll_accept(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<crate::Result<Self::Stream>> {
+        let mut fut = match self.accept_fut.take() {
+            Some(fut) => fut,
+            None => {
+                let tcp = self.tcp.clone();
+                Box::pin(async move { tcp.accept().await.map_err(Into::into) })
+            }
+        };
 
-// impl Deref for TcpListener {
-//     type Target = smol::net::TcpListener;
+        match Pin::new(&mut fut).poll(cx) {
+            Poll::Ready(stream) => Poll::Ready(stream.map(|(stream, addr)| {
+                log::debug!("accept connection from {}", addr);
+                stream.transfer()
+            })),
+            Poll::Pending => {
+                drop(std::mem::replace(&mut self.accept_fut, Some(fut)));
+                Poll::Pending
+            }
+        }
+    }
+}
 
-//     fn deref(&self) -> &Self::Target {
-//         &self.inner
-//     }
-// }
+impl Factory<Socket> for SmolConnector {
+    type Output = BoxedFuture<FusoStream>;
+    fn call(&self, socket: Socket) -> Self::Output {
+        Box::pin(async move {
+            match socket {
+                Socket::Udp(_) => todo!(),
+                Socket::Tcp(addr) => Ok(TcpStream::connect(format!("{}", addr)).await?.transfer()),
+                Socket::Kcp(_) => todo!(),
+                Socket::Quic(_) => todo!(),
+            }
+        })
+    }
+}
 
-// impl DerefMut for TcpListener {
-//     fn deref_mut(&mut self) -> &mut Self::Target {
-//         &mut self.inner
-//     }
-// }
+impl Factory<Socket> for SmolPenetrateConnector {
+    type Output = BoxedFuture<Mapper<FusoStream>>;
+
+    fn call(&self, socket: Socket) -> Self::Output {
+        Box::pin(async move {
+            match socket {
+                Socket::Tcp(addr) => Ok(Mapper::Forward(
+                    TcpStream::connect(format!("{}", addr)).await?.transfer(),
+                )),
+                _ => unimplemented!(),
+            }
+        })
+    }
+}
+
+impl ServerFactory<SmolAccepter, SmolConnector> {
+    pub fn with_smol() -> Self {
+        Self {
+            accepter_factory: Arc::new(SmolAccepter),
+            connector_factory: Arc::new(SmolConnector),
+        }
+    }
+}
+
+impl ClientFactory<SmolConnector> {
+    pub fn with_smol() -> Self {
+        Self {
+            connect_factory: Arc::new(SmolConnector),
+        }
+    }
+}
+
+pub fn builder_server_with_smol(
+) -> ServerBuilder<SmolExecutor, SmolAccepter, SmolConnector, FusoStream> {
+    ServerBuilder {
+        executor: SmolExecutor,
+        handshake: None,
+        server_factory: ServerFactory::with_smol(),
+    }
+}
+
+pub fn builder_client_with_smol() -> ClientBuilder<SmolExecutor, SmolConnector, FusoStream> {
+    ClientBuilder {
+        executor: SmolExecutor,
+        handshake: None,
+        client_factory: ClientFactory::with_smol(),
+    }
+}

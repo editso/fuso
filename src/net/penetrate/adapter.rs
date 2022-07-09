@@ -1,8 +1,8 @@
 use std::{pin::Pin, sync::Arc};
 
 use crate::{
-    factory::FactoryWrapper, guard::Fallback, listener::Accepter, server::Server, service::Factory,
-    Executor, Fuso, Socket, Stream,
+    guard::Fallback, server::Server, Accepter, Executor, Factory, FactoryWrapper, Fuso, Socket,
+    Stream,
 };
 
 use super::{
@@ -20,8 +20,8 @@ pub enum Adapter<O> {
 pub struct PenetrateAdapter<A>(Arc<Vec<A>>);
 
 pub struct PenetrateAdapterBuilder<E, SF, CF, S> {
-   pub(crate) adapters: Vec<FactoryWrapper<Fallback<S>, Adapter<S>>>,
-   pub(crate) penetrate_builder: PenetrateBuilder<E, SF, CF, S>,
+    pub(crate) adapters: Vec<FactoryWrapper<Fallback<S>, Adapter<S>>>,
+    pub(crate) penetrate_builder: PenetrateBuilder<E, SF, CF, S>,
 }
 
 impl<E, SF, CF, S> PenetrateBuilder<E, SF, CF, S> {

@@ -19,15 +19,5 @@ pub use crate::runtime::*;
 
 #[cfg(test)]
 mod test{
-    use crate::protocol::make_packet;
-
-
-    #[test]
-    fn test_ptr(){
-        
-        let a = Ok::<_,std::io::Error>(1);;
-        unsafe{
-            a.unwrap_err_unchecked();
-        }
-    }
+    
 }

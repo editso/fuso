@@ -3,6 +3,7 @@ use std::rc::Rc;
 use std::{future::Future, pin::Pin, task::Poll, time::Duration};
 
 use crate::ext::AsyncWriteExt;
+use crate::time;
 use crate::{ext::AsyncReadExt, AsyncRead, AsyncWrite, BoxedFuture};
 
 pub struct Timer<T> {
@@ -25,7 +26,6 @@ where
     }
 
     pub fn new(target: T, read_timeout: Option<Duration>, write_timeout: Option<Duration>) -> Self {
-
         Self {
             target: Rc::new(RefCell::new(target)),
             read_timeout,
@@ -129,13 +129,14 @@ where
                     }
                 };
 
-                match async_timer::timed(target.write(buf), timeout).await {
-                    Ok(ready) => ready,
-                    Err(e) => Err({
-                        log::warn!("[timer] write timeout {}", e);
-                        std::io::ErrorKind::TimedOut.into()
-                    }),
-                }
+                // match time::wait_for(timeout, target.write(buf)).await {
+                //     Ok(ready) => ready,
+                //     Err(e) => Err({
+                //         log::warn!("[timer] write timeout {}", e);
+                //         std::io::ErrorKind::TimedOut.into()
+                //     }),
+                // }
+                unimplemented!()
             }),
         };
 
@@ -199,13 +200,14 @@ where
                     }
                 };
 
-                match async_timer::timed(target.read(buf), timeout).await {
-                    Ok(ready) => ready,
-                    Err(e) => Err({
-                        log::warn!("[timer] read timeout {}", e);
-                        std::io::ErrorKind::TimedOut.into()
-                    }),
-                }
+                // match time::wait_for(timeout, target.read(buf)).await {
+                //     Ok(ready) => ready,
+                //     Err(e) => Err({
+                //         log::warn!("[timer] read timeout {}", e);
+                //         std::io::ErrorKind::TimedOut.into()
+                //     }),
+                // }
+                unimplemented!()
             }),
         };
 

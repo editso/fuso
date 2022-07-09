@@ -1,9 +1,3 @@
-use fuso::{service::Transfer, FusoStream};
-
-async fn t() -> impl Transfer<Output = FusoStream> {
-    tokio::net::TcpStream::connect("").await.unwrap()
-}
-
 #[cfg(feature = "fuso-rt-tokio")]
 #[tokio::main]
 async fn main() -> fuso::Result<()> {
@@ -44,7 +38,24 @@ async fn main() {}
 async fn main() {}
 
 #[cfg(feature = "fuso-rt-smol")]
-fn main() -> fuso::Result<()> {}
+fn main() -> fuso::Result<()> {
+    use fuso::{Handshake, Socket};
 
-#[cfg(feature = "fuso-rt-custom")]
-fn main() {}
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Debug)
+        .default_format()
+        .format_module_path(false)
+        .init();
+
+    smol::block_on(async move {
+        fuso::builder_server_with_smol()
+            .with_handshake(Handshake)
+            .with_penetrate()
+            .with_adapter_mode()
+            .use_normal()
+            .build()
+            .bind(Socket::Tcp(([0, 0, 0, 0], 8888).into()))
+            .run()
+            .await
+    })
+}

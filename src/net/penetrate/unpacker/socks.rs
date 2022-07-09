@@ -2,13 +2,13 @@ use std::pin::Pin;
 
 use crate::{
     error,
-    factory::FactoryWrapper,
+    FactoryWrapper,
     guard::Fallback,
     penetrate::{
         server::{Peer, Visitor},
         Adapter,
     },
-    service::Factory,
+    Factory,
     Socket, Stream,
 };
 
@@ -22,6 +22,7 @@ where
     S: Stream + Send + 'static,
 {
     type Output = BoxedFuture<Adapter<S>>;
+
     fn call(&self, stream: Fallback<S>) -> Self::Output {
         Box::pin(async move {
             Ok(Adapter::Accept(Peer::Visitor(

@@ -4,22 +4,19 @@ use tokio::net::{TcpListener, TcpStream};
 
 use crate::{
     client::{self, Mapper},
-    listener::Accepter,
-    server,
-    service::{self, Factory, ServerFactory, Transfer},
-    Addr, Executor, FusoStream, Socket,
+    server, Accepter, ClientFactory, Executor, Factory, FusoStream, ServerFactory, Socket,
+    Transfer,
 };
 
 type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>> + Send + 'static>>;
 
 #[derive(Clone, Copy)]
 pub struct TokioExecutor;
-
 pub struct TokioTcpListener(tokio::net::TcpListener);
 pub struct TokioAccepter;
 pub struct TokioConnector;
 pub struct TokioClientConnector;
-pub struct TokioClientForwardConnector;
+pub struct TokioPenetrateConnector;
 
 impl Executor for TokioExecutor {
     fn spawn<F, O>(&self, fut: F)
@@ -60,7 +57,7 @@ impl Accepter for TokioTcpListener {
             Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok((tcp, addr))) => {
-                log::debug!("[tokio::tcp] accept connection from {}", addr);
+                log::debug!("accept connection from {}", addr);
                 Poll::Ready(Ok(tcp.transfer()))
             }
         }
@@ -68,28 +65,6 @@ impl Accepter for TokioTcpListener {
 }
 
 impl Factory<Socket> for TokioConnector {
-    type Output = BoxedFuture<FusoStream>;
-
-    fn call(&self, cfg: Socket) -> Self::Output {
-        Box::pin(async move {
-            tokio::net::TcpStream::connect(format!("{}", cfg))
-                .await
-                .map(Transfer::transfer)
-                .map_err(Into::into)
-        })
-    }
-}
-
-impl ServerFactory<TokioAccepter, TokioConnector> {
-    pub fn with_tokio() -> Self {
-        ServerFactory {
-            accepter_factory: Arc::new(TokioAccepter),
-            connector_factory: Arc::new(TokioConnector),
-        }
-    }
-}
-
-impl Factory<Socket> for TokioClientConnector {
     type Output = BoxedFuture<FusoStream>;
 
     fn call(&self, socket: Socket) -> Self::Output {
@@ -108,9 +83,20 @@ impl Factory<Socket> for TokioClientConnector {
     }
 }
 
-impl From<tokio::net::TcpStream> for FusoStream {
-    fn from(t: tokio::net::TcpStream) -> Self {
-        Self::new(t)
+impl ServerFactory<TokioAccepter, TokioConnector> {
+    pub fn with_tokio() -> Self {
+        ServerFactory {
+            accepter_factory: Arc::new(TokioAccepter),
+            connector_factory: Arc::new(TokioConnector),
+        }
+    }
+}
+
+impl ClientFactory<TokioConnector> {
+    pub fn with_tokio() -> Self {
+        ClientFactory {
+            connect_factory: Arc::new(TokioConnector),
+        }
     }
 }
 
@@ -124,17 +110,15 @@ pub fn builder_server_with_tokio(
 }
 
 pub fn builder_client_with_tokio(
-) -> client::ClientBuilder<TokioExecutor, TokioClientConnector, FusoStream> {
+) -> client::ClientBuilder<TokioExecutor, TokioConnector, FusoStream> {
     client::ClientBuilder {
         executor: TokioExecutor,
         handshake: None,
-        client_factory: service::ClientFactory {
-            connect_factory: Arc::new(TokioClientConnector),
-        },
+        client_factory: ClientFactory::with_tokio(),
     }
 }
 
-impl Factory<Socket> for TokioClientForwardConnector {
+impl Factory<Socket> for TokioPenetrateConnector {
     type Output = BoxedFuture<Mapper<FusoStream>>;
 
     fn call(&self, socket: Socket) -> Self::Output {

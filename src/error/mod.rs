@@ -143,11 +143,7 @@ impl From<PacketErr> for Error {
     }
 }
 
-impl<F, T> From<async_timer::Expired<F, T>> for Error {
-    fn from(e: async_timer::Expired<F, T>) -> Self {
-        Kind::Channel.into()
-    }
-}
+
 
 #[cfg(feature = "fuso-rt-smol")]
 impl From<std::time::Instant> for Error {

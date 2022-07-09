@@ -3,7 +3,7 @@ mod normal;
 mod socks;
 
 use super::{server::Peer, PenetrateAdapterBuilder};
-use crate::{factory::FactoryWrapper, guard::Fallback, Stream};
+use crate::{FactoryWrapper, guard::Fallback, Stream};
 
 pub type Unpacker<S> = FactoryWrapper<Fallback<S>, Peer<Fallback<S>>>;
 
@@ -18,6 +18,7 @@ where
     }
 
     pub fn use_socks(mut self) -> Self {
+        
         self
     }
 }

@@ -8,10 +8,10 @@ use crate::{
     client::Mapper,
     generator::Generator,
     protocol::{AsyncRecvPacket, AsyncSendPacket, Bind, Message, ToPacket, TryToMessage},
-    service::{ClientFactory, Factory},
-    Kind, Socket, Stream,
+    Kind, Socket, Stream, {ClientFactory, Factory},
 };
-use crate::{io, join};
+
+use crate::{io, join, time};
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
 
@@ -170,7 +170,7 @@ where
                 return Ok(State::Error(e));
             }
 
-            tokio::time::sleep(Duration::from_secs(10)).await;
+            time::sleep(Duration::from_secs(10)).await;
         }
     }
 

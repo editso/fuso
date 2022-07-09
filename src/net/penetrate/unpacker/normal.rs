@@ -7,13 +7,14 @@ use crate::{
         Adapter,
     },
     protocol::{AsyncRecvPacket, Message, TryToMessage},
-    service::Factory,
+    Factory,
     Socket, Stream,
 };
 
+type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
+
 pub struct NormalUnpacker;
 
-type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
 
 impl<S> Factory<Fallback<S>> for NormalUnpacker
 where

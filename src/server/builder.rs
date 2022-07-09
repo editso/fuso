@@ -1,10 +1,8 @@
 use std::{pin::Pin, sync::Arc};
 
 use crate::{
-    factory::{FactoryChain, FactoryTransfer},
-    generator::Generator,
-    service::{Factory, ServerFactory},
-    Fuso, Stream, Socket,
+    generator::Generator, Factory, FactoryChain, FactoryTransfer, Fuso, ServerFactory, Socket,
+    Stream,
 };
 
 use super::Server;

@@ -5,12 +5,8 @@ use crate::{generator::GeneratorEx, Serve, Socket};
 use std::{pin::Pin, sync::Arc};
 
 use crate::{
-    core::listener::ext::AccepterExt,
-    factory::FactoryTransfer,
-    generator::Generator,
-    listener::Accepter,
-    service::{Factory, ServerFactory},
-    Executor, Fuso, Stream,
+    generator::Generator, Accepter, AccepterExt, Executor, Factory, FactoryTransfer, Fuso,
+    ServerFactory, Stream,
 };
 
 type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>> + Send + 'static>>;

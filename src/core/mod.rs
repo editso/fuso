@@ -1,12 +1,17 @@
+mod factory;
+pub use factory::*;
+
+mod accepter;
+pub use accepter::*;
+
 pub mod addr;
-pub mod connector;
+pub use addr::*;
+
 pub mod encryption;
 pub mod generator;
 pub mod guard;
 pub mod listener;
-pub mod factory;
 pub mod protocol;
-pub mod service;
 
 use std::cell::RefCell;
 use std::pin::Pin;
@@ -17,8 +22,7 @@ use std::future::Future;
 
 use crate::{AsyncRead, AsyncWrite, Stream};
 
-pub use self::addr::*;
-use self::service::Transfer;
+
 
 pub type RefContext = Rc<RefCell<Box<dyn Context + Send>>>;
 
@@ -110,9 +114,9 @@ impl FusoStream {
     }
 }
 
-unsafe impl Sync for FusoStream{}
+unsafe impl Sync for FusoStream {}
 
-impl<T> Transfer for T
+impl<T> factory::Transfer for T
 where
     T: Stream + Send + 'static,
 {
