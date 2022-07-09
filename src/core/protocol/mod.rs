@@ -162,7 +162,7 @@ where
                         buf.resize(head_size(), 0);
                     }
                 }
-                State::Head => unsafe {
+                State::Head if *offset == buf.len() => unsafe {
                     #[allow(unused)]
                     #[repr(C)]
                     struct Head {

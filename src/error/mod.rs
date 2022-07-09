@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, collections::VecDeque};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -29,6 +29,16 @@ pub enum PacketErr {
 }
 
 #[derive(Debug)]
+pub enum SocksErr {
+    Protocol,
+    InvalidAddress,
+    BindNotSupport,
+    Head { ver: u8, nmethod: u8 },
+    Method(u8),
+    BadLength { expect: usize, current: usize },
+}
+
+#[derive(Debug)]
 pub enum Kind {
     Channel,
     AlreadyUsed,
@@ -38,14 +48,16 @@ pub enum Kind {
     #[cfg(feature = "fuso-rt-smol")]
     Timeout(std::time::Instant),
     Memory,
+    Mark,
     Sync(Sync),
     Deserialize(String),
     InvalidAddr(InvalidAddr),
     Encoding(Encoding),
     Packet(PacketErr),
-    Fallback(Vec<Vec<u8>>),
+    Fallback,
     Unexpected(String),
-    Message(String)
+    Message(String),
+    Socks(SocksErr),
 }
 
 impl Display for Error {
@@ -66,6 +78,14 @@ impl From<Sync> for Error {
     fn from(e: Sync) -> Self {
         Self {
             kind: Kind::Sync(e),
+        }
+    }
+}
+
+impl From<SocksErr> for Error {
+    fn from(e: SocksErr) -> Self {
+        Self {
+            kind: Kind::Socks(e),
         }
     }
 }
@@ -143,8 +163,6 @@ impl From<PacketErr> for Error {
     }
 }
 
-
-
 #[cfg(feature = "fuso-rt-smol")]
 impl From<std::time::Instant> for Error {
     fn from(e: std::time::Instant) -> Self {
@@ -162,6 +180,13 @@ impl Error {
     pub fn is_packet_err(&self) -> bool {
         match &self.kind {
             Kind::Packet(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_socks_error(&self) -> bool {
+        match &self.kind {
+            Kind::Socks(SocksErr::Head { ver: _, nmethod: _ }) => true,
             _ => false,
         }
     }

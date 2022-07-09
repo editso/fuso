@@ -24,6 +24,7 @@ where
 
     fn call(&self, stream: Fallback<S>) -> Self::Output {
         Box::pin(async move {
+            log::debug!("call_normal");
             let mut stream = stream;
             match stream.recv_packet().await {
                 Ok(packet) => match packet.try_message() {

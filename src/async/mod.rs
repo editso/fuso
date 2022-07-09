@@ -3,14 +3,14 @@ pub mod io;
 pub mod join;
 pub mod r#macro;
 pub mod select;
-pub mod time;
 pub mod sync;
+pub mod time;
 
 use std::{
     future::Future,
     ops::{Deref, DerefMut},
     pin::Pin,
-    task::{Context, Poll}
+    task::{Context, Poll},
 };
 
 pub type BoxedFuture<'lifetime, T> = Pin<Box<dyn Future<Output = T> + 'lifetime>>;
@@ -31,6 +31,7 @@ pub struct ReadBuf<'a> {
 }
 
 #[cfg(any(feature = "fuso-rt-smol", feature = "fuso-rt-custom"))]
+#[derive(Debug)]
 pub struct ReadBuf<'a> {
     buf: &'a mut [u8],
     offset: usize,
@@ -125,9 +126,9 @@ where
         buf: &mut ReadBuf<'_>,
     ) -> Poll<crate::Result<usize>> {
         match tokio::io::AsyncRead::poll_read(self, cx, &mut buf.buf) {
-            Poll::Ready(Ok(())) => Poll::Ready(Ok(buf.filled().len())),
-            Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
             Poll::Pending => Poll::Pending,
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
+            Poll::Ready(Ok(())) => Poll::Ready(Ok(buf.filled().len())),
         }
     }
 }
@@ -171,7 +172,7 @@ where
         match futures::AsyncRead::poll_read(self, cx, &mut buf.buf[buf.offset..])? {
             Poll::Pending => Poll::Pending,
             Poll::Ready(n) => {
-                buf.offset += n;
+                buf.advance(n);
                 Poll::Ready(Ok(n))
             }
         }
@@ -191,9 +192,17 @@ impl<'a> ReadBuf<'a> {
         Self { buf, offset: 0 }
     }
 
+    pub fn len(&self) -> usize {
+        self.buf.capacity()
+    }
+
     #[cfg(any(feature = "fuso-rt-smol", feature = "fuso-rt-custom"))]
     pub fn remaining(&self) -> usize {
         self.len() - self.offset
+    }
+
+    pub fn has_remaining(&self) -> bool {
+        self.remaining() > 0
     }
 
     #[cfg(any(feature = "fuso-rt-smol", feature = "fuso-rt-custom"))]
@@ -208,17 +217,17 @@ impl<'a> ReadBuf<'a> {
 
     #[cfg(feature = "fuso-rt-tokio")]
     pub fn iter_mut(&mut self) -> &mut [u8] {
-        self.buf.initialized_mut()
+        self.buf.filled_mut()
     }
 
     #[cfg(any(feature = "fuso-rt-smol", feature = "fuso-rt-custom"))]
     pub fn iter_mut(&mut self) -> &mut [u8] {
-        &mut self.buf
+        &mut self.buf[..self.offset]
     }
 
     #[cfg(any(feature = "fuso-rt-smol", feature = "fuso-rt-custom"))]
     pub fn advance(&mut self, n: usize) {
-        assert!(self.offset + n <= self.buf.len());
+        debug_assert!(self.offset + n <= self.buf.len());
         self.offset += n;
     }
 

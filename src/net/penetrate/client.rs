@@ -233,7 +233,19 @@ where
 
                     let future = async move {
                         let mut writer = writer;
-                        let (mut s1, s2) = join::join_output(server_fut, client_fut).await?;
+
+                        let r = match time::wait_for(
+                            Duration::from_secs(5),
+                            join::join_output(server_fut, client_fut),
+                        )
+                        .await
+                        {
+                            Err(e) => Err(e),
+                            Ok(r) => r,
+                        };
+
+                        let (mut s1, s2) = r?;
+
                         let message = Message::Map(id, s2_socket).to_packet_vec();
 
                         if let Err(e) = s1.send_packet(&message).await {

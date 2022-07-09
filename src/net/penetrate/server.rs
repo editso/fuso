@@ -222,8 +222,10 @@ where
                                 s1.backward().await?;
 
                                 if let Some(data) = s1.back_data() {
+                                    
                                     log::debug!("copy data to peer {}bytes", data.len());
-                                    if let Err(e) = s2.write_all(data).await {
+
+                                    if let Err(e) = s2.write_all(&data).await {
                                         log::warn!(
                                             "mapping failed, the client has closed the connection"
                                         );

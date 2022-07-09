@@ -3,7 +3,7 @@
 async fn main() -> fuso::Result<()> {
     use std::time::Duration;
 
-    use fuso::{factory::Handshake, Socket};
+    use fuso::{Handshake, Socket};
 
     env_logger::builder()
         .filter_level(log::LevelFilter::Debug)
@@ -42,7 +42,7 @@ fn main() -> fuso::Result<()> {
     use fuso::{Handshake, Socket};
 
     env_logger::builder()
-        .filter_level(log::LevelFilter::Debug)
+        .filter_module("fuso",log::LevelFilter::Trace)
         .default_format()
         .format_module_path(false)
         .init();
@@ -53,6 +53,7 @@ fn main() -> fuso::Result<()> {
             .with_penetrate()
             .with_adapter_mode()
             .use_normal()
+            .use_socks()
             .build()
             .bind(Socket::Tcp(([0, 0, 0, 0], 8888).into()))
             .run()

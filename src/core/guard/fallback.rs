@@ -1,15 +1,18 @@
 use std::future::Future;
-use std::io::Write;
+
 use std::task::Poll;
 use std::{pin::Pin, task::Context};
 
 use crate::r#async::{AsyncRead, AsyncWrite};
+use crate::Kind;
+
+use super::buffer::Buffer;
 
 pub struct Fallback<T> {
     target: T,
     strict: bool,
-    rest_buf: Option<std::io::Cursor<Vec<u8>>>,
-    begin_buf: Option<std::io::Cursor<Vec<u8>>>,
+    backed_buf: Option<Buffer<u8>>,
+    marked_buf: Option<Buffer<u8>>,
 }
 
 pub struct Mark<'a, IO>(&'a mut Fallback<IO>);
@@ -22,8 +25,8 @@ impl<T> Fallback<T> {
         Fallback {
             target: t,
             strict: strict,
-            rest_buf: Default::default(),
-            begin_buf: Default::default(),
+            backed_buf: Default::default(),
+            marked_buf: Default::default(),
         }
     }
 
@@ -31,8 +34,8 @@ impl<T> Fallback<T> {
         Fallback {
             target: t,
             strict: true,
-            rest_buf: Default::default(),
-            begin_buf: Default::default(),
+            backed_buf: Default::default(),
+            marked_buf: Default::default(),
         }
     }
 }
@@ -59,8 +62,22 @@ impl<T> Fallback<T> {
         Backward(self)
     }
 
-    pub fn back_data(&self) -> Option<&Vec<u8>> {
-        self.rest_buf.as_ref().map(|buf| buf.get_ref())
+    pub fn force_clear(&mut self) {
+        self.marked_buf.take();
+        self.backed_buf.take();
+    }
+
+    pub fn back_data(&mut self) -> Option<Vec<u8>> {
+        self.backed_buf.take().map(|mut buf| {
+            let mut backed = Vec::with_capacity(buf.len());
+            unsafe {
+                backed.set_len(buf.len());
+            }
+
+            let _ = buf.read_to_buffer(&mut backed);
+
+            backed
+        })
     }
 }
 
@@ -73,35 +90,30 @@ where
         cx: &mut Context<'_>,
         buf: &mut crate::ReadBuf<'_>,
     ) -> std::task::Poll<crate::Result<usize>> {
-        let poll = loop {
-            if let Some(reset_buf) = self.rest_buf.as_mut() {
-                let rem = buf.remaining();
-                let pos = buf.position();
-
-                if rem != 0 {
-                    let n = std::io::Read::read(reset_buf, &mut buf.iter_mut()[pos..])?;
+        let poll = {
+            match self.backed_buf.take() {
+                None => Pin::new(&mut self.target).poll_read(cx, buf),
+                Some(mut backed) => {
+                    let n = backed.read_to_buffer(buf.initialize_unfilled());
                     buf.advance(n);
-                    if buf.remaining() == 0 {
-                        break Poll::Ready(Ok(n));
-                    } else {
-                        drop(std::mem::replace(&mut self.rest_buf, Default::default()))
+                    if !backed.is_empty() {
+                        drop(std::mem::replace(&mut self.backed_buf, Some(backed)));
                     }
+                    Poll::Ready(Ok(n))
                 }
-            } else {
-                break Pin::new(&mut self.target).poll_read(cx, buf);
             }
-        }?;
+        };
 
         match poll {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(n) => {
-                if let Some(begin) = self.begin_buf.as_mut() {
-                    let pos = begin.position();
-                    begin.write_all(&buf.iter_mut()[..n])?;
-                    begin.set_position(pos);
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+            Poll::Ready(Ok(n)) => match self.marked_buf.as_mut() {
+                None => Poll::Ready(Ok(n)),
+                Some(marked) => {
+                    marked.push_back(buf.iter_mut());
+                    Poll::Ready(Ok(n))
                 }
-                Poll::Ready(Ok(n))
-            }
+            },
         }
     }
 }
@@ -115,25 +127,12 @@ where
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<crate::Result<usize>> {
-        if self.strict && (self.rest_buf.is_some() || self.begin_buf.is_some()) {
-
+        if self.strict && (self.backed_buf.is_some() || self.marked_buf.is_some()) {
             log::warn!("write data in strict mode while buffer data has not been processed");
-
-            let mut buffers = Vec::new();
-
-            if let Some(buf) = self.begin_buf.take() {
-                buffers.push(buf.into_inner())
-            }
-
-            if let Some(buf) = self.rest_buf.take() {
-                buffers.push(buf.into_inner())
-            }
-
-            return Poll::Ready(Err(crate::error::Kind::Fallback(buffers).into()));
+            return Poll::Ready(Err(Kind::Fallback.into()));
         } else {
-
-            drop(self.begin_buf.take());
-            drop(self.rest_buf.take());
+            drop(self.marked_buf.take());
+            drop(self.backed_buf.take());
         }
 
         Pin::new(&mut self.target).poll_write(cx, buf)
@@ -165,19 +164,10 @@ where
         _: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
         let this = &mut self.0;
-        if let Some(mut buf) = this.begin_buf.take() {
-            let pos = buf.position();
-            this.rest_buf
-                .take()
-                .map(|last| buf.write_all(&last.into_inner()));
-            buf.set_position(pos);
-            drop(std::mem::replace(&mut this.rest_buf, Some(buf)));
-        }
 
-        drop(std::mem::replace(
-            &mut this.begin_buf,
-            Some(Default::default()),
-        ));
+        if !this.marked_buf.is_some() {
+            drop(std::mem::replace(&mut this.marked_buf, Some(Buffer::new())));
+        }
 
         Poll::Ready(Ok(()))
     }
@@ -194,16 +184,8 @@ where
         _: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
         let this = &mut self.0;
-        if let Some(mut buf) = this.begin_buf.take() {
-            let pos = buf.position();
-
-            this.rest_buf
-                .take()
-                .map(|last| buf.write_all(&last.into_inner()));
-
-            buf.set_position(pos);
-
-            drop(std::mem::replace(&mut this.rest_buf, Some(buf)));
+        if let Some(marked) = this.marked_buf.take() {
+            drop(std::mem::replace(&mut this.backed_buf, Some(marked)));
         }
 
         Poll::Ready(Ok(()))

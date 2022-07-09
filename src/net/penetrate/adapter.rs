@@ -69,6 +69,8 @@ where
                         return Ok(peer);
                     }
                 };
+
+                fallback.backward().await?;
             }
 
             Ok(Peer::Unknown(fallback))

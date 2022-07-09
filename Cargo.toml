@@ -73,7 +73,7 @@ debug = false
 
 [features]
 # 默认开启tokio异步 & clap参数解析器
-default = ['fuso-rt-smol', "fuso-clap", "fuso-log", "bytes", "fuso-serde", "fuso-socks5"]
+default = ['fuso-rt-tokio', "fuso-clap", "fuso-log", "bytes", "fuso-serde", "fuso-socks5"]
 # 只提供api，不提供web界面
 fuso-api = ["axum", "fuso-rt-tokio"]
 # web界面

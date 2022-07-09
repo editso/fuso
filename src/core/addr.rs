@@ -38,6 +38,12 @@ impl From<([u8; 4], u16)> for Addr {
     }
 }
 
+impl From<([u8; 16], u16)> for Addr {
+    fn from(addr: ([u8; 16], u16)) -> Self {
+        Self(InnerAddr::Socket(SocketAddr::from(addr)))
+    }
+}
+
 impl From<(String, u16)> for Addr {
     fn from(addr: (String, u16)) -> Self {
         Self(InnerAddr::Domain(addr.0, addr.1))
@@ -199,6 +205,13 @@ impl Socket {
             self
         }
     }
+
+    pub fn is_udp(&self) -> bool {
+        match self {
+            Self::Udp(_) => true,
+            _ => false,
+        }
+    }
 }
 
 impl Deref for Socket {
@@ -230,5 +243,3 @@ impl Default for Socket {
         Self::Tcp(([0, 0, 0, 0], 0).into())
     }
 }
-
-

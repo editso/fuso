@@ -2,14 +2,13 @@ use std::pin::Pin;
 
 use crate::{
     error,
-    FactoryWrapper,
     guard::Fallback,
     penetrate::{
         server::{Peer, Visitor},
         Adapter,
     },
-    Factory,
-    Socket, Stream,
+    socks::{NoAuthentication, Socks},
+    Factory, Socket, Stream,
 };
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
@@ -25,13 +24,28 @@ where
 
     fn call(&self, stream: Fallback<S>) -> Self::Output {
         Box::pin(async move {
-            Ok(Adapter::Accept(Peer::Visitor(
-                Visitor::Consume({
-                    let wrap = UdpForwardFactory(std::sync::Mutex::new(Some(stream)));
-                    FactoryWrapper::wrap(wrap)
-                }),
-                Socket::Udp(10.into()),
-            )))
+            let mut stream = stream;
+
+            log::debug!("call socks5");
+
+            let socket = match stream
+                .socks5_handshake(&mut NoAuthentication::default())
+                .await
+            {
+                Err(e) if !e.is_socks_error() => return Err(e),
+                Err(_) => return Ok(Adapter::Reject(stream)),
+                Ok(socket) => socket,
+            };
+
+            stream.force_clear();
+
+            match socket {
+                Socket::Tcp(addr) => Ok(Adapter::Accept(Peer::Visitor(
+                    Visitor::Forward(stream),
+                    Socket::Tcp(addr),
+                ))),
+                _ => unimplemented!(),
+            }
         })
     }
 }
