@@ -87,7 +87,8 @@ where
                 let n = unsafe { r.unwrap_unchecked() };
 
                 if n == 0 {
-                    return Ok(());
+                    let _ = writer.flush().await;
+                    return writer.close().await;
                 }
 
                 log::trace!("forward {}bytes data", n);

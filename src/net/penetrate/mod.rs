@@ -3,6 +3,8 @@ mod builder;
 
 mod unpacker;
 
+pub use unpacker::*;
+
 pub mod client;
 pub mod server;
 

@@ -1,7 +1,4 @@
-use std::{
-    collections::VecDeque,
-    io::{Cursor, Write},
-};
+use std::collections::VecDeque;
 
 #[derive(Debug)]
 pub struct Buffer<T> {

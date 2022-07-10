@@ -39,6 +39,7 @@ pub enum Message {
     Bind(Bind),
     Map(u32, Socket),
     Connect(Connect, Auth),
+    Forward(Addr)
 }
 
 impl Packet {

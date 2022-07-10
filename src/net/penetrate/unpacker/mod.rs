@@ -4,6 +4,10 @@ mod socks;
 
 use std::pin::Pin;
 
+use self::socks::PenetrateSocksBuilder;
+
+pub use socks::SocksClientUdpForward;
+
 use super::{server::Peer, PenetrateAdapterBuilder};
 use crate::{guard::Fallback, Accepter, Executor, Factory, FactoryWrapper, Socket, Stream};
 
@@ -18,17 +22,15 @@ where
     A: Accepter<Stream = S> + Unpin + Send + 'static,
     S: Stream + Send + Sync + 'static,
 {
-    pub fn use_normal(mut self) -> Self {
+    pub fn with_normal_unpacker(mut self) -> Self {
         self.adapters
             .push(FactoryWrapper::wrap(normal::NormalUnpacker));
         self
     }
 
-    pub fn use_socks(mut self) -> Self {
-        self.penetrate_builder = self.penetrate_builder.disable_fallback_strict_mode();
-
-        self.adapters
-            .insert(0, FactoryWrapper::wrap(socks::SocksUnpacker));
-        self
+    pub fn with_socks_unpacker(self) -> PenetrateSocksBuilder<E, SF, CF, S> {
+        PenetrateSocksBuilder {
+            adapter_builder: self
+        }
     }
 }

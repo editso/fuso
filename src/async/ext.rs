@@ -1,5 +1,7 @@
 use std::{future::Future, pin::Pin, task::Poll};
 
+use crate::AsyncWrite;
+
 #[pin_project::pin_project]
 pub struct Read<'a, T: Unpin> {
     buf: super::ReadBuf<'a>,
@@ -11,6 +13,14 @@ pub struct Read<'a, T: Unpin> {
 pub struct Write<'a, T: Unpin> {
     buf: &'a [u8],
     #[pin]
+    writer: &'a mut T,
+}
+
+pub struct Close<'a, T: Unpin> {
+    writer: &'a mut T,
+}
+
+pub struct Flush<'a, T: Unpin> {
     writer: &'a mut T,
 }
 
@@ -69,6 +79,20 @@ pub trait AsyncWriteExt: super::AsyncWrite {
             buf: buf,
             writer: self,
         }
+    }
+
+    fn close<'a>(&'a mut self) -> Close<'a, Self>
+    where
+        Self: Sized + Unpin,
+    {
+        Close { writer: self }
+    }
+
+    fn flush<'a>(&'a mut self) -> Flush<'a, Self>
+    where
+        Self: Sized + Unpin,
+    {
+        Flush { writer: self }
     }
 
     #[inline]
@@ -180,5 +204,27 @@ where
                 break Poll::Ready(Ok(()));
             }
         }
+    }
+}
+
+impl<'a, T> Future for Close<'a, T>
+where
+    T: AsyncWrite + Unpin,
+{
+    type Output = crate::Result<()>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut *self.writer).poll_flush(cx)
+    }
+}
+
+impl<'a, T> Future for Flush<'a, T>
+where
+    T: AsyncWrite + Unpin,
+{
+    type Output = crate::Result<()>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut *self.writer).poll_close(cx)
     }
 }

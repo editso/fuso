@@ -20,20 +20,8 @@ pub use net::*;
 mod test {
 
     #[test]
-    fn test() {
-        unsafe {
-            let c = [102u8, 117, 115, 111, 26, 0, 3, 0];
-
-            #[allow(unused)]
-            #[repr(C)]
-            struct Head {
-                magic: [u8; 4],
-                data_len: u32,
-            }
-
-            let head = (c.as_ptr() as *const Head).as_ref().unwrap();
-
-            println!("{}", head.data_len)
-        }
+    fn t(){
+        println!("{}", u16::from_le_bytes([0, 53]))
     }
+   
 }

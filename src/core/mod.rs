@@ -10,7 +10,6 @@ pub use addr::*;
 pub mod encryption;
 pub mod generator;
 pub mod guard;
-pub mod listener;
 pub mod protocol;
 
 use std::cell::RefCell;

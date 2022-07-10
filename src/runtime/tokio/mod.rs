@@ -1,11 +1,12 @@
-use std::{pin::Pin, sync::Arc, task::Poll};
+use std::{net::SocketAddr, pin::Pin, sync::Arc, task::Poll};
 
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::{
     client::{self, Mapper},
-    server, Accepter, ClientFactory, Executor, Factory, FusoStream, ServerFactory, Socket,
-    Transfer,
+    penetrate::SocksClientUdpForward,
+    ready, server, Accepter, Addr, ClientFactory, Executor, Factory, FactoryWrapper, FusoStream,
+    ServerFactory, Socket, Transfer, UdpSocket,
 };
 
 type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>> + Send + 'static>>;
@@ -15,8 +16,14 @@ pub struct TokioExecutor;
 pub struct TokioTcpListener(tokio::net::TcpListener);
 pub struct TokioAccepter;
 pub struct TokioConnector;
+
+pub struct TokioUdpSocket;
+
 pub struct TokioClientConnector;
 pub struct TokioPenetrateConnector;
+
+pub struct UdpForwardFactory;
+pub struct UdpForwardClientFactory;
 
 impl Executor for TokioExecutor {
     fn spawn<F, O>(&self, fut: F)
@@ -70,14 +77,12 @@ impl Factory<Socket> for TokioConnector {
     fn call(&self, socket: Socket) -> Self::Output {
         Box::pin(async move {
             match socket {
-                Socket::Udp(_) => todo!(),
-                Socket::Kcp(_) => todo!(),
-                Socket::Quic(_) => todo!(),
                 Socket::Tcp(addr) => Ok({
                     tokio::net::TcpStream::connect(format!("{}", addr))
                         .await?
                         .transfer()
                 }),
+                _ => unimplemented!(),
             }
         })
     }
@@ -125,10 +130,107 @@ impl Factory<Socket> for TokioPenetrateConnector {
         Box::pin(async move {
             match socket {
                 Socket::Tcp(addr) => Ok(Mapper::Forward(
-                    TcpStream::connect(format!("{}", addr)).await?.transfer(),
+                    TcpStream::connect(format!("{}", addr))
+                        .await
+                        .map_err(|e| {
+                            log::warn!("failed to connect {}", addr);
+                            e
+                        })?
+                        .transfer(),
                 )),
+                Socket::UdpForward(_) => {
+                    let factory = FactoryWrapper::wrap(UdpForwardClientFactory);
+
+                    Ok(Mapper::Consume(FactoryWrapper::wrap(
+                        SocksClientUdpForward(factory),
+                    )))
+                }
                 _ => unimplemented!(),
             }
+        })
+    }
+}
+
+impl UdpSocket for tokio::net::UdpSocket {
+    fn poll_recv_from(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut crate::ReadBuf<'_>,
+    ) -> Poll<crate::Result<std::net::SocketAddr>> {
+        match ready!(tokio::net::UdpSocket::poll_recv_from(&self, cx, buf)) {
+            Err(e) => Poll::Ready(Err(e.into())),
+            Ok(addr) => Poll::Ready(Ok(addr)),
+        }
+    }
+
+    fn poll_recv(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut crate::ReadBuf<'_>,
+    ) -> Poll<crate::Result<()>> {
+        match ready!(tokio::net::UdpSocket::poll_recv(&self, cx, buf)) {
+            Err(e) => Poll::Ready(Err(e.into())),
+            Ok(()) => Poll::Ready(Ok(())),
+        }
+    }
+
+    fn poll_send(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<crate::Result<usize>> {
+        Poll::Ready({
+            ready!(tokio::net::UdpSocket::poll_send(&self, cx, buf)).map_err(Into::into)
+        })
+    }
+
+    fn poll_send_to(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        addr: &std::net::SocketAddr,
+        buf: &[u8],
+    ) -> Poll<crate::Result<usize>> {
+        Poll::Ready({
+            ready!(tokio::net::UdpSocket::poll_send_to(
+                &self,
+                cx,
+                buf,
+                addr.clone()
+            ))
+            .map_err(Into::into)
+        })
+    }
+}
+
+impl Factory<()> for UdpForwardFactory {
+    type Output = BoxedFuture<(SocketAddr, tokio::net::UdpSocket)>;
+
+    fn call(&self, _: ()) -> Self::Output {
+        Box::pin(async move {
+            let udp = tokio::net::UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], 0))).await?;
+            let addr = udp.local_addr()?;
+
+            log::debug!("udp listening on {}", addr);
+
+            Ok((addr, udp))
+        })
+    }
+}
+
+impl Factory<Addr> for UdpForwardClientFactory {
+    type Output = BoxedFuture<(SocketAddr, tokio::net::UdpSocket)>;
+
+    fn call(&self, addr: Addr) -> Self::Output {
+        Box::pin(async move {
+            let udp = tokio::net::UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], 0))).await?;
+
+            udp.connect(format!("{}", addr)).await?;
+
+            let addr = udp.local_addr()?;
+
+            log::debug!("udp try to connect to {}", addr);
+
+            Ok((addr, udp))
         })
     }
 }

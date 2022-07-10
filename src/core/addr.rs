@@ -24,6 +24,7 @@ pub enum Socket {
     Tcp(Addr),
     Kcp(Addr),
     Quic(Addr),
+    UdpForward(Addr)
 }
 
 impl From<SocketAddr> for Addr {
@@ -109,6 +110,7 @@ impl Display for Socket {
             Socket::Tcp(tcp) => format!("<tcp({})>", tcp),
             Socket::Kcp(kcp) => format!("<kcp({})>", kcp),
             Socket::Quic(quic) => format!("<quic({})>", quic),
+            Socket::UdpForward(addr) => format!("<udp_forward({})>", addr)
         };
 
         write!(f, "{}", fmt)
@@ -198,9 +200,27 @@ impl Addr {
 }
 
 impl Socket {
+    pub fn addr(&self) -> &Addr {
+        match self {
+            Socket::Udp(addr) => addr,
+            Socket::Tcp(addr) => addr,
+            Socket::Kcp(addr) => addr,
+            Socket::Quic(addr) => addr,
+            Self::UdpForward(addr) => addr
+        }
+    }
+
     pub fn default_or<A: Into<Self>>(self, addr: A) -> Self {
         if self.is_default() {
-            addr.into()
+            let addr: Self = addr.into();
+            let addr = addr.addr().clone();
+            match self {
+                Socket::Udp(_) => Self::Udp(addr),
+                Socket::Tcp(_) => Self::Tcp(addr),
+                Socket::Kcp(_) => Self::Kcp(addr),
+                Socket::Quic(_) => Self::Quic(addr),
+                Socket::UdpForward(addr) => Self::UdpForward(addr)
+            }
         } else {
             self
         }
@@ -223,6 +243,7 @@ impl Deref for Socket {
             Socket::Tcp(addr) => addr,
             Socket::Kcp(addr) => addr,
             Socket::Quic(addr) => addr,
+            Socket::UdpForward(addr) =>addr
         }
     }
 }
@@ -234,6 +255,7 @@ impl DerefMut for Socket {
             Socket::Tcp(addr) => addr,
             Socket::Kcp(addr) => addr,
             Socket::Quic(addr) => addr,
+            Self::UdpForward(addr) => addr
         }
     }
 }

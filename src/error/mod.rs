@@ -1,4 +1,4 @@
-use std::{fmt::Display, collections::VecDeque};
+use std::{fmt::Display};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -58,6 +58,8 @@ pub enum Kind {
     Unexpected(String),
     Message(String),
     Socks(SocksErr),
+    Once,
+    BadForward
 }
 
 impl Display for Error {

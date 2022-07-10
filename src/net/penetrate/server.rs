@@ -27,9 +27,9 @@ pub enum PenetrateOutcome<T> {
 pub enum State<T> {
     Stop,
     Close(T),
+    Finish,
     Forward(T, T),
     Consume(BoxedFuture<()>),
-    Transferred,
     Error(crate::Error),
 }
 
@@ -43,6 +43,7 @@ pub struct PenetrateGenerator<T, A>(Penetrate<T, A>);
 pub enum Peer<T> {
     Mapper(u32, T),
     Visitor(Visitor<T>, Socket),
+    Finished(T),
     Unknown(T),
 }
 
@@ -152,14 +153,14 @@ where
 
             match message {
                 Message::Ping => {
-                    log::debug!("client ping received");
+                    log::trace!("client ping received");
                 }
                 Message::MapError(id, err) => {
                     log::warn!("client mapping failed, msg = {}", err);
                     wait_for.remove(id).await.map(|r| r.close());
                 }
                 message => {
-                    log::warn!("Ignore client message {:?}", message);
+                    log::warn!("ignore client message {:?}", message);
                 }
             }
         }
@@ -222,7 +223,6 @@ where
                                 s1.backward().await?;
 
                                 if let Some(data) = s1.back_data() {
-                                    
                                     log::debug!("copy data to peer {}bytes", data.len());
 
                                     if let Err(e) = s2.write_all(&data).await {
@@ -275,9 +275,13 @@ where
                     Some(sender) => {
                         log::warn!("mapping request established");
                         sender.send(stream).await?;
-                        Ok(State::Transferred)
+                        Ok(State::Finish)
                     }
                 },
+                Peer::Finished(s) => {
+                    log::info!("closed");
+                    Ok(State::Close(s.into_inner()))
+                }
                 Peer::Unknown(s) => {
                     log::warn!("illegal connection");
                     Ok(State::Close(s.into_inner()))
@@ -338,11 +342,15 @@ where
                         log::warn!("client error {}", e);
                         return Poll::Ready(Err(e));
                     }
-                    Poll::Ready(Ok(State::Close(_))) => {
+                    Poll::Ready(Ok(State::Close(mut s))) => {
+                        self.futures.push(Box::pin(async move {
+                            let _ = s.close().await;
+                            Ok(State::Finish)
+                        }));
                         log::warn!("Peer is closed");
                     }
-                    Poll::Ready(Ok(State::Transferred)) => {
-                        log::warn!("Transferred");
+                    Poll::Ready(Ok(State::Finish)) => {
+                        log::warn!("finished");
                     }
                     Poll::Ready(Err(e)) => {
                         log::warn!("encountered other errors {}", e);
@@ -351,7 +359,7 @@ where
             }
         }
 
-        log::debug!("{} futures remaining", self.futures.len());
+        log::trace!("{} futures remaining", self.futures.len());
 
         Poll::Pending
     }

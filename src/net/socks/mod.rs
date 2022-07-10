@@ -1,11 +1,17 @@
 mod auth;
 pub use auth::*;
 
+use std::net::SocketAddr;
 use std::{pin::Pin, task::Poll};
 
 use std::future::Future;
 
-use crate::{ready, Addr, AsyncRead, AsyncWrite, ReadBuf, Socket, SocksErr, Stream};
+use crate::ext::AsyncWriteExt;
+use crate::protocol::{make_packet, AsyncSendPacket, Message, ToPacket};
+use crate::{
+    ready, Addr, AsyncRead, AsyncWrite, Kind, ReadBuf, Socket, SocksErr, Stream, UdpReceiverExt,
+    UdpSocket,
+};
 use std::task::Context;
 
 macro_rules! reset_connect {
@@ -150,50 +156,50 @@ impl<'a> TryFrom<&'a [u8]> for Head {
 
 impl<T> Socks for T where T: AsyncRead + AsyncWrite + Unpin {}
 
-impl<'a, S, A> Socks5<'a, S, A> {
-    fn parse_address(cmd: u8, _: u8, atype: u8, data: &[u8]) -> crate::Result<Socket> {
-        if cmd == 0x02 {
-            return Err(SocksErr::BindNotSupport.into());
-        }
-
-        let addr = match atype {
-            0x01 => {
-                struct V4 {
-                    ip: [u8; 4],
-                    port: u16,
-                }
-
-                let v4 = unsafe { (data.as_ptr() as *mut V4).as_ref().unwrap_unchecked() };
-
-                Addr::from((v4.ip, v4.port))
-            }
-            0x04 => {
-                struct V6 {
-                    ip: [u8; 16],
-                    port: u16,
-                }
-
-                let v6 = unsafe { (data.as_ptr() as *mut V6).as_ref().unwrap_unchecked() };
-
-                Addr::from((v6.ip, v6.port))
-            }
-            0x03 => {
-                let len = data.len();
-                let port = u16::from_be_bytes([data[len - 2], data[len - 1]]);
-                let domain = String::from_utf8_lossy(&data[..len - 2]);
-                Addr::from((format!("{}", domain), port))
-            }
-            _ => return Err(SocksErr::InvalidAddress.into()),
-        };
-
-        Ok({
-            match cmd {
-                0x01 => Socket::Tcp(addr),
-                0x03 => Socket::Udp(addr),
-                _ => return Err(SocksErr::BindNotSupport.into()),
-            }
-        })
+fn parse_address(cmd: u8, _: u8, atype: u8, data: &[u8]) -> crate::Result<Socket> {
+    if cmd == 0x02 {
+        return Err(SocksErr::BindNotSupport.into());
     }
+
+    let addr = match atype {
+        0x01 => {
+            #[repr(C)]
+            struct V4 {
+                ip: [u8; 4],
+                port: [u8; 2],
+            }
+
+            let v4 = unsafe { (data.as_ptr() as *mut V4).as_ref().unwrap_unchecked() };
+
+            Addr::from((v4.ip, u16::from_be_bytes(v4.port)))
+        }
+        0x04 => {
+            #[repr(C)]
+            struct V6 {
+                ip: [u8; 16],
+                port: [u8; 2],
+            }
+
+            let v6 = unsafe { (data.as_ptr() as *mut V6).as_ref().unwrap_unchecked() };
+
+            Addr::from((v6.ip, u16::from_be_bytes(v6.port)))
+        }
+        0x03 => {
+            let len = data.len();
+            let port = u16::from_be_bytes([data[len - 2], data[len - 1]]);
+            let domain = String::from_utf8_lossy(&data[..len - 2]);
+            Addr::from((format!("{}", domain), port))
+        }
+        _ => return Err(SocksErr::InvalidAddress.into()),
+    };
+
+    Ok({
+        match cmd {
+            0x01 => Socket::Tcp(addr),
+            0x03 => Socket::Udp(addr),
+            _ => return Err(SocksErr::BindNotSupport.into()),
+        }
+    })
 }
 
 impl<'a, S, A> Future for Socks5<'a, S, A>
@@ -223,6 +229,9 @@ where
                 }
                 State::Handshake if *read_offset == 2 => {
                     let head = Head::try_from(&read_buf[..*read_offset])?;
+
+                    log::trace!("ver={}, nmethod={}", head.ver, head.nmethod);
+
                     *read_offset = 0;
                     read_buf.clear();
                     read_buf.resize(head.nmethod as usize, 0);
@@ -250,7 +259,7 @@ where
                     let atype = read_buf[3];
                     let len = atype_len!(atype);
 
-                    log::debug!("ver=0x05, cmd={}, rsv={}, atype={}", cmd, rsv, atype);
+                    log::trace!("ver=0x05, cmd={}, rsv={}, atype={}", cmd, rsv, atype);
 
                     *read_offset = 0;
                     read_buf.clear();
@@ -270,7 +279,7 @@ where
                     drop(std::mem::replace(state, new_state))
                 }
                 State::Request(0x05, cmd, rsv, atype, n) if n == read_offset => {
-                    let socket = Self::parse_address(*cmd, *rsv, *atype, &read_buf)?;
+                    let socket = parse_address(*cmd, *rsv, *atype, &read_buf)?;
 
                     log::debug!("target = {}", socket);
 
@@ -289,7 +298,7 @@ where
                     let new_state = State::Success(Some(socket));
                     drop(std::mem::replace(state, new_state))
                 }
-                State::Success(socket) if *write_offset == write_buf.len() => {
+                State::Success(socket) if write_buf.is_empty() => {
                     break Poll::Ready(Ok(unsafe { socket.take().unwrap_unchecked() }));
                 }
                 _ => {}
@@ -316,14 +325,129 @@ where
             if !read_buf.is_empty() {
                 loop {
                     let mut buf = ReadBuf::new(&mut read_buf[*read_offset..]);
-                    *read_offset += ready!(Pin::new(&mut **stream).poll_read(cx, &mut buf))?;
-                    if *read_offset == 0 {
+                    let n = ready!(Pin::new(&mut **stream).poll_read(cx, &mut buf))?;
+                    if n == 0 {
                         return Poll::Ready(Err(reset_connect!().into()));
-                    } else if *read_offset == buf.len() {
+                    }
+
+                    *read_offset += n;
+
+                    if *read_offset == buf.len() {
                         break;
                     }
                 }
             }
         }
+    }
+}
+
+pub async fn finish_udp_forward<S>(stream: &mut S) -> crate::Result<()>
+where
+    S: Stream + Send + Unpin,
+{
+    stream
+        .write_all(&[0x05, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+        .await
+}
+
+pub async fn send_udp_forward_message<S>(stream: &mut S, addr: SocketAddr) -> crate::Result<()>
+where
+    S: Stream + Send + Unpin,
+{
+    let mut buf = Vec::new();
+
+    buf.extend(&[0x05, 0x00, 0x00]);
+
+    match addr {
+        SocketAddr::V4(v1) => {
+            buf.extend(&[0x01]);
+            buf.extend(&v1.ip().octets());
+            buf.extend(&v1.port().to_be_bytes());
+        }
+        SocketAddr::V6(v2) => {
+            buf.extend(&[0x04]);
+            buf.extend(&v2.ip().octets());
+            buf.extend(&v2.port().to_be_bytes());
+        }
+    }
+
+    stream.write_all(&buf).await
+}
+
+//  +----+------+------+----------+----------+----------+
+//  |RSV | FRAG | ATYP | DST.ADDR | DST.PORT |   DATA   |
+//  +----+------+------+----------+----------+----------+
+//  | 2  |  1   |  1   | Variable |    2     | Variable |
+//  +----+------+------+----------+----------+----------+
+pub async fn parse_and_forward_data<S>(s1: &mut S, data: &[u8]) -> crate::Result<()>
+where
+    S: AsyncWrite + Unpin,
+{
+    if data.len() < 6 {
+        return Err(Kind::BadForward.into());
+    }
+
+    let rsv = u16::from_be_bytes([data[0], data[1]]);
+    let frag = data[2];
+    let atype = data[3];
+
+    log::debug!("rsv={}, frag={}, atype={}", rsv, frag, atype);
+
+    let (size, data) = match atype {
+        0x03 => (data[4] as usize, &data[5..]),
+        0x01 => (6, &data[4..]),
+        0x04 => (18, &data[4..]),
+        _ => return Err(SocksErr::InvalidAddress.into()),
+    };
+
+    let addr = match parse_address(0x03, 0, atype, data)? {
+        Socket::Udp(addr) => addr,
+        _ => unsafe { std::hint::unreachable_unchecked() },
+    };
+
+    let message = Message::Forward(addr).to_packet_vec();
+
+    s1.send_packet(&message).await?;
+
+    let data = make_packet(data[size..].to_vec()).encode();
+
+    s1.send_packet(&data).await?;
+
+    Ok(())
+}
+
+pub async fn send_packed_udp_forward_message<U>(
+    udp: &mut U,
+    to: &SocketAddr,
+    origin: &SocketAddr,
+    data: &[u8],
+) -> crate::Result<()>
+where
+    U: UdpSocket + Unpin,
+{
+    let mut buf = Vec::new();
+    buf.extend(&[0x00, 0x00, 0x00]);
+    
+    match origin {
+        SocketAddr::V4(v1) => {
+            buf.push(0x01);
+            buf.extend(&v1.ip().octets());
+            buf.extend(&v1.port().to_be_bytes());
+        }
+        SocketAddr::V6(v2) => {
+            buf.push(0x04);
+            buf.write_all(&v2.ip().octets());
+            buf.extend(&v2.port().to_be_bytes());
+        }
+    }
+
+    buf.extend(data);
+
+    match udp.send_to(to, &buf).await {
+        Ok(n) => {
+            log::debug!("forward {}bytes", n);
+            Ok(())
+        }
+        Err(e) => Err(e),
     }
 }

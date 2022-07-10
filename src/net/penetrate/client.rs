@@ -193,7 +193,7 @@ where
                     break Ok(State::Map(id, socket));
                 }
                 message => {
-                    log::debug!("received server message {:?}", message);
+                    log::trace!("received server message {:?}", message);
                 }
             }
         }
@@ -221,6 +221,9 @@ where
                     return Poll::Ready(Err(e));
                 }
                 Poll::Ready(Ok(State::Map(id, socket))) => {
+                    
+                    log::debug!("{}", socket);
+
                     let (remote, local) = self.socket.clone();
                     let s1_socket = remote;
                     let s2_socket = socket.default_or(local);
@@ -282,7 +285,7 @@ where
             }
         }
 
-        log::debug!("{} futures remaining", self.futures.len());
+        log::trace!("{} futures remaining", self.futures.len());
 
         Poll::Pending
     }
