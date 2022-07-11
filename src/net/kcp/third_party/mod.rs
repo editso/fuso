@@ -6,11 +6,14 @@ use log::{debug, trace};
 use std::cmp;
 use std::cmp::Ordering;
 use std::collections::VecDeque;
-use std::io::{self, Cursor, Read, Write};
+use std::io::{Cursor, Read, Write};
+use std::pin::Pin;
 use std::result::Result;
 
 use bytes::{Buf, BufMut, BytesMut};
 use error::Error;
+
+use std::task::{Context, Poll};
 
 /// KCP result
 pub type KcpResult<T> = Result<T, Error>;
@@ -35,7 +38,7 @@ const KCP_MTU_DEF: usize = 1400;
 // const KCP_ACK_FAST: u32 = 3;
 
 const KCP_INTERVAL: u32 = 100;
-const KCP_OVERHEAD: usize = 24;
+pub const KCP_OVERHEAD: usize = 24;
 // const KCP_DEADLINK: u32 = 20;
 
 const KCP_THRESH_INIT: u16 = 2;
@@ -132,25 +135,14 @@ impl KcpSegment {
     }
 }
 
-#[derive(Default)]
-struct KcpOutput<O: Write>(O);
-
-impl<O: Write> Write for KcpOutput<O> {
-    #[inline]
-    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
-        trace!("[RO] {} bytes", data.len());
-        self.0.write(data)
-    }
-
-    #[inline]
-    fn flush(&mut self) -> io::Result<()> {
-        self.0.flush()
-    }
+pub trait KcpOutput {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, data: &[u8]) -> Poll<crate::Result<usize>>;
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<crate::Result<()>>;
 }
 
 /// KCP control
 #[derive(Default)]
-pub struct Kcp<Output: Write> {
+pub struct Kcp<Output> {
     /// Conversation ID
     conv: u32,
     /// Maximun Transmission Unit
@@ -234,10 +226,13 @@ pub struct Kcp<Output: Write> {
     /// Get conv from the next input call
     input_conv: bool,
 
-    output: KcpOutput<Output>,
+    output: Output,
 }
 
-impl<Output: Write> Kcp<Output> {
+impl<Output> Kcp<Output>
+where
+    Output: KcpOutput + Unpin + 'static,
+{
     /// Creates a KCP control object, `conv` must be equal in both endpoints in one connection.
     /// `output` is the callback object for writing.
     ///
@@ -293,7 +288,7 @@ impl<Output: Write> Kcp<Output> {
             ts_flush: KCP_INTERVAL,
             ssthresh: KCP_THRESH_INIT,
             input_conv: false,
-            output: KcpOutput(output),
+            output: output,
         }
     }
 
@@ -750,7 +745,7 @@ impl<Output: Write> Kcp<Output> {
         }
     }
 
-    fn _flush_ack(&mut self, segment: &mut KcpSegment) -> KcpResult<()> {
+    async fn _flush_ack(&mut self, segment: &mut KcpSegment) -> KcpResult<()> {
         // flush acknowledges
         // while let Some((sn, ts)) = self.acklist.pop_front() {
         for &(sn, ts) in &self.acklist {
@@ -767,7 +762,7 @@ impl<Output: Write> Kcp<Output> {
         Ok(())
     }
 
-    fn probe_wnd_size(&mut self) {
+    async fn probe_wnd_size(&mut self) {
         // probe window size (if remote window size equals zero)
         if self.rmt_wnd == 0 {
             if self.probe_wait == 0 {
@@ -815,7 +810,7 @@ impl<Output: Write> Kcp<Output> {
     }
 
     /// Flush pending ACKs
-    pub fn flush_ack(&mut self) -> KcpResult<()> {
+    pub async fn flush_ack(&mut self) -> KcpResult<()> {
         if !self.updated {
             debug!("flush updated() must be called at least once");
             return Err(Error::NeedUpdate);
@@ -829,11 +824,11 @@ impl<Output: Write> Kcp<Output> {
             ..Default::default()
         };
 
-        self._flush_ack(&mut segment)
+        self._flush_ack(&mut segment).await
     }
 
     /// Flush pending data in buffer.
-    pub fn flush(&mut self) -> KcpResult<()> {
+    pub async fn flush(&mut self) -> KcpResult<()> {
         if !self.updated {
             debug!("flush updated() must be called at least once");
             return Err(Error::NeedUpdate);
@@ -847,7 +842,7 @@ impl<Output: Write> Kcp<Output> {
             ..Default::default()
         };
 
-        self._flush_ack(&mut segment)?;
+        self._flush_ack(&mut segment).await?;
         self.probe_wnd_size();
         self.flush_probe_commands(&mut segment)?;
 
@@ -996,7 +991,7 @@ impl<Output: Write> Kcp<Output> {
             if timediff(self.current, self.ts_flush) >= 0 {
                 self.ts_flush = self.current + self.interval;
             }
-            self.flush()?;
+            self.flush().await?;
         }
 
         Ok(())

@@ -18,10 +18,18 @@ pub use net::*;
 
 #[cfg(test)]
 mod test {
+    use std::{
+        collections::hash_map::DefaultHasher,
+        hash::{Hash, Hasher},
+        net::SocketAddr,
+    };
 
     #[test]
-    fn t(){
-        println!("{}", u16::from_le_bytes([0, 53]))
+    fn t() {
+        let addr = SocketAddr::from(([0, 0, 0, 0], 0));
+        let mut hash = DefaultHasher::new();
+        addr.hash(&mut hash);
+
+        println!("{}", hash.finish())
     }
-   
 }
