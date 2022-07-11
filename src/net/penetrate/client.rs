@@ -65,6 +65,7 @@ where
 
     fn call(&self, (client_factory, stream): (ClientFactory<CF>, S)) -> Self::Output {
         let socket = self.socket.clone();
+
         let connector_factory = self.connector_factory.clone();
 
         Box::pin(async move {
@@ -100,7 +101,7 @@ where
                     );
 
                     if remote_bind.is_ip_unspecified() {
-                        remote_bind.from_set_host(&remote);
+                        remote_bind.from_set_host(client_factory.default_socket());
                     }
 
                     if remote_bind.is_ip_unspecified() {
@@ -221,7 +222,6 @@ where
                     return Poll::Ready(Err(e));
                 }
                 Poll::Ready(Ok(State::Map(id, socket))) => {
-                    
                     log::debug!("{}", socket);
 
                     let (remote, local) = self.socket.clone();

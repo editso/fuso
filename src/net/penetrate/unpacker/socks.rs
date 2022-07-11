@@ -269,7 +269,7 @@ where
                 }
             };
 
-            let (addr, mut udp) = factory.call(addr).await?;
+            let (_, mut udp) = factory.call(addr).await?;
 
             let data = stream.recv_packet().await?;
 

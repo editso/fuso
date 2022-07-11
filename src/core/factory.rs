@@ -32,6 +32,7 @@ pub trait Transfer {
 }
 
 pub struct ClientFactory<C> {
+    pub server_socket: Socket,
     pub connect_factory: Arc<C>,
 }
 
@@ -76,6 +77,15 @@ where
     C: Factory<Socket, Output = BoxedFuture<O>>,
     O: Send + 'static,
 {
+    pub(crate) fn with_server_socket(mut self, socket: Socket) -> Self{
+        self.server_socket = socket;
+        self
+    }
+
+    pub(crate) fn default_socket(&self) -> &Socket{
+        &self.server_socket
+    }
+
     pub async fn connect<A: Into<Socket>>(&self, socket: A) -> crate::Result<O> {
         self.connect_factory.call(socket.into()).await
     }
@@ -96,6 +106,7 @@ where
 impl<C> Clone for ClientFactory<C> {
     fn clone(&self) -> Self {
         Self {
+            server_socket: self.server_socket.clone(),
             connect_factory: self.connect_factory.clone(),
         }
     }

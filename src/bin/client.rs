@@ -8,14 +8,19 @@ async fn main() -> fuso::Result<()> {
     use fuso::TokioPenetrateConnector;
 
     env_logger::builder()
-        .filter_module("fuso",log::LevelFilter::Debug)
+        .filter_module("fuso", log::LevelFilter::Debug)
         .default_format()
         .format_module_path(false)
         .init();
 
     fuso::builder_client_with_tokio()
         .build(
-            Socket::Tcp(8888.into()),
+            Socket::Tcp(
+                option_env!("ENV_SERVER")
+                    .unwrap_or("0.0.0.0:8888")
+                    .parse()
+                    .unwrap(),
+            ),
             PenetrateClientFactory {
                 connector_factory: Arc::new(TokioPenetrateConnector),
                 socket: {
@@ -45,7 +50,7 @@ fn main() -> fuso::Result<()> {
         .default_format()
         .format_module_path(false)
         .init();
-        
+
     smol::block_on(async move {
         use fuso::SmolPenetrateConnector;
 

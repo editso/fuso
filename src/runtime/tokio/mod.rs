@@ -100,6 +100,7 @@ impl ServerFactory<TokioAccepter, TokioConnector> {
 impl ClientFactory<TokioConnector> {
     pub fn with_tokio() -> Self {
         ClientFactory {
+            server_socket: Default::default(),
             connect_factory: Arc::new(TokioConnector),
         }
     }
@@ -226,11 +227,11 @@ impl Factory<Addr> for UdpForwardClientFactory {
 
             udp.connect(format!("{}", addr)).await?;
 
-            let addr = udp.local_addr()?;
+            let bind_addr = udp.local_addr()?;
 
             log::debug!("udp try to connect to {}", addr);
 
-            Ok((addr, udp))
+            Ok((bind_addr, udp))
         })
     }
 }

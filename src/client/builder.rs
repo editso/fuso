@@ -23,12 +23,14 @@ where
         H: Factory<(ClientFactory<CF>, S), Output = BoxedFuture<G>> + Send + Sync + 'static,
         G: Generator<Output = Option<BoxedFuture<()>>> + Unpin + Send + 'static,
     {
+        let socket = socket.into();
+
         Fuso(Client {
-            socket: socket.into(),
+            socket: socket.clone(),
             handler: Arc::new(handler),
             executor: Arc::new(self.executor),
             handshake: self.handshake,
-            client_factory: self.client_factory,
+            client_factory: self.client_factory.with_server_socket(socket),
         })
     }
 }
