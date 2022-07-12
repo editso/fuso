@@ -154,7 +154,7 @@ impl Factory<Socket> for TokioPenetrateConnector {
 
 impl UdpSocket for tokio::net::UdpSocket {
     fn poll_recv_from(
-        self: Pin<&mut Self>,
+        self: Pin<&Self>,
         cx: &mut std::task::Context<'_>,
         buf: &mut crate::ReadBuf<'_>,
     ) -> Poll<crate::Result<std::net::SocketAddr>> {
@@ -165,7 +165,7 @@ impl UdpSocket for tokio::net::UdpSocket {
     }
 
     fn poll_recv(
-        self: Pin<&mut Self>,
+        self: Pin<&Self>,
         cx: &mut std::task::Context<'_>,
         buf: &mut crate::ReadBuf<'_>,
     ) -> Poll<crate::Result<()>> {
@@ -176,7 +176,7 @@ impl UdpSocket for tokio::net::UdpSocket {
     }
 
     fn poll_send(
-        self: Pin<&mut Self>,
+        self: Pin<&Self>,
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> Poll<crate::Result<usize>> {
@@ -186,7 +186,7 @@ impl UdpSocket for tokio::net::UdpSocket {
     }
 
     fn poll_send_to(
-        self: Pin<&mut Self>,
+        self: Pin<&Self>,
         cx: &mut std::task::Context<'_>,
         addr: &std::net::SocketAddr,
         buf: &[u8],

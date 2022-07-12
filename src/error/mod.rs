@@ -1,5 +1,7 @@
 use std::{fmt::Display};
 
+use crate::kcp;
+
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
@@ -59,7 +61,8 @@ pub enum Kind {
     Message(String),
     Socks(SocksErr),
     Once,
-    BadForward
+    BadForward,
+    Kcp(kcp::KcpErr)
 }
 
 impl Display for Error {
@@ -119,6 +122,12 @@ impl From<std::string::FromUtf8Error> for Error {
 impl From<std::io::Error> for Error {
     fn from(e: std::io::Error) -> Self {
         Kind::IO(e).into()
+    }
+}
+
+impl From<kcp::KcpErr> for Error{
+    fn from(e: kcp::KcpErr) -> Self {
+        Kind::Kcp(e).into()
     }
 }
 

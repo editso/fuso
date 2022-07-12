@@ -11,12 +11,15 @@ use std::pin::Pin;
 use std::result::Result;
 
 use bytes::{Buf, BufMut, BytesMut};
-use error::Error;
+pub use error::KcpErr;
 
 use std::task::{Context, Poll};
 
+use crate::ext::AsyncWriteExt;
+use crate::AsyncWrite;
+
 /// KCP result
-pub type KcpResult<T> = Result<T, Error>;
+pub type KcpResult<T> = crate::Result<T>;
 
 const KCP_RTO_NDL: u32 = 30;
 const KCP_RTO_MIN: u32 = 100;
@@ -135,11 +138,6 @@ impl KcpSegment {
     }
 }
 
-pub trait KcpOutput {
-    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, data: &[u8]) -> Poll<crate::Result<usize>>;
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<crate::Result<()>>;
-}
-
 /// KCP control
 #[derive(Default)]
 pub struct Kcp<Output> {
@@ -231,7 +229,7 @@ pub struct Kcp<Output> {
 
 impl<Output> Kcp<Output>
 where
-    Output: KcpOutput + Unpin + 'static,
+    Output: AsyncWrite + Unpin + 'static,
 {
     /// Creates a KCP control object, `conv` must be equal in both endpoints in one connection.
     /// `output` is the callback object for writing.
@@ -292,6 +290,7 @@ where
         }
     }
 
+    
     /// Check buffer size without actually consuming it
     pub fn peeksize(&self) -> KcpResult<usize> {
         match self.rcv_queue.front() {
@@ -301,7 +300,7 @@ where
                 }
 
                 if self.rcv_queue.len() < (segment.frg + 1) as usize {
-                    return Err(Error::ExpectingFragment);
+                    return Err(KcpErr::ExpectingFragment.into());
                 }
 
                 let mut len = 0;
@@ -315,7 +314,7 @@ where
 
                 Ok(len)
             }
-            None => Err(Error::RecvQueueEmpty),
+            None => Err(KcpErr::RecvQueueEmpty.into()),
         }
     }
 
@@ -340,14 +339,14 @@ where
     /// Receive data from buffer
     pub fn recv(&mut self, buf: &mut [u8]) -> KcpResult<usize> {
         if self.rcv_queue.is_empty() {
-            return Err(Error::RecvQueueEmpty);
+            return Err(KcpErr::RecvQueueEmpty.into());
         }
 
         let peeksize = self.peeksize()?;
 
         if peeksize > buf.len() {
             debug!("recv peeksize={} bufsize={} too small", peeksize, buf.len());
-            return Err(Error::UserBufTooSmall);
+            return Err(KcpErr::UserBufTooSmall.into());
         }
 
         let recover = self.rcv_queue.len() >= self.rcv_wnd as usize;
@@ -355,7 +354,7 @@ where
         // Merge fragment
         let mut cur = Cursor::new(buf);
         while let Some(seg) = self.rcv_queue.pop_front() {
-            cur.write_all(&seg.data)?;
+            std::io::Write::write_all(&mut cur, &seg.data)?;
 
             trace!("recv sn={}", seg.sn);
 
@@ -420,7 +419,7 @@ where
 
         if count >= KCP_WND_RCV as usize {
             debug!("send bufsize={} mss={} too large", buf.len(), self.mss);
-            return Err(Error::UserBufTooBig);
+            return Err(KcpErr::UserBufTooBig.into());
         }
         assert!(count > 0);
 
@@ -586,7 +585,7 @@ where
                 buf.len(),
                 KCP_OVERHEAD
             );
-            return Err(Error::InvalidSegmentSize(buf.len()));
+            return Err(KcpErr::InvalidSegmentSize(buf.len()).into());
         }
 
         let mut flag = false;
@@ -605,7 +604,7 @@ where
                     self.input_conv = false;
                 } else {
                     debug!("input conv={} expected conv={} not match", conv, self.conv);
-                    return Err(Error::ConvInconsistent(self.conv, conv));
+                    return Err(KcpErr::ConvInconsistent(self.conv, conv).into());
                 }
             }
 
@@ -624,14 +623,14 @@ where
                     len,
                     buf.remaining()
                 );
-                return Err(Error::InvalidSegmentDataSize(len, buf.remaining()));
+                return Err(KcpErr::InvalidSegmentDataSize(len, buf.remaining()).into());
             }
 
             match cmd {
                 KCP_CMD_PUSH | KCP_CMD_ACK | KCP_CMD_WASK | KCP_CMD_WINS => {}
                 _ => {
                     debug!("input cmd={} unrecognized", cmd);
-                    return Err(Error::UnsupportedCmd(cmd));
+                    return Err(KcpErr::UnsupportedCmd(cmd).into());
                 }
             }
 
@@ -750,7 +749,7 @@ where
         // while let Some((sn, ts)) = self.acklist.pop_front() {
         for &(sn, ts) in &self.acklist {
             if self.buf.len() + KCP_OVERHEAD > self.mtu as usize {
-                self.output.write_all(&self.buf)?;
+                self.output.write_all(&self.buf).await?;
                 self.buf.clear();
             }
             segment.sn = sn;
@@ -785,25 +784,25 @@ where
         }
     }
 
-    fn _flush_probe_commands(&mut self, cmd: u8, segment: &mut KcpSegment) -> KcpResult<()> {
+    async fn _flush_probe_commands(&mut self, cmd: u8, segment: &mut KcpSegment) -> KcpResult<()> {
         segment.cmd = cmd;
         if self.buf.len() + KCP_OVERHEAD > self.mtu as usize {
-            self.output.write_all(&self.buf)?;
+            self.output.write_all(&self.buf).await?;
             self.buf.clear();
         }
         segment.encode(&mut self.buf);
         Ok(())
     }
 
-    fn flush_probe_commands(&mut self, segment: &mut KcpSegment) -> KcpResult<()> {
+    async fn flush_probe_commands(&mut self, segment: &mut KcpSegment) -> KcpResult<()> {
         // flush window probing commands
         if (self.probe & KCP_ASK_SEND) != 0 {
-            self._flush_probe_commands(KCP_CMD_WASK, segment)?;
+            self._flush_probe_commands(KCP_CMD_WASK, segment).await?;
         }
 
         // flush window probing commands
         if (self.probe & KCP_ASK_TELL) != 0 {
-            self._flush_probe_commands(KCP_CMD_WINS, segment)?;
+            self._flush_probe_commands(KCP_CMD_WINS, segment).await?;
         }
         self.probe = 0;
         Ok(())
@@ -813,7 +812,7 @@ where
     pub async fn flush_ack(&mut self) -> KcpResult<()> {
         if !self.updated {
             debug!("flush updated() must be called at least once");
-            return Err(Error::NeedUpdate);
+            return Err(KcpErr::NeedUpdate.into());
         }
 
         let mut segment = KcpSegment {
@@ -831,7 +830,7 @@ where
     pub async fn flush(&mut self) -> KcpResult<()> {
         if !self.updated {
             debug!("flush updated() must be called at least once");
-            return Err(Error::NeedUpdate);
+            return Err(KcpErr::NeedUpdate.into());
         }
 
         let mut segment = KcpSegment {
@@ -843,8 +842,8 @@ where
         };
 
         self._flush_ack(&mut segment).await?;
-        self.probe_wnd_size();
-        self.flush_probe_commands(&mut segment)?;
+        self.probe_wnd_size().await;
+        self.flush_probe_commands(&mut segment).await?;
 
         // println!("SNDBUF size {}", self.snd_buf.len());
 
@@ -922,7 +921,7 @@ where
                 let need = KCP_OVERHEAD + snd_segment.data.len();
 
                 if self.buf.len() + need > self.mtu as usize {
-                    self.output.write_all(&self.buf)?;
+                    self.output.write_all(&self.buf).await?;
                     self.buf.clear();
                 }
 
@@ -936,7 +935,7 @@ where
 
         // Flush all data in buffer
         if !self.buf.is_empty() {
-            self.output.write_all(&self.buf)?;
+            self.output.write_all(&self.buf).await?;
             self.buf.clear();
         }
 
@@ -971,7 +970,7 @@ where
     /// Update state every 10ms ~ 100ms.
     ///
     /// Or you can ask `check` when to call this again.
-    pub fn update(&mut self, current: u32) -> KcpResult<()> {
+    pub async fn update(&mut self, current: u32) -> KcpResult<()> {
         self.current = current;
 
         if !self.updated {
@@ -1038,7 +1037,7 @@ where
     pub fn set_mtu(&mut self, mtu: usize) -> KcpResult<()> {
         if mtu < 50 || mtu < KCP_OVERHEAD {
             debug!("set_mtu mtu={} invalid", mtu);
-            return Err(Error::InvalidMtu(mtu));
+            return Err(KcpErr::InvalidMtu(mtu).into());
         }
 
         self.mtu = mtu;

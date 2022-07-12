@@ -105,7 +105,7 @@ where
 impl<S, U> Factory<Fallback<S>> for SocksUnpacker<U>
 where
     S: Stream + Send + Sync + 'static,
-    U: UdpSocket + Unpin + Send + 'static,
+    U: UdpSocket + Unpin + Send + Sync + 'static,
 {
     type Output = BoxedFuture<Adapter<S>>;
 
@@ -153,7 +153,7 @@ where
 impl<S, U> Factory<Fallback<S>> for SocksUdpForward<S, U>
 where
     S: Stream + Send + 'static,
-    U: UdpSocket + Unpin + Send + 'static,
+    U: UdpSocket + Unpin + Send + Sync + 'static,
 {
     type Output = BoxedFuture<()>;
 
@@ -252,7 +252,7 @@ where
 impl<S, U> Factory<S> for SocksClientUdpForward<U>
 where
     S: Stream + Send + 'static,
-    U: UdpSocket + Send + Unpin + 'static,
+    U: UdpSocket + Send + Unpin + Sync + 'static,
 {
     type Output = BoxedFuture<()>;
 

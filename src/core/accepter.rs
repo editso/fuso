@@ -1,5 +1,6 @@
 use crate::{ready, ReadBuf, Result};
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::{future::Future, pin::Pin};
 
 use std::task::{Context, Poll};
@@ -11,21 +12,18 @@ pub trait Accepter {
 
 pub trait UdpSocket {
     fn poll_recv_from(
-        self: Pin<&mut Self>,
+        self: Pin<&Self>,
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<Result<SocketAddr>>;
 
-    fn poll_send(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize>>;
+    fn poll_send(self: Pin<&Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize>>;
 
-    fn poll_recv(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<Result<()>>;
+    fn poll_recv(self: Pin<&Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>)
+        -> Poll<Result<()>>;
 
     fn poll_send_to(
-        self: Pin<&mut Self>,
+        self: Pin<&Self>,
         cx: &mut Context<'_>,
         addr: &SocketAddr,
         buf: &[u8],
@@ -40,21 +38,21 @@ pub struct Accept<'a, T> {
 pub struct RecvFrom<'a, T> {
     buf: ReadBuf<'a>,
     #[pin]
-    receiver: &'a mut T,
+    receiver: &'a T,
 }
 
 #[pin_project::pin_project]
 pub struct UdpSend<'a, T> {
     buf: &'a [u8],
     #[pin]
-    sender: &'a mut T,
+    sender: &'a T,
 }
 
 #[pin_project::pin_project]
 pub struct UdpRecv<'a, T> {
     buf: ReadBuf<'a>,
     #[pin]
-    receiver: &'a mut T,
+    receiver: &'a T,
 }
 
 #[pin_project::pin_project]
@@ -62,7 +60,7 @@ pub struct SendTo<'a, T> {
     buf: &'a [u8],
     addr: &'a SocketAddr,
     #[pin]
-    sender: &'a mut T,
+    sender: &'a T,
 }
 
 pub trait AccepterExt: Accepter {
@@ -75,7 +73,7 @@ pub trait AccepterExt: Accepter {
 }
 
 pub trait UdpReceiverExt: UdpSocket {
-    fn recv_from<'a>(&'a mut self, buf: &'a mut [u8]) -> RecvFrom<'a, Self>
+    fn recv_from<'a>(&'a self, buf: &'a mut [u8]) -> RecvFrom<'a, Self>
     where
         Self: Sized + Unpin,
     {
@@ -137,8 +135,8 @@ where
 {
     type Output = Result<(usize, SocketAddr)>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut this = self.project();
-        let addr = ready!(Pin::new(&mut **this.receiver).poll_recv_from(cx, this.buf))?;
+        let this = self.project();
+        let addr = ready!(Pin::new(&**this.receiver).poll_recv_from(cx, this.buf))?;
         Poll::Ready(Ok((this.buf.filled().len(), addr)))
     }
 }
@@ -149,8 +147,8 @@ where
 {
     type Output = Result<usize>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut this = self.project();
-        Pin::new(&mut **this.sender).poll_send_to(cx, this.addr, this.buf)
+        let this = self.project();
+        Pin::new(&**this.sender).poll_send_to(cx, this.addr, this.buf)
     }
 }
 
@@ -160,8 +158,8 @@ where
 {
     type Output = Result<usize>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut this = self.project();
-        Pin::new(&mut **this.sender).poll_send(cx, this.buf)
+        let this = self.project();
+        Pin::new(&**this.sender).poll_send(cx, this.buf)
     }
 }
 
@@ -172,8 +170,42 @@ where
     type Output = Result<usize>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut this = self.project();
-        ready!(Pin::new(&mut **this.receiver).poll_recv(cx, this.buf))?;
+        let this = self.project();
+        ready!(Pin::new(&**this.receiver).poll_recv(cx, this.buf))?;
         Poll::Ready(Ok(this.buf.filled().len()))
+    }
+}
+
+impl<U> UdpSocket for Arc<U>
+where
+    U: UdpSocket + Unpin + 'static,
+{
+    fn poll_recv_from(
+        self: Pin<&Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<Result<SocketAddr>> {
+        Pin::new(&**self).poll_recv_from(cx, buf)
+    }
+
+    fn poll_send(self: Pin<&Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize>> {
+        Pin::new(&**self).poll_send(cx, buf)
+    }
+
+    fn poll_recv(
+        self: Pin<&Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<Result<()>> {
+        Pin::new(&**self).poll_recv(cx, buf)
+    }
+
+    fn poll_send_to(
+        self: Pin<&Self>,
+        cx: &mut Context<'_>,
+        addr: &SocketAddr,
+        buf: &[u8],
+    ) -> Poll<Result<usize>> {
+        Pin::new(&**self).poll_send_to(cx, addr, buf)
     }
 }
