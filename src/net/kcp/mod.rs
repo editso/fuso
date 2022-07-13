@@ -36,7 +36,7 @@ mod tests {
 
                 loop {
                     match kcp.accept().await {
-                        Ok(mut kcp) => {
+                        Ok(mut kcp) => { 
                             tokio::spawn(async move{
                                 loop {  
                                     let mut buf = Vec::new();
@@ -66,7 +66,7 @@ mod tests {
 
                 let kcp = KcpConnector::new(Arc::new(udp));
 
-                let mut kcp = kcp.connect().await;
+                let mut kcp = kcp.connect().await.unwrap();
 
                 loop {  
                    
@@ -82,4 +82,6 @@ mod tests {
 
             });
     }
+
+
 }

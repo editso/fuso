@@ -90,7 +90,7 @@ pub trait UdpReceiverExt: UdpSocket {
         UdpSend { buf, sender: self }
     }
 
-    fn recv<'a>(&'a mut self, buf: &'a mut [u8]) -> UdpRecv<'a, Self>
+    fn recv<'a>(&'a self, buf: &'a mut [u8]) -> UdpRecv<'a, Self>
     where
         Self: Sized + Unpin,
     {

@@ -18,6 +18,9 @@ pub enum KcpErr {
     UnsupportedCmd(u8),
     UserBufTooBig,
     UserBufTooSmall,
+    NoMoreConv,
+    Closed,
+    Lock
 }
 
 impl StdError for KcpErr {
@@ -72,6 +75,9 @@ impl From<KcpErr> for io::Error {
             KcpErr::UnsupportedCmd(..) => ErrorKind::Other,
             KcpErr::UserBufTooBig => ErrorKind::Other,
             KcpErr::UserBufTooSmall => ErrorKind::Other,
+            KcpErr::NoMoreConv => ErrorKind::Other,
+            KcpErr::Lock => ErrorKind::Other,
+            KcpErr::Closed => ErrorKind::ConnectionReset
         };
 
         make_io_error(kind, err)

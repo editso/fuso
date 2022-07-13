@@ -6,14 +6,10 @@ use log::{debug, trace};
 use std::cmp;
 use std::cmp::Ordering;
 use std::collections::VecDeque;
-use std::io::{Cursor, Read, Write};
-use std::pin::Pin;
-use std::result::Result;
+use std::io::{Cursor, Read};
 
 use bytes::{Buf, BufMut, BytesMut};
 pub use error::KcpErr;
-
-use std::task::{Context, Poll};
 
 use crate::ext::AsyncWriteExt;
 use crate::AsyncWrite;
@@ -30,6 +26,13 @@ const KCP_CMD_PUSH: u8 = 81;
 const KCP_CMD_ACK: u8 = 82;
 const KCP_CMD_WASK: u8 = 83;
 const KCP_CMD_WINS: u8 = 84;
+
+const KCP_CMD_CLS: u8 = 85;
+
+
+const KCP_CLS_NO: u8 = 0;
+const KCP_CLS_YES: u8 = 1;
+
 
 const KCP_ASK_SEND: u32 = 1;
 const KCP_ASK_TELL: u32 = 2;
@@ -110,6 +113,12 @@ impl KcpSegment {
             xmit: 0,
             data,
         }
+    }
+
+    fn close() -> Self {
+        let mut seg = Self::new_with_data(BytesMut::new());
+        seg.cmd = KCP_CLS_YES;
+        seg
     }
 
     fn encode(&self, buf: &mut BytesMut) {
@@ -221,6 +230,7 @@ pub struct Kcp<Output> {
     /// Enable stream mode
     stream: bool,
 
+    close: u8,
     /// Get conv from the next input call
     input_conv: bool,
 
@@ -286,11 +296,11 @@ where
             ts_flush: KCP_INTERVAL,
             ssthresh: KCP_THRESH_INIT,
             input_conv: false,
+            close: KCP_CLS_NO,
             output: output,
         }
     }
 
-    
     /// Check buffer size without actually consuming it
     pub fn peeksize(&self) -> KcpResult<usize> {
         match self.rcv_queue.front() {
@@ -627,7 +637,7 @@ where
             }
 
             match cmd {
-                KCP_CMD_PUSH | KCP_CMD_ACK | KCP_CMD_WASK | KCP_CMD_WINS => {}
+                KCP_CMD_PUSH | KCP_CMD_ACK | KCP_CMD_WASK | KCP_CMD_WINS | KCP_CMD_CLS => {}
                 _ => {
                     debug!("input cmd={} unrecognized", cmd);
                     return Err(KcpErr::UnsupportedCmd(cmd).into());
@@ -698,6 +708,10 @@ where
                 KCP_CMD_WINS => {
                     // Do nothing
                     trace!("input wins: {}", wnd);
+                }
+                KCP_CMD_CLS => {
+                    debug!("收到对端关闭消息");
+                    self.close = KCP_CLS_YES;
                 }
                 _ => unreachable!(),
             }
@@ -967,6 +981,15 @@ where
         Ok(())
     }
 
+    pub fn close(&mut self) -> KcpResult<()> {
+        if self.close == KCP_CLS_NO {
+            self.close = KCP_CLS_YES;
+            Ok(())
+        } else {
+            Err(KcpErr::Closed.into())
+        }
+    }
+
     /// Update state every 10ms ~ 100ms.
     ///
     /// Or you can ask `check` when to call this again.
@@ -992,6 +1015,8 @@ where
             }
             self.flush().await?;
         }
+
+        
 
         Ok(())
     }
