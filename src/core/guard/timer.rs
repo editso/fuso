@@ -2,9 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::{future::Future, pin::Pin, task::Poll, time::Duration};
 
-use crate::ext::AsyncWriteExt;
-use crate::time;
-use crate::{ext::AsyncReadExt, AsyncRead, AsyncWrite, BoxedFuture};
+use crate::{AsyncRead, AsyncWrite, BoxedFuture};
 
 pub struct Timer<T> {
     target: Rc<RefCell<T>>,
@@ -121,13 +119,13 @@ where
         let mut fut: BoxedFuture<'static, crate::Result<usize>> = match self.write_fut.take() {
             Some(fut) => fut,
             None => Box::pin(async move {
-                let mut target = target.try_borrow_mut()?;
-                let buf = unsafe {
-                    match std::ptr::slice_from_raw_parts(buf, len).as_ref() {
-                        Some(buf) => buf,
-                        None => return Err(crate::error::Kind::Memory.into()),
-                    }
-                };
+                // let mut target = target.try_borrow_mut()?;
+                // let buf = unsafe {
+                //     match std::ptr::slice_from_raw_parts(buf, len).as_ref() {
+                //         Some(buf) => buf,
+                //         None => return Err(crate::error::Kind::Memory.into()),
+                //     }
+                // };
 
                 // match time::wait_for(timeout, target.write(buf)).await {
                 //     Ok(ready) => ready,

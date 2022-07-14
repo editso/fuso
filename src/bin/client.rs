@@ -35,6 +35,7 @@ async fn main() -> fuso::Result<()> {
         .await
 }
 
+
 #[cfg(feature = "fuso-web")]
 #[tokio::main]
 async fn main() {}

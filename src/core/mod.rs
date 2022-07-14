@@ -11,6 +11,7 @@ pub mod encryption;
 pub mod generator;
 pub mod guard;
 pub mod protocol;
+pub mod mixing;
 
 use std::cell::RefCell;
 use std::pin::Pin;

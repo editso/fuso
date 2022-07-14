@@ -3,7 +3,7 @@
 async fn main() -> fuso::Result<()> {
     use std::time::Duration;
 
-    use fuso::{Handshake, Socket, UdpForwardFactory};
+    use fuso::{Socket, TokioUdpServerFactory, UdpForwardFactory};
 
     env_logger::builder()
         .filter_module("fuso", log::LevelFilter::Debug)
@@ -12,7 +12,7 @@ async fn main() -> fuso::Result<()> {
         .init();
 
     fuso::builder_server_with_tokio()
-        .with_handshake(Handshake)
+        .with_kcp_accepter(TokioUdpServerFactory)
         .with_penetrate()
         .read_timeout(None)
         .max_wait_time(Duration::from_secs(5))
@@ -22,13 +22,14 @@ async fn main() -> fuso::Result<()> {
         .with_socks_unpacker()
         .with_udp_forward(UdpForwardFactory)
         .build()
-        .bind(Socket::Tcp(([0, 0, 0, 0], 8888).into()))
+        .bind(Socket::Mix(([0, 0, 0, 0], 8888).into()))
         .run()
         .await
         .expect("server start failed");
 
     Ok(())
 }
+
 
 #[cfg(feature = "fuso-web")]
 #[tokio::main]

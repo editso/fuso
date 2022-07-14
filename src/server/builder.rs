@@ -11,6 +11,7 @@ type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>>
 
 pub struct ServerBuilder<E, SF, CF, S> {
     pub(crate) executor: E,
+    pub(crate) is_mixed: bool,
     pub(crate) handshake: Option<FactoryTransfer<S>>,
     pub(crate) server_factory: ServerFactory<SF, CF>,
 }
