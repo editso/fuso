@@ -36,7 +36,7 @@ pub enum State<C> {
     Close(Session<C>),
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Increment(Arc<Mutex<u32>>);
 
 #[pin_project::pin_project]
@@ -162,7 +162,9 @@ where
 }
 
 impl<C> KcpCore<C>
-where C: UdpSocket + Send + Unpin  + 'static{
+where
+    C: UdpSocket + Send + Unpin + 'static,
+{
     fn try_wake_read(&mut self) {
         if let Some(waker) = self.read_waker.take() {
             waker.wake();
@@ -175,12 +177,10 @@ where C: UdpSocket + Send + Unpin  + 'static{
         }
     }
 
-    async fn close(&self) -> crate::Result<()>{
+    async fn close(&self) -> crate::Result<()> {
         self.kcp.lock().await.close()
     }
-
 }
-
 
 impl<C> Session<C>
 where
@@ -202,7 +202,7 @@ where
         Self { target, kcore }
     }
 
-    pub async fn close(&self) -> crate::Result<()>{
+    pub async fn close(&self) -> crate::Result<()> {
         self.kcore.close().await
     }
 
@@ -524,6 +524,12 @@ impl<C> Clone for Session<C> {
     }
 }
 
+impl Default for Increment {
+    fn default() -> Self {
+        Self(Arc::new(Mutex::new(1)))
+    }
+}
+
 impl<C> KcpConnector<C>
 where
     C: UdpSocket + Unpin + Clone + Send + Sync + 'static,
@@ -597,11 +603,13 @@ where
                     break next_conv;
                 }
 
+                log::debug!("conv={}", next_conv);
+
+                next_conv = self.increment.next().await;
+
                 if next_conv == conv {
                     return Err(KcpErr::NoMoreConv.into());
                 }
-
-                next_conv = self.increment.next().await;
             }
         };
 
@@ -638,12 +646,11 @@ impl Increment {
 
     pub async fn next(&self) -> u32 {
         let mut inc = self.0.lock().await;
-        let (next, overflow) = inc.overflowing_add(1);
-        *inc = if overflow { 0 } else { next };
-        next
+        let (_, overflow) = inc.overflowing_add(1);
+        *inc = if overflow { 0 } else { *inc + 1 };
+        *inc
     }
 }
-
 
 impl<C> Drop for KcpStream<C> {
     fn drop(&mut self) {

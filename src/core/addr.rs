@@ -24,7 +24,8 @@ pub enum Socket {
     Tcp(Addr),
     Kcp(Addr),
     Quic(Addr),
-    UdpForward(Addr)
+    Mix(Addr),
+    UdpForward(Addr),
 }
 
 impl From<SocketAddr> for Addr {
@@ -110,7 +111,8 @@ impl Display for Socket {
             Socket::Tcp(tcp) => format!("<tcp({})>", tcp),
             Socket::Kcp(kcp) => format!("<kcp({})>", kcp),
             Socket::Quic(quic) => format!("<quic({})>", quic),
-            Socket::UdpForward(addr) => format!("<udp_forward({})>", addr)
+            Self::Mix(mix) => format!("<mix({})>", mix),
+            Socket::UdpForward(addr) => format!("<udp_forward({})>", addr),
         };
 
         write!(f, "{}", fmt)
@@ -201,12 +203,28 @@ impl Addr {
 
 impl Socket {
     pub fn addr(&self) -> &Addr {
+        &self
+    }
+
+    pub fn is_mixed(&self) -> bool {
         match self {
-            Socket::Udp(addr) => addr,
-            Socket::Tcp(addr) => addr,
-            Socket::Kcp(addr) => addr,
-            Socket::Quic(addr) => addr,
-            Self::UdpForward(addr) => addr
+            Socket::Mix(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn if_stream_mixed(self, mixed: bool) -> Self {
+        if !mixed {
+            self
+        } else {
+            Socket::Mix(match self {
+                Socket::Tcp(addr) => addr,
+                Socket::Quic(addr) => addr,
+                Socket::Mix(addr) => addr,
+                Socket::Kcp(addr) => addr,
+                Socket::Udp(addr) => return Socket::Udp(addr),
+                Socket::UdpForward(addr) => return Socket::UdpForward(addr),
+            })
         }
     }
 
@@ -219,7 +237,8 @@ impl Socket {
                 Socket::Tcp(_) => Self::Tcp(addr),
                 Socket::Kcp(_) => Self::Kcp(addr),
                 Socket::Quic(_) => Self::Quic(addr),
-                Socket::UdpForward(addr) => Self::UdpForward(addr)
+                Socket::Mix(_) => Self::Mix(addr),
+                Socket::UdpForward(addr) => Self::UdpForward(addr),
             }
         } else {
             self
@@ -243,7 +262,8 @@ impl Deref for Socket {
             Socket::Tcp(addr) => addr,
             Socket::Kcp(addr) => addr,
             Socket::Quic(addr) => addr,
-            Socket::UdpForward(addr) =>addr
+            Socket::UdpForward(addr) => addr,
+            Socket::Mix(addr) => addr,
         }
     }
 }
@@ -255,7 +275,8 @@ impl DerefMut for Socket {
             Socket::Tcp(addr) => addr,
             Socket::Kcp(addr) => addr,
             Socket::Quic(addr) => addr,
-            Self::UdpForward(addr) => addr
+            Self::UdpForward(addr) => addr,
+            Socket::Mix(addr) => addr,
         }
     }
 }

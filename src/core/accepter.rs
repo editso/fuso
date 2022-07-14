@@ -10,6 +10,8 @@ pub trait Accepter {
     fn poll_accept(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<Self::Stream>>;
 }
 
+pub struct AccepterWrapper<S>(Box<dyn Accepter<Stream = S> + Send + Unpin + 'static>);
+
 pub trait UdpSocket {
     fn poll_recv_from(
         self: Pin<&Self>,
@@ -209,3 +211,24 @@ where
         Pin::new(&**self).poll_send_to(cx, addr, buf)
     }
 }
+
+impl<S> AccepterWrapper<S> {
+    pub fn wrap<A>(accepter: A) -> Self
+    where
+        A: Accepter<Stream = S> + Send + Unpin + 'static,
+    {
+        AccepterWrapper(Box::new(accepter))
+    }
+}
+
+impl<S> Accepter for AccepterWrapper<S>
+where
+    S: Unpin,
+{
+    type Stream = S;
+
+    fn poll_accept(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<Self::Stream>> {
+        Pin::new(&mut *self.0).poll_accept(cx)
+    }
+}
+

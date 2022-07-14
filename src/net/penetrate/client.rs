@@ -225,7 +225,7 @@ where
                     log::debug!("{}", socket);
 
                     let (remote, local) = self.socket.clone();
-                    let s1_socket = remote;
+                    let s1_socket = remote.if_stream_mixed(socket.is_mixed());
                     let s2_socket = socket.default_or(local);
                     let s1_connector = self.client_factory.clone();
                     let s2_connector = self.connector_factory.clone();

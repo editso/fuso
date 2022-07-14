@@ -14,7 +14,7 @@ mod tests {
 
     use crate::{ext::{AsyncReadExt, AsyncWriteExt}, AccepterExt};
 
-    use super::{KcpListener, KcpConnector};
+    use super::{KcpListener, KcpConnector, Increment};
 
     fn init_logger() {
         env_logger::builder()
@@ -22,6 +22,7 @@ mod tests {
             .init();
     }
 
+  
     #[test]
     pub fn test_kcp_server() {
         init_logger();

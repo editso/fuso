@@ -11,6 +11,7 @@ use super::server::{Config, Peer, PenetrateFactory};
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
 
 pub struct PenetrateBuilder<E, SF, CF, S> {
+    is_mixed: bool,
     max_wait_time: Duration,
     heartbeat_timeout: Duration,
     read_timeout: Option<Duration>,
@@ -22,6 +23,7 @@ pub struct PenetrateBuilder<E, SF, CF, S> {
 impl<E, SF, CF, S> ServerBuilder<E, SF, CF, S> {
     pub fn with_penetrate(self) -> PenetrateBuilder<E, SF, CF, S> {
         PenetrateBuilder {
+            is_mixed: self.is_mixed,
             write_timeout: None,
             read_timeout: None,
             max_wait_time: Duration::from_secs(10),
@@ -76,6 +78,7 @@ where
     {
         self.server_builder.build(PenetrateFactory {
             config: Config {
+                is_mixed: self.is_mixed,
                 max_wait_time: self.max_wait_time,
                 heartbeat_timeout: self.heartbeat_timeout,
                 read_timeout: self.read_timeout,

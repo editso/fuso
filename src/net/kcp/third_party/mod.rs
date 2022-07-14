@@ -1,4 +1,5 @@
 //! KCP https://github.com/Matrix-Zhang/kcp
+#![allow(unused)]
 
 mod error;
 

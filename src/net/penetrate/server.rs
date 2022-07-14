@@ -55,6 +55,7 @@ pub struct WaitFor<T> {
 
 #[derive(Debug, Clone)]
 pub struct Config {
+    pub is_mixed: bool,
     pub max_wait_time: Duration,
     pub heartbeat_timeout: Duration,
     pub read_timeout: Option<Duration>,
@@ -190,6 +191,7 @@ where
         let timeout = self.config.max_wait_time;
         let wait_for = self.wait_for.clone();
         let fallback_strict_mode = self.config.fallback_strict_mode;
+        let is_mixed = self.config.is_mixed;
 
         let fut = async move {
             let mut fallback = Fallback::new(stream, fallback_strict_mode);
@@ -202,7 +204,8 @@ where
                     let future = async move {
                         // 通知客户端建立连接
 
-                        let message = Message::Map(id, socket).to_packet_vec();
+                        let message =
+                            Message::Map(id, { socket.if_stream_mixed(is_mixed) }).to_packet_vec();
 
                         log::debug!("notify the client to create the mapping");
 

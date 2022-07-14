@@ -157,7 +157,7 @@ impl From<tokio::time::error::Elapsed> for Error {
 }
 
 impl From<async_channel::RecvError> for Error {
-    fn from(e: async_channel::RecvError) -> Self {
+    fn from(_: async_channel::RecvError) -> Self {
         Kind::Channel.into()
     }
 }
