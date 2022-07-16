@@ -4,8 +4,8 @@ pub use factory::*;
 mod accepter;
 pub use accepter::*;
 
-pub mod addr;
-pub use addr::*;
+mod socket;
+pub use socket::*;
 
 pub mod encryption;
 pub mod generator;

@@ -40,7 +40,7 @@ where
     {
         Fuso(Server {
             handler: Arc::new(handler),
-            bind: Socket::Tcp(([0, 0, 0, 0], 0).into()),
+            bind: Socket::tcp(([0, 0, 0, 0], 0)),
             executor: self.executor,
             factory: self.server_factory,
             handshake: self.handshake.map(Arc::new),

@@ -20,7 +20,7 @@ macro_rules! async_connect {
         let socket = $socket.clone();
         let mut writer = $writer.clone();
         async move {
-            log::debug!("try to connect to {}", socket);
+            log::debug!("try connect to {}", socket);
             match $connector.call(socket).await {
                 Ok(ok) => Ok(ok),
                 Err(err) => {
@@ -263,8 +263,14 @@ where
 
                         Ok(State::Ready({
                             match s2 {
-                                Mapper::Forward(s2) => Box::pin(io::forward(s1, s2)),
-                                Mapper::Consume(s2) => s2.call(s1),
+                                Mapper::Forward(s2) => {
+                                    log::debug!("forwarding");
+                                    Box::pin(io::forward(s1, s2))
+                                }
+                                Mapper::Consume(s2) => {
+                                    log::debug!("consumed");
+                                    s2.call(s1)
+                                }
                             }
                         }))
                     };

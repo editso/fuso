@@ -62,7 +62,7 @@ impl<T> Fallback<T> {
         Backward(self)
     }
 
-    pub fn force_clear(&mut self) {
+    pub fn consume_back_data(&mut self) {
         self.marked_buf.take();
         self.backed_buf.take();
     }

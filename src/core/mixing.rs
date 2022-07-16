@@ -48,8 +48,6 @@ where
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<crate::Result<Self::Stream>> {
-        log::debug!("poll mixed listening");
-
         for accepter in self.0.iter_mut() {
             match Pin::new(accepter).poll_accept(cx)? {
                 Poll::Ready(s) => return Poll::Ready(Ok(s)),

@@ -8,7 +8,7 @@ use crate::{
     kcp,
     penetrate::SocksClientUdpForward,
     ready, server, Accepter, Addr, ClientFactory, Executor, Factory, FactoryWrapper, FusoStream,
-    ServerFactory, Socket, Transfer, UdpSocket,
+    ServerFactory, Socket, SocketKind, Transfer, UdpSocket,
 };
 
 type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>> + Send + 'static>>;
@@ -44,14 +44,15 @@ impl Factory<Socket> for TokioAccepter {
 
     fn call(&self, socket: Socket) -> Self::Output {
         Box::pin(async move {
-            match socket {
-                Socket::Tcp(addr) | Socket::Mix(addr) => Ok({
-                    TcpListener::bind(format!("{}", addr))
+            Ok({
+                if socket.is_tcp() {
+                    TcpListener::bind(format!("{}", socket.addr()))
                         .await
                         .map(|tcp| TokioTcpListener(tcp))?
-                }),
-                _ => unimplemented!(),
-            }
+                } else {
+                    unimplemented!()
+                }
+            })
         })
     }
 }
@@ -80,31 +81,37 @@ impl Factory<Socket> for TokioConnector {
         let kcp = self.0.clone();
 
         Box::pin(async move {
-            match socket {
-                Socket::Tcp(addr) => Ok({
-                    tokio::net::TcpStream::connect(format!("{}", addr))
-                        .await?
-                        .transfer()
-                }),
-                Socket::Mix(addr) => Ok({
-                    let mut kcp = kcp.lock().await;
+            let addr = socket.addr();
+            match socket.kind() {
+                SocketKind::Tcp => Ok({
+                    if socket.is_mixed() {
+                        let mut kcp = kcp.lock().await;
 
-                    if kcp.is_none() {
-                        log::debug!("kcp ready {}", addr);
-                        let udp = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
-                        udp.connect(format!("{}", addr)).await?;
-                        *kcp = Some(kcp::KcpConnector::new(Arc::new(udp)));
-                    }
+                        if kcp.is_none() {
+                            let addr = socket.addr();
+                            let udp = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
+                            udp.connect(format!("{}", addr)).await?;
+                            *kcp = Some(kcp::KcpConnector::new(Arc::new(udp)));
+                        }
 
-                    if kcp.is_some() {
-                        log::debug!("try kcp connect");
-                        kcp.as_ref().unwrap().connect().await?.transfer()
+                        if kcp.is_some() {
+                            kcp.as_ref().unwrap().connect().await?.transfer()
+                        } else {
+                            tokio::net::TcpStream::connect(format!("{}", addr))
+                                .await
+                                .map_err(|e| {
+                                    log::warn!("connect to {} failed err={}", socket, e);
+                                    e
+                                })?
+                                .transfer()
+                        }
                     } else {
                         tokio::net::TcpStream::connect(format!("{}", addr))
                             .await?
                             .transfer()
                     }
                 }),
+
                 _ => unimplemented!(),
             }
         })
@@ -153,8 +160,9 @@ impl Factory<Socket> for TokioPenetrateConnector {
 
     fn call(&self, socket: Socket) -> Self::Output {
         Box::pin(async move {
-            match socket {
-                Socket::Tcp(addr) | Socket::Mix(addr) => Ok(Mapper::Forward(
+            let addr = socket.addr();
+            match socket.kind() {
+                SocketKind::Tcp => Ok(Mapper::Forward(
                     TcpStream::connect(format!("{}", addr))
                         .await
                         .map_err(|e| {
@@ -163,7 +171,7 @@ impl Factory<Socket> for TokioPenetrateConnector {
                         })?
                         .transfer(),
                 )),
-                Socket::UdpForward(_) => {
+                SocketKind::Ufd => {
                     let factory = FactoryWrapper::wrap(UdpForwardClientFactory);
 
                     Ok(Mapper::Consume(FactoryWrapper::wrap(
@@ -253,7 +261,7 @@ impl Factory<Addr> for UdpForwardClientFactory {
 
             let bind_addr = udp.local_addr()?;
 
-            log::debug!("udp try to connect to {}", addr);
+            log::debug!("try connect to udp {}", addr);
 
             Ok((bind_addr, udp))
         })
@@ -265,13 +273,13 @@ impl Factory<Socket> for TokioUdpServerFactory {
 
     fn call(&self, socket: Socket) -> Self::Output {
         Box::pin(async move {
-            match socket {
-                Socket::Udp(addr) | Socket::Mix(addr) => Ok(Arc::new(
-                    tokio::net::UdpSocket::bind(format!("{}", addr)).await?,
-                )),
-
-                _ => unimplemented!(),
-            }
+            Ok({
+                if socket.is_mixed() || socket.is_kcp() || socket.is_udp() {
+                    Arc::new(tokio::net::UdpSocket::bind(format!("{}", socket.addr())).await?)
+                } else {
+                    unimplemented!()
+                }
+            })
         })
     }
 }

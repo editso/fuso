@@ -22,7 +22,7 @@ async fn main() -> fuso::Result<()> {
         .with_socks_unpacker()
         .with_udp_forward(UdpForwardFactory)
         .build()
-        .bind(Socket::Mix(([0, 0, 0, 0], 8888).into()))
+        .bind(Socket::tcp(([0, 0, 0, 0], 8888)))
         .run()
         .await
         .expect("server start failed");

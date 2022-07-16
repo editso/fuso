@@ -30,10 +30,8 @@ const KCP_CMD_WINS: u8 = 84;
 
 const KCP_CMD_CLS: u8 = 85;
 
-
 const KCP_CLS_NO: u8 = 0;
 const KCP_CLS_YES: u8 = 1;
-
 
 const KCP_ASK_SEND: u32 = 1;
 const KCP_ASK_TELL: u32 = 2;
@@ -114,12 +112,6 @@ impl KcpSegment {
             xmit: 0,
             data,
         }
-    }
-
-    fn close() -> Self {
-        let mut seg = Self::new_with_data(BytesMut::new());
-        seg.cmd = KCP_CLS_YES;
-        seg
     }
 
     fn encode(&self, buf: &mut BytesMut) {
@@ -349,6 +341,10 @@ where
 
     /// Receive data from buffer
     pub fn recv(&mut self, buf: &mut [u8]) -> KcpResult<usize> {
+        if self.close == KCP_CLS_YES {
+            return Err(KcpErr::Closed.into());
+        }
+
         if self.rcv_queue.is_empty() {
             return Err(KcpErr::RecvQueueEmpty.into());
         }
@@ -356,7 +352,7 @@ where
         let peeksize = self.peeksize()?;
 
         if peeksize > buf.len() {
-            debug!("recv peeksize={} bufsize={} too small", peeksize, buf.len());
+            trace!("recv peeksize={} bufsize={} too small", peeksize, buf.len());
             return Err(KcpErr::UserBufTooSmall.into());
         }
 
@@ -389,6 +385,10 @@ where
 
     /// Send bytes into buffer
     pub fn send(&mut self, mut buf: &[u8]) -> KcpResult<usize> {
+        if self.close == KCP_CLS_YES {
+            return Err(KcpErr::Closed.into());
+        }
+
         let mut sent_size = 0;
 
         assert!(self.mss > 0);
@@ -983,18 +983,18 @@ where
     }
 
     pub fn close(&mut self) -> KcpResult<()> {
-        if self.close == KCP_CLS_NO {
-            self.close = KCP_CLS_YES;
-            Ok(())
-        } else {
-            Err(KcpErr::Closed.into())
-        }
+        self.close = KCP_CLS_YES;
+        Ok(())
     }
 
     /// Update state every 10ms ~ 100ms.
     ///
     /// Or you can ask `check` when to call this again.
     pub async fn update(&mut self, current: u32) -> KcpResult<()> {
+        if self.close == KCP_CLS_YES {
+            return Err(KcpErr::Closed.into());
+        }
+
         self.current = current;
 
         if !self.updated {
@@ -1016,8 +1016,6 @@ where
             }
             self.flush().await?;
         }
-
-        
 
         Ok(())
     }

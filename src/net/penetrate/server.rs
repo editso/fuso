@@ -205,7 +205,7 @@ where
                         // 通知客户端建立连接
 
                         let message =
-                            Message::Map(id, { socket.if_stream_mixed(is_mixed) }).to_packet_vec();
+                            Message::Map(id, socket.if_stream_mixed(is_mixed)).to_packet_vec();
 
                         log::debug!("notify the client to create the mapping");
 

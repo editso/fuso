@@ -195,8 +195,8 @@ fn parse_address(cmd: u8, _: u8, atype: u8, data: &[u8]) -> crate::Result<Socket
 
     Ok({
         match cmd {
-            0x01 => Socket::Tcp(addr),
-            0x03 => Socket::Udp(addr),
+            0x01 => Socket::tcp(addr),
+            0x03 => Socket::udp(addr),
             _ => return Err(SocksErr::BindNotSupport.into()),
         }
     })
@@ -400,10 +400,7 @@ where
         _ => return Err(SocksErr::InvalidAddress.into()),
     };
 
-    let addr = match parse_address(0x03, 0, atype, data)? {
-        Socket::Udp(addr) => addr,
-        _ => unsafe { std::hint::unreachable_unchecked() },
-    };
+    let addr = parse_address(0x03, 0, atype, data)?.into_addr();
 
     let message = Message::Forward(addr).to_packet_vec();
 
@@ -427,7 +424,7 @@ where
 {
     let mut buf = Vec::new();
     buf.extend(&[0x00, 0x00, 0x00]);
-    
+
     match origin {
         SocketAddr::V4(v1) => {
             buf.push(0x01);

@@ -5,7 +5,7 @@ use fuso::{penetrate::client::PenetrateClientFactory, Socket};
 #[cfg(feature = "fuso-rt-tokio")]
 #[tokio::main]
 async fn main() -> fuso::Result<()> {
-    use fuso::TokioPenetrateConnector;
+    use fuso::{TokioPenetrateConnector, Addr};
 
     env_logger::builder()
         .filter_module("fuso", log::LevelFilter::Debug)
@@ -15,18 +15,18 @@ async fn main() -> fuso::Result<()> {
 
     fuso::builder_client_with_tokio()
         .build(
-            Socket::Tcp(
-                option_env!("ENV_SERVER")
-                    .unwrap_or("0.0.0.0:8888")
-                    .parse()
+            Socket::tcp(
+                    std::env::var("ENV_SERVE")
+                    .unwrap_or(String::from("127.0.0.1:8888"))
+                    .parse::<Addr>()
                     .unwrap(),
             ),
             PenetrateClientFactory {
                 connector_factory: Arc::new(TokioPenetrateConnector),
                 socket: {
                     (
-                        Socket::Tcp(([0, 0, 0, 0], 9999).into()),
-                        Socket::Tcp(([127, 0, 0, 1], 22).into()),
+                        Socket::tcp(([0, 0, 0, 0], 9999)),
+                        Socket::tcp(([127, 0, 0, 1], 22)),
                     )
                 },
             },
@@ -34,7 +34,6 @@ async fn main() -> fuso::Result<()> {
         .run()
         .await
 }
-
 
 #[cfg(feature = "fuso-web")]
 #[tokio::main]

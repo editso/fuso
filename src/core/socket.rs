@@ -9,6 +9,24 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Error, InvalidAddr};
 
+macro_rules! impl_socket {
+    ($name: ident, $is: ident, $typ: ident) => {
+        impl Socket {
+            pub fn $name<A: Into<Addr>>(addr: A) -> Self {
+                Self {
+                    target: addr.into(),
+                    kind: SocketKind::$typ,
+                    is_mixed: false,
+                }
+            }
+
+            pub fn $is(&self) -> bool {
+                self.kind == SocketKind::$typ
+            }
+        }
+    };
+}
+
 #[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum InnerAddr {
     Socket(SocketAddr),
@@ -18,15 +36,28 @@ pub enum InnerAddr {
 #[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Addr(InnerAddr);
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-pub enum Socket {
-    Udp(Addr),
-    Tcp(Addr),
-    Kcp(Addr),
-    Quic(Addr),
-    Mix(Addr),
-    UdpForward(Addr),
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+pub enum SocketKind {
+    Kcp,
+    Udp,
+    Tcp,
+    Quic,
+    /// udo forward
+    Ufd,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct Socket {
+    kind: SocketKind,
+    target: Addr,
+    is_mixed: bool,
+}
+
+impl_socket!(udp, is_udp, Udp);
+impl_socket!(kcp, is_kcp, Kcp);
+impl_socket!(tcp, is_tcp, Tcp);
+impl_socket!(quic, is_quic, Quic);
+impl_socket!(ufd, is_ufd, Ufd);
 
 impl From<SocketAddr> for Addr {
     fn from(addr: SocketAddr) -> Self {
@@ -82,6 +113,8 @@ impl FromStr for Addr {
                     .parse::<u16>()
                     .map_err(|_| Error::from(InvalidAddr::Domain(format!("{}", s))))?;
 
+                log::debug!("{}:{}", host, port);
+
                 Ok((host.replace(":", ""), port).into())
             }
         }
@@ -104,18 +137,53 @@ impl Display for Addr {
     }
 }
 
-impl Display for Socket {
+impl SocketKind {
+    pub fn is_kcp(&self) -> bool {
+        self == &Self::Kcp
+    }
+
+    pub fn is_udp(&self) -> bool {
+        self == &Self::Udp
+    }
+
+    pub fn is_tcp(&self) -> bool {
+        self == &Self::Tcp
+    }
+
+    pub fn is_quic(&self) -> bool {
+        self == &Self::Quic
+    }
+}
+
+impl Display for SocketKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let fmt = match self {
-            Socket::Udp(udp) => format!("<udp({})>", udp),
-            Socket::Tcp(tcp) => format!("<tcp({})>", tcp),
-            Socket::Kcp(kcp) => format!("<kcp({})>", kcp),
-            Socket::Quic(quic) => format!("<quic({})>", quic),
-            Self::Mix(mix) => format!("<mix({})>", mix),
-            Socket::UdpForward(addr) => format!("<udp_forward({})>", addr),
+            SocketKind::Kcp => "kcp",
+            SocketKind::Udp => "udp",
+            SocketKind::Tcp => "tcp",
+            SocketKind::Quic => "quic",
+            SocketKind::Ufd => "ufd",
         };
 
         write!(f, "{}", fmt)
+    }
+}
+
+impl Display for Socket {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let fmt_addr = {
+            if self.is_default() {
+                format!("<default>")
+            } else {
+                format!("{}", self.addr())
+            }
+        };
+
+        if self.is_mixed() && !self.is_ufd() {
+            write!(f, "mixed addr={}", fmt_addr)
+        } else {
+            write!(f, "{} addr={}", self.kind(), fmt_addr)
+        }
     }
 }
 
@@ -202,53 +270,32 @@ impl Addr {
 }
 
 impl Socket {
+    pub fn is_mixed(&self) -> bool {
+        self.is_mixed
+    }
+
+    pub fn into_addr(self) -> Addr {
+        self.target
+    }
+
     pub fn addr(&self) -> &Addr {
         &self
     }
 
-    pub fn is_mixed(&self) -> bool {
-        match self {
-            Socket::Mix(_) => true,
-            _ => false,
-        }
+    pub fn kind(&self) -> SocketKind {
+        self.kind
     }
 
-    pub fn if_stream_mixed(self, mixed: bool) -> Self {
-        if !mixed {
-            self
-        } else {
-            Socket::Mix(match self {
-                Socket::Tcp(addr) => addr,
-                Socket::Quic(addr) => addr,
-                Socket::Mix(addr) => addr,
-                Socket::Kcp(addr) => addr,
-                Socket::Udp(addr) => return Socket::Udp(addr),
-                Socket::UdpForward(addr) => return Socket::UdpForward(addr),
-            })
-        }
+    pub fn if_stream_mixed(mut self, mixed: bool) -> Self {
+        self.is_mixed = mixed;
+        self
     }
 
-    pub fn default_or<A: Into<Self>>(self, addr: A) -> Self {
-        if self.is_default() {
-            let addr: Self = addr.into();
-            let addr = addr.addr().clone();
-            match self {
-                Socket::Udp(_) => Self::Udp(addr),
-                Socket::Tcp(_) => Self::Tcp(addr),
-                Socket::Kcp(_) => Self::Kcp(addr),
-                Socket::Quic(_) => Self::Quic(addr),
-                Socket::Mix(_) => Self::Mix(addr),
-                Socket::UdpForward(addr) => Self::UdpForward(addr),
-            }
+    pub fn default_or<S: Into<Self>>(self, socket: S) -> Self {
+        if !self.is_ufd() && self.is_default() {
+            socket.into()
         } else {
             self
-        }
-    }
-
-    pub fn is_udp(&self) -> bool {
-        match self {
-            Self::Udp(_) => true,
-            _ => false,
         }
     }
 }
@@ -257,32 +304,22 @@ impl Deref for Socket {
     type Target = Addr;
 
     fn deref(&self) -> &Self::Target {
-        match self {
-            Socket::Udp(addr) => addr,
-            Socket::Tcp(addr) => addr,
-            Socket::Kcp(addr) => addr,
-            Socket::Quic(addr) => addr,
-            Socket::UdpForward(addr) => addr,
-            Socket::Mix(addr) => addr,
-        }
+        &self.target
     }
 }
 
 impl DerefMut for Socket {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        match self {
-            Socket::Udp(addr) => addr,
-            Socket::Tcp(addr) => addr,
-            Socket::Kcp(addr) => addr,
-            Socket::Quic(addr) => addr,
-            Self::UdpForward(addr) => addr,
-            Socket::Mix(addr) => addr,
-        }
+        &mut self.target
     }
 }
 
 impl Default for Socket {
     fn default() -> Self {
-        Self::Tcp(([0, 0, 0, 0], 0).into())
+        Self {
+            target: 0.into(),
+            kind: SocketKind::Tcp,
+            is_mixed: false,
+        }
     }
 }

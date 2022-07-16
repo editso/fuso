@@ -94,6 +94,8 @@ where
     }
 }
 
+
+#[allow(unused)]
 impl<T> AsyncWrite for Timer<T>
 where
     T: AsyncWrite + Unpin + 'static,
@@ -164,6 +166,8 @@ where
     }
 }
 
+
+#[allow(unused)]
 impl<T> AsyncRead for Timer<T>
 where
     T: AsyncRead + Unpin + 'static,

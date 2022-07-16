@@ -42,9 +42,12 @@ where
             let socket = self.socket.clone();
 
             let stream = match self.client_factory.connect(socket).await {
-                Ok(stream) => stream,
+                Ok(stream) => {
+                    log::info!("connection established");
+                    stream
+                }
                 Err(e) => {
-                    log::warn!("{}", e);
+                    log::warn!("connect to {} failed err={}", self.socket, e);
                     time::sleep(Duration::from_secs(2)).await;
                     continue;
                 }
@@ -75,7 +78,6 @@ where
                 match generate.next().await {
                     Ok(None) => break,
                     Ok(Some(fut)) => {
-                        log::debug!("spawn task");
                         executor.spawn(fut);
                     }
                     Err(e) => {

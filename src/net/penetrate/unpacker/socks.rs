@@ -10,7 +10,7 @@ use crate::{
     protocol::{make_packet, AsyncRecvPacket, AsyncSendPacket, Message, TryToMessage},
     select::Select,
     socks::{self, NoAuthentication, Socks},
-    Addr, Factory, FactoryWrapper, Kind, Socket, Stream, UdpReceiverExt, UdpSocket,
+    Addr, Factory, FactoryWrapper, Kind, Socket, SocketKind, Stream, UdpReceiverExt, UdpSocket,
 };
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
@@ -85,14 +85,14 @@ where
                 Ok(socket) => socket,
             };
 
-            stream.force_clear();
+            stream.consume_back_data();
 
-            match socket {
-                Socket::Tcp(addr) => Ok(Adapter::Accept(Peer::Visitor(
+            match socket.kind() {
+                SocketKind::Tcp => Ok(Adapter::Accept(Peer::Visitor(
                     Visitor::Forward(stream),
-                    Socket::Tcp(addr),
+                    socket,
                 ))),
-                Socket::Udp(_) => Ok({
+                SocketKind::Udp => Ok({
                     socks::finish_udp_forward(&mut stream).await?;
                     Adapter::Accept(Peer::Finished(stream))
                 }),
@@ -114,8 +114,6 @@ where
         Box::pin(async move {
             let mut stream = stream;
 
-            log::debug!("call socks5");
-
             let socket = match stream
                 .socks5_handshake(&mut NoAuthentication::default())
                 .await
@@ -125,23 +123,23 @@ where
                 Ok(socket) => socket,
             };
 
-            stream.force_clear();
+            stream.consume_back_data();
 
-            match socket {
-                Socket::Tcp(addr) => Ok(Adapter::Accept(Peer::Visitor(
+            match socket.kind() {
+                SocketKind::Tcp => Ok(Adapter::Accept(Peer::Visitor(
                     Visitor::Forward(stream),
-                    Socket::Tcp(addr),
+                    socket,
                 ))),
-                Socket::Udp(addr) => Ok({
-                    log::debug!("addr={}", addr);
+                SocketKind::Udp => Ok({
                     let stream = stream.into_inner();
                     let udp_forward = SocksUdpForward {
                         udp_factory,
                         guard: std::sync::Mutex::new(Some(stream)),
                     };
+
                     Adapter::Accept(Peer::Visitor(
                         Visitor::Consume(FactoryWrapper::wrap(udp_forward)),
-                        Socket::UdpForward(addr),
+                        Socket::ufd(socket.into_addr()),
                     ))
                 }),
                 _ => unsafe { std::hint::unreachable_unchecked() },
@@ -218,6 +216,8 @@ where
 
                 let packet = s2.recv_packet().await?;
 
+                log::debug!("receive forwarding data {}bytes", n);
+
                 socks::send_packed_udp_forward_message(
                     &mut udp,
                     &addr,
@@ -288,6 +288,7 @@ where
 
             stream.send_packet(&packet).await?;
 
+            stream.flush().await?;
             stream.close().await
         })
     }

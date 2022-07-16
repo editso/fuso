@@ -77,7 +77,6 @@ where
                             break;
                         }
                         Ok(Some(fut)) => {
-                            log::debug!("start a new task");
                             executor.spawn(fut);
                         }
                     }
