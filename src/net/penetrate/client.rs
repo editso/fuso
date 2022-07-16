@@ -95,10 +95,7 @@ where
 
             match message {
                 Message::Bind(Bind::Bind(mut remote_bind)) => {
-                    log::info!(
-                        "The server created the listener successfully and bound to {}",
-                        remote_bind
-                    );
+                    log::info!("the server is bound to {}", remote_bind);
 
                     if remote_bind.is_ip_unspecified() {
                         remote_bind.from_set_host(client_factory.default_socket());
@@ -225,7 +222,11 @@ where
                     log::debug!("{}", socket);
 
                     let (remote, local) = self.socket.clone();
-                    let s1_socket = remote.if_stream_mixed(socket.is_mixed());
+
+                    let s1_socket = remote
+                        .if_stream_mixed(socket.is_mixed())
+                        .with_kind(socket.kind());
+
                     let s2_socket = socket.default_or(local);
                     let s1_connector = self.client_factory.clone();
                     let s2_connector = self.connector_factory.clone();

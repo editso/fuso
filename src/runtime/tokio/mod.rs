@@ -48,6 +48,10 @@ impl Factory<Socket> for TokioAccepter {
                 if socket.is_tcp() {
                     TcpListener::bind(format!("{}", socket.addr()))
                         .await
+                        .map_err(|e| {
+                            log::warn!("tcp bind failed addr={}, err={}", socket.addr(), e);
+                            e
+                        })
                         .map(|tcp| TokioTcpListener(tcp))?
                 } else {
                     unimplemented!()
@@ -81,39 +85,36 @@ impl Factory<Socket> for TokioConnector {
         let kcp = self.0.clone();
 
         Box::pin(async move {
-            let addr = socket.addr();
-            match socket.kind() {
-                SocketKind::Tcp => Ok({
-                    if socket.is_mixed() {
-                        let mut kcp = kcp.lock().await;
+            Ok({
+                let addr = socket.addr();
 
-                        if kcp.is_none() {
-                            let addr = socket.addr();
-                            let udp = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
-                            udp.connect(format!("{}", addr)).await?;
-                            *kcp = Some(kcp::KcpConnector::new(Arc::new(udp)));
-                        }
+                if !socket.is_mixed() {
+                    tokio::net::TcpStream::connect(format!("{}", addr))
+                        .await?
+                        .transfer()
+                } else {
+                    let mut kcp = kcp.lock().await;
 
-                        if kcp.is_some() {
-                            kcp.as_ref().unwrap().connect().await?.transfer()
-                        } else {
-                            tokio::net::TcpStream::connect(format!("{}", addr))
-                                .await
-                                .map_err(|e| {
-                                    log::warn!("connect to {} failed err={}", socket, e);
-                                    e
-                                })?
-                                .transfer()
-                        }
+                    if kcp.is_none() {
+                        let addr = socket.addr();
+                        let udp = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
+                        udp.connect(format!("{}", addr)).await?;
+                        *kcp = Some(kcp::KcpConnector::new(Arc::new(udp)));
+                    }
+
+                    if kcp.is_some() && socket.is_ufd() {
+                        kcp.as_ref().unwrap().connect().await?.transfer()
                     } else {
                         tokio::net::TcpStream::connect(format!("{}", addr))
-                            .await?
+                            .await
+                            .map_err(|e| {
+                                log::warn!("connect to {} failed err={}", socket, e);
+                                e
+                            })?
                             .transfer()
                     }
-                }),
-
-                _ => unimplemented!(),
-            }
+                }
+            })
         })
     }
 }
@@ -275,7 +276,14 @@ impl Factory<Socket> for TokioUdpServerFactory {
         Box::pin(async move {
             Ok({
                 if socket.is_mixed() || socket.is_kcp() || socket.is_udp() {
-                    Arc::new(tokio::net::UdpSocket::bind(format!("{}", socket.addr())).await?)
+                    Arc::new({
+                        tokio::net::UdpSocket::bind(format!("{}", socket.addr()))
+                            .await
+                            .map_err(|e| {
+                                log::warn!("udp bind failed addr={}, err={}", socket.addr(), e);
+                                e
+                            })?
+                    })
                 } else {
                     unimplemented!()
                 }

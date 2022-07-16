@@ -42,7 +42,7 @@ pub enum SocketKind {
     Udp,
     Tcp,
     Quic,
-    /// udo forward
+    /// udp forward
     Ufd,
 }
 
@@ -286,14 +286,22 @@ impl Socket {
         self.kind
     }
 
+    pub fn with_kind(mut self, kind: SocketKind) -> Self {
+        self.kind = kind;
+        self
+    }
+
     pub fn if_stream_mixed(mut self, mixed: bool) -> Self {
         self.is_mixed = mixed;
         self
     }
 
     pub fn default_or<S: Into<Self>>(self, socket: S) -> Self {
-        if !self.is_ufd() && self.is_default() {
-            socket.into()
+        if self.is_default() {
+            socket
+                .into()
+                .if_stream_mixed(self.is_mixed)
+                .with_kind(self.kind)
         } else {
             self
         }
