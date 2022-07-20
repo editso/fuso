@@ -214,7 +214,7 @@ where
     type Output = crate::Result<()>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        Pin::new(&mut *self.writer).poll_flush(cx)
+        Pin::new(&mut *self.writer).poll_close(cx)
     }
 }
 

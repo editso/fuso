@@ -1,18 +1,15 @@
 use std::{
-    future::Future,
     net::SocketAddr,
+    ops::{Deref, DerefMut},
     pin::Pin,
     sync::Arc,
     task::{Poll, Waker},
 };
 
-use async_mutex::Mutex;
-
-use crate::{guard::buffer::Buffer, AsyncRead, AsyncWrite, UdpSocket};
+use crate::{guard::buffer::Buffer, AsyncRead, AsyncWrite, Kind, UdpSocket};
 
 use super::KcpErr;
 
-type BoxedFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 type Callback = Option<Box<dyn Fn() + Sync + Send + 'static>>;
 
 #[pin_project::pin_project]
@@ -23,7 +20,8 @@ pub struct KOutput<C> {
 }
 
 pub struct KcpCore<C> {
-    pub(crate) kcp: Arc<Mutex<(Buffer<u8>, super::third_party::Kcp<KOutput<C>>)>>,
+    pub(crate) kcp: super::third_party::Kcp<KOutput<C>>,
+    pub(crate) kbuf: Buffer<u8>,
     pub(crate) read_waker: Option<Waker>,
     pub(crate) write_waker: Option<Waker>,
     pub(crate) close_waker: Option<Waker>,
@@ -31,11 +29,22 @@ pub struct KcpCore<C> {
 
 pub struct KcpStream<C> {
     pub(crate) conv: u32,
-    pub(crate) kcore: KcpCore<C>,
+    pub(crate) kcore: Arc<std::sync::Mutex<KcpCore<C>>>,
     /// 在被drop或手动调用close时触发通知内部进行更新
     pub(crate) close_callback: Callback,
-    /// 在每次调用 read, write, flush更新kcp状态
-    pub(crate) lazy_kcp_update: std::sync::Mutex<Option<BoxedFuture<crate::Result<()>>>>,
+}
+
+impl<C> Deref for KcpCore<C> {
+    type Target = super::third_party::Kcp<KOutput<C>>;
+    fn deref(&self) -> &Self::Target {
+        &self.kcp
+    }
+}
+
+impl<C> DerefMut for KcpCore<C> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.kcp
+    }
 }
 
 impl<C> AsyncWrite for KOutput<C>
@@ -64,27 +73,109 @@ where
     }
 }
 
+impl<C> AsyncWrite for KcpCore<C>
+where
+    C: UdpSocket + Unpin + 'static,
+{
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<crate::Result<usize>> {
+        if self.kcp.wait_snd() > 10 {
+            drop(std::mem::replace(
+                &mut self.write_waker,
+                Some(cx.waker().clone()),
+            ));
+            Poll::Pending
+        } else {
+            Poll::Ready(self.kcp.send(buf))
+        }
+    }
+
+    fn poll_close(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<crate::Result<()>> {
+        if self.kcp.wait_snd() > 0 {
+            drop(std::mem::replace(
+                &mut self.close_waker,
+                Some(cx.waker().clone()),
+            ));
+            Poll::Pending
+        } else {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _: &mut std::task::Context<'_>) -> Poll<crate::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl<C> AsyncRead for KcpCore<C>
+where
+    C: UdpSocket + Unpin + 'static,
+{
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut crate::ReadBuf<'_>,
+    ) -> Poll<crate::Result<usize>> {
+        let unfilled = buf.initialize_unfilled();
+
+        if !self.kbuf.is_empty() {
+            let n = self.kbuf.read_to_buffer(unfilled);
+            buf.advance(n);
+            return Poll::Ready(Ok(n));
+        }
+
+        match self.kcp.recv(unfilled) {
+            Ok(n) => {
+                buf.advance(n);
+                return Poll::Ready(Ok(n));
+            }
+            Err(e) => match e.kind() {
+                Kind::Kcp(KcpErr::RecvQueueEmpty | KcpErr::ExpectingFragment) => {
+                    let waker = cx.waker().clone();
+                    drop(std::mem::replace(&mut self.read_waker, Some(waker)));
+                    return Poll::Pending;
+                }
+                Kind::Kcp(KcpErr::UserBufTooSmall) => unsafe {
+                    let size = self.kcp.peeksize().unwrap_unchecked();
+                    let mut data = Vec::with_capacity(size);
+
+                    data.set_len(size);
+
+                    let n = self.kcp.recv(&mut data)?;
+                    data.truncate(n);
+                    let len = unfilled.len();
+
+                    std::ptr::copy(data.as_ptr(), unfilled.as_mut_ptr(), len);
+
+                    buf.advance(len);
+
+                    self.kbuf.push_back(&data[len..]);
+
+                    return Poll::Ready(Ok(len));
+                },
+                _ => Poll::Ready(Err(e)),
+            },
+        }
+    }
+}
+
 impl<C> AsyncRead for KcpStream<C>
 where
     C: UdpSocket + Unpin + 'static,
 {
     fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
+        self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &mut crate::ReadBuf<'_>,
     ) -> std::task::Poll<crate::Result<usize>> {
-        let mut kcp_update = self.lazy_kcp_update.lock()?;
-        match kcp_update.take() {
-            None => return Poll::Ready(Err(KcpErr::Closed.into())),
-            Some(mut kcp) => match Pin::new(&mut kcp).poll(cx)? {
-                Poll::Ready(()) => return Poll::Ready(Ok(0)),
-                Poll::Pending => {
-                    drop(std::mem::replace(&mut *kcp_update, Some(kcp)));
-                    drop(kcp_update);
-                    Pin::new(&mut self.kcore).poll_read(cx, buf)
-                }
-            },
-        }
+        let mut kcore = self.kcore.lock()?;
+        Pin::new(&mut *kcore).poll_read(cx, buf)
     }
 }
 
@@ -93,58 +184,28 @@ where
     C: UdpSocket + Unpin + 'static,
 {
     fn poll_write(
-        mut self: std::pin::Pin<&mut Self>,
+        self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<crate::Result<usize>> {
-        let mut kcp_update = self.lazy_kcp_update.lock()?;
-        match kcp_update.take() {
-            None => Poll::Ready(Err(KcpErr::Closed.into())),
-            Some(mut kcp) => match Pin::new(&mut kcp).poll(cx)? {
-                Poll::Ready(()) => return Poll::Ready(Ok(0)),
-                Poll::Pending => {
-                    drop(std::mem::replace(&mut *kcp_update, Some(kcp)));
-                    drop(kcp_update);
-                    Pin::new(&mut self.kcore).poll_write(cx, buf)
-                }
-            },
-        }
+        let mut kcore = self.kcore.lock()?;
+        Pin::new(&mut *kcore).poll_write(cx, buf)
     }
 
     fn poll_flush(
-        mut self: std::pin::Pin<&mut Self>,
+        self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<crate::Result<()>> {
-        let mut kcp_update = self.lazy_kcp_update.lock()?;
-        match kcp_update.take() {
-            None => return Poll::Ready(Err(KcpErr::Closed.into())),
-            Some(mut kcp) => match Pin::new(&mut kcp).poll(cx)? {
-                Poll::Ready(()) => return Poll::Ready(Ok(())),
-                Poll::Pending => {
-                    drop(std::mem::replace(&mut *kcp_update, Some(kcp)));
-                    drop(kcp_update);
-                    Pin::new(&mut self.kcore).poll_flush(cx)
-                }
-            },
-        }
+        let mut kcore = self.kcore.lock()?;
+        Pin::new(&mut *kcore).poll_flush(cx)
     }
 
     fn poll_close(
-        mut self: std::pin::Pin<&mut Self>,
+        self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<crate::Result<()>> {
-        let mut kcp_checker = self.lazy_kcp_update.lock()?;
-        match kcp_checker.take() {
-            None => return Poll::Ready(Err(KcpErr::Closed.into())),
-            Some(mut kcp) => match Pin::new(&mut kcp).poll(cx)? {
-                Poll::Ready(()) => return Poll::Ready(Ok(())),
-                Poll::Pending => {
-                    std::mem::replace(&mut *kcp_checker, Some(kcp));
-                    drop(kcp_checker);
-                    Pin::new(&mut self.kcore).poll_close(cx)
-                }
-            },
-        }
+        let mut kcore = self.kcore.lock()?;
+        Pin::new(&mut *kcore).poll_close(cx)
     }
 }
 

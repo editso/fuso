@@ -10,21 +10,15 @@ pub use socket::*;
 pub mod encryption;
 pub mod generator;
 pub mod guard;
-pub mod protocol;
 pub mod mixing;
+pub mod protocol;
 
-use std::cell::RefCell;
 use std::pin::Pin;
-use std::rc::Rc;
 use std::sync::Arc;
 
 use std::future::Future;
 
 use crate::{AsyncRead, AsyncWrite, Stream};
-
-
-
-pub type RefContext = Rc<RefCell<Box<dyn Context + Send>>>;
 
 pub struct FusoStream(Box<dyn Stream + Send + 'static>);
 
@@ -34,8 +28,12 @@ pub struct Serve {
     pub(crate) fut: Pin<Box<dyn std::future::Future<Output = crate::Result<()>> + 'static>>,
 }
 
+pub enum Task<T> {
+    Tokio(tokio::task::JoinHandle<T>),
+}
+
 pub trait Executor {
-    fn spawn<F, O>(&self, fut: F)
+    fn spawn<F, O>(&self, fut: F) -> Task<O>
     where
         F: Future<Output = O> + Send + 'static,
         O: Send + 'static;
@@ -51,7 +49,7 @@ impl<E> Executor for Arc<E>
 where
     E: Executor + Send + ?Sized,
 {
-    fn spawn<F, O>(&self, fut: F)
+    fn spawn<F, O>(&self, fut: F) -> Task<O>
     where
         F: Future<Output = O> + Send + 'static,
         O: Send + 'static,
@@ -124,5 +122,15 @@ where
 
     fn transfer(self) -> Self::Output {
         FusoStream::new(self)
+    }
+}
+
+impl<O> Task<O> {
+    pub fn abort(&self) {
+        match self {
+            Task::Tokio(tokio) => {
+                tokio.abort();
+            }
+        }
     }
 }

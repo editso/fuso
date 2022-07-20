@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, pin::Pin, sync::Arc};
+use std::{net::SocketAddr, pin::Pin, sync::Arc, time::Duration};
 
 use crate::{
     ext::{AsyncReadExt, AsyncWriteExt},
@@ -10,7 +10,7 @@ use crate::{
     protocol::{make_packet, AsyncRecvPacket, AsyncSendPacket, Message, TryToMessage},
     select::Select,
     socks::{self, NoAuthentication, Socks},
-    Addr, Factory, FactoryWrapper, Kind, Socket, SocketKind, Stream, UdpReceiverExt, UdpSocket,
+    Addr, Factory, FactoryWrapper, Kind, Socket, SocketKind, Stream, UdpReceiverExt, UdpSocket, time,
 };
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
@@ -214,6 +214,8 @@ where
 
                 socks::parse_and_forward_data(&mut s2, &buf[..n]).await?;
 
+                log::debug!("wait for mapping udp forward data");
+
                 let packet = s2.recv_packet().await?;
 
                 log::debug!("receive forwarding data {}bytes", n);
@@ -235,7 +237,7 @@ where
         };
 
         Box::pin(async move {
-            match fut.await {
+            match time::wait_for(Duration::from_secs(5), fut).await? {
                 Ok(()) => {
                     log::debug!("udp forwarding ends");
                     Ok(())
@@ -271,7 +273,10 @@ where
 
             let (_, mut udp) = factory.call(addr).await?;
 
+            log::debug!("recv udp forward data ...");
             let data = stream.recv_packet().await?;
+            
+            log::debug!("received udp forward data {:?}", data);
 
             let _ = udp.send(&data.payload).await?;
 
@@ -286,9 +291,10 @@ where
 
             let packet = make_packet(buf).encode();
 
+            log::debug!("send pack {:?}", packet);
+
             stream.send_packet(&packet).await?;
 
-            stream.flush().await?;
             stream.close().await
         })
     }

@@ -391,7 +391,13 @@ where
     let frag = data[2];
     let atype = data[3];
 
-    log::debug!("rsv={}, frag={}, atype={}", rsv, frag, atype);
+    log::debug!(
+        "rsv={}, frag={}, atype={} data={:?}",
+        rsv,
+        frag,
+        atype,
+        data
+    );
 
     let (size, data) = match atype {
         0x03 => (data[4] as usize, &data[5..]),
@@ -404,11 +410,17 @@ where
 
     let message = Message::Forward(addr).to_packet_vec();
 
-    s1.send_packet(&message).await?;
+    log::debug!("send forward addr = {:?}", &data[..size]);
+
+    s1.write_all(&message).await?;
+
+    log::debug!("send forward data {:?}", &data[size..]);
 
     let data = make_packet(data[size..].to_vec()).encode();
 
-    s1.send_packet(&data).await?;
+    s1.write_all(&data).await?;
+
+    log::debug!("send forward data success");
 
     Ok(())
 }

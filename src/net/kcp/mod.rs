@@ -1,5 +1,6 @@
 mod third_party;
 
+use bincode::de;
 pub use third_party::KcpErr;
 
 mod stream;
@@ -15,15 +16,15 @@ use std::{
     net::SocketAddr,
     pin::Pin,
     sync::Arc,
-    task::Poll,
+    task::{Poll, Waker},
     time::Duration,
 };
 
 use async_mutex::Mutex;
 
 use crate::{
-    ext::AsyncWriteExt, guard::buffer::Buffer, select::Select, time, Accepter, AsyncRead,
-    AsyncWrite, Kind, UdpReceiverExt, UdpSocket,
+    guard::buffer::Buffer, time, Accepter, AsyncRead, AsyncWrite, Executor, Kind, Task,
+    UdpReceiverExt, UdpSocket,
 };
 
 type BoxedFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
@@ -44,26 +45,39 @@ pub enum State<C> {
     Close(Session<C>),
 }
 
+enum UpdateState {
+    Updating(Pin<Box<dyn Future<Output = crate::Result<()>> + 'static>>),
+    WaitUpdate(Pin<Box<dyn Future<Output = crate::Result<()>> + 'static>>),
+}
+
+pub struct KcpUpdate<C> {
+    kcore: Arc<std::sync::Mutex<KcpCore<C>>>,
+    kupdate: Option<UpdateState>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Increment(Arc<Mutex<u32>>);
 
 pub struct Session<C> {
     pub(crate) conv: u32,
+    pub(crate) task: Arc<Task<crate::Result<()>>>,
     pub(crate) target: Option<SocketAddr>,
-    pub(crate) kcore: KcpCore<C>,
+    pub(crate) kcore: Arc<std::sync::Mutex<KcpCore<C>>>,
 }
 
-pub struct KcpListener<C> {
+pub struct KcpListener<C, E> {
     pub(crate) core: C,
     pub(crate) manager: Manager<C>,
     pub(crate) futures: Vec<BoxedFuture<crate::Result<State<C>>>>,
+    pub(crate) executor: E,
     pub(crate) close_callbacks: Clean<State<C>>,
 }
 
-pub struct KcpConnector<C> {
+pub struct KcpConnector<C, E> {
     core: C,
-    increment: Increment,
     sessions: Arc<Mutex<HashMap<u32, Session<C>>>>,
+    executor: E,
+    increment: Increment,
     close_callbacks: Arc<std::sync::Mutex<Vec<BoxedFuture<()>>>>,
 }
 
@@ -72,17 +86,21 @@ where
     C: UdpSocket + Send + Unpin + 'static,
 {
     pub async fn input(&mut self, data: Vec<u8>) -> crate::Result<()> {
-        let mut kcp = self.kcore.kcp.lock().await;
+        let mut kcore = self.kcore.lock()?;
         let mut next_input = &data[..];
 
         while next_input.len() > third_party::KCP_OVERHEAD {
-            let n = kcp.1.input(next_input)?;
+            let n = kcore.input(next_input)?;
             next_input = &data[n..];
         }
 
-        drop(kcp);
+        if kcore.peeksize().is_ok() {
+            kcore.try_wake_read();
+        }
 
-        self.kcore.try_wake_read();
+        if kcore.wait_snd() > 0 {
+            kcore.try_wake_write();
+        }
 
         Ok(())
     }
@@ -92,76 +110,15 @@ impl<C> KcpStream<C>
 where
     C: UdpSocket + Unpin + Send + Sync + 'static,
 {
-    fn kcp_update(mut kcore: KcpCore<C>) -> BoxedFuture<crate::Result<()>> {
-        Box::pin(async move {
-            loop {
-                let next = kcore.kcp.as_ref().lock().await.1.check(now_mills());
-
-                log::trace!("next update {}ms, ", next);
-
-                time::sleep(Duration::from_millis(next as u64)).await;
-
-                let (wake_read, wake_write, wake_close, is_dead) = {
-                    let mut kcp = kcore.kcp.as_ref().lock().await;
-                    let kcp = &mut kcp.1;
-                    if let Err(e) = kcp.update(now_mills()).await {
-                        log::warn!("update err {}", e);
-                        break Err(e);
-                    }
-
-                    let wake_read = kcp.peeksize().is_ok();
-
-                    let wake_write = kcp.wait_snd() > 0;
-
-                    (
-                        wake_read,
-                        wake_write,
-                        kcp.wait_snd() == 0,
-                        kcp.is_dead_link(),
-                    )
-                };
-
-                if wake_read {
-                    kcore.try_wake_read();
-                }
-
-                if wake_write {
-                    kcore.try_wake_write();
-                }
-
-                if wake_close {
-                    kcore.try_wake_close();
-                }
-
-                if is_dead {
-                    kcore.try_wake_close();
-                    break Err(KcpErr::IoError(std::io::ErrorKind::TimedOut.into()).into());
-                }
-            }
-        })
-    }
-
-    pub fn new_server(conv: u32, core: KcpCore<C>, close_callback: Callback) -> Self {
-        Self {
-            conv,
-            kcore: core.clone(),
-            lazy_kcp_update: std::sync::Mutex::new(Some(Self::kcp_update(core))),
-            close_callback,
-        }
-    }
-
-    pub fn new_client(
+    pub fn new(
         conv: u32,
-        kcp_guard: BoxedFuture<crate::Result<()>>,
-        core: KcpCore<C>,
+        kcore: Arc<std::sync::Mutex<KcpCore<C>>>,
         close_callback: Callback,
     ) -> Self {
-        let kcp_update = Select::select(kcp_guard, Self::kcp_update(core.clone()));
         Self {
             conv,
-            kcore: core,
+            kcore,
             close_callback,
-            lazy_kcp_update: std::sync::Mutex::new(Some(Box::pin(kcp_update))),
         }
     }
 }
@@ -188,16 +145,19 @@ where
         }
     }
 
-    async fn close(&self) -> crate::Result<()> {
-        self.kcp.lock().await.1.close()
-    }
+    // async fn close(&self) -> crate::Result<()> {
+    //     self.kcp.lock().await.1.close()
+    // }
 }
 
 impl<C> Session<C>
 where
     C: UdpSocket + Unpin + Send + Sync + 'static,
 {
-    pub fn new(conv: u32, target: Option<SocketAddr>, output: C) -> Self {
+    pub fn new<E>(conv: u32, target: Option<SocketAddr>, output: C, executor: E) -> Self
+    where
+        E: Executor + Send + 'static,
+    {
         let output = KOutput {
             output,
             target: target.clone(),
@@ -209,55 +169,64 @@ where
         kcp.set_nodelay(true, 20, 2, true);
         kcp.set_maximum_resend_times(10);
 
-        let kcore = KcpCore {
-            kcp: { Arc::new(Mutex::new((Buffer::new(), kcp))) },
+        let kcore = Arc::new(std::sync::Mutex::new(KcpCore {
+            kcp,
+            kbuf: Buffer::new(),
             write_waker: None,
             read_waker: None,
             close_waker: None,
+        }));
+
+        let kupdate = KcpUpdate {
+            kcore: kcore.clone(),
+            kupdate: None,
         };
 
         Self {
             conv,
             target,
-            kcore,
+            kcore: kcore.clone(),
+            task: Arc::new({ executor.spawn(kupdate) }),
         }
     }
 
-    pub async fn close(&self) -> crate::Result<()> {
-        self.kcore.close().await
-    }
+    // pub async fn close(&self) -> crate::Result<()> {
+    //     self.kcore.close().await
+    // }
 
-    pub fn new_client(
-        &self,
-        fut: BoxedFuture<crate::Result<()>>,
-        close_callback: Callback,
-    ) -> KcpStream<C> {
-        KcpStream::new_client(self.conv, fut, self.kcore.clone(), close_callback)
+    pub fn new_client(&self, close_callback: Callback) -> KcpStream<C> {
+        KcpStream::new(self.conv, self.kcore.clone(), close_callback)
     }
 
     pub fn new_server(&self, close_callback: Callback) -> KcpStream<C> {
-        KcpStream::new_server(self.conv, self.kcore.clone(), close_callback)
+        KcpStream::new(self.conv, self.kcore.clone(), close_callback)
     }
 }
 
-impl<C> KcpListener<C>
+impl<C, E> KcpListener<C, E>
 where
     C: UdpSocket + Send + Sync + Clone + Unpin + 'static,
+    E: Executor + Clone + Send + 'static,
 {
-    pub fn bind(core: C) -> crate::Result<Self> {
+    pub fn bind(core: C, executor: E) -> crate::Result<Self> {
         let manager: Manager<C> = Default::default();
 
-        let core_fut = Box::pin(Self::run_core(core.clone(), manager.clone()));
+        let core_fut = Box::pin(Self::run_accept(
+            core.clone(),
+            manager.clone(),
+            executor.clone(),
+        ));
 
         Ok(Self {
             core,
             manager,
+            executor,
             futures: vec![core_fut],
             close_callbacks: Default::default(),
         })
     }
 
-    async fn run_core(core: C, manager: Manager<C>) -> crate::Result<State<C>> {
+    async fn run_accept(core: C, manager: Manager<C>, executor: E) -> crate::Result<State<C>> {
         loop {
             let mut data = Vec::with_capacity(1500);
 
@@ -289,7 +258,7 @@ where
 
             let session = manager
                 .entry(conv)
-                .or_insert_with(|| Session::new(conv, Some(addr), core.clone()));
+                .or_insert_with(|| Session::new(conv, Some(addr), core.clone(), executor.clone()));
 
             if let Err(e) = session.input(data).await {
                 log::warn!("{}", e);
@@ -312,7 +281,7 @@ where
                         if let Some(sessions) = manager.lock().await.get_mut(&id) {
                             match sessions.remove(&conv) {
                                 Some(session) => {
-                                    let _ = session.close().await;
+                                    // let _ = session.close().await;
                                     Ok(State::Close(session))
                                 }
                                 None => Err(KcpErr::Lock.into()),
@@ -333,9 +302,10 @@ where
     }
 }
 
-impl<C> Accepter for KcpListener<C>
+impl<C, E> Accepter for KcpListener<C, E>
 where
     C: UdpSocket + Send + Clone + Unpin + Sync + 'static,
+    E: Executor + Clone + Unpin + Send + 'static,
 {
     type Stream = KcpStream<C>;
 
@@ -360,7 +330,11 @@ where
                     drop(kcp)
                 }
                 Poll::Ready(Ok(State::Open((id, conv, kcp)))) => {
-                    let accept_fut = Self::run_core(self.core.clone(), self.manager.clone());
+                    let accept_fut = Self::run_accept(
+                        self.core.clone(),
+                        self.manager.clone(),
+                        self.executor.clone(),
+                    );
 
                     self.futures.push(Box::pin(accept_fut));
 
@@ -380,127 +354,11 @@ where
     }
 }
 
-impl<C> AsyncWrite for KcpCore<C>
-where
-    C: UdpSocket + Unpin + 'static,
-{
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> Poll<crate::Result<usize>> {
-        match self.kcp.try_lock_arc() {
-            Some(mut kcp) => Poll::Ready(kcp.1.send(buf)),
-            None => {
-                let waker = cx.waker().clone();
-                drop(std::mem::replace(&mut self.write_waker, Some(waker)));
-                Poll::Pending
-            }
-        }
-    }
-
-    fn poll_close(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<crate::Result<()>> {
-        match self.kcp.try_lock_arc() {
-            Some(kcp) => {
-                if kcp.1.wait_snd() > 0 {
-                    let waker = cx.waker().clone();
-                    drop(std::mem::replace(&mut self.close_waker, Some(waker)));
-                    Poll::Pending
-                } else {
-                    Poll::Ready(Ok(()))
-                }
-            }
-            None => {
-                let waker = cx.waker().clone();
-                drop(std::mem::replace(&mut self.close_waker, Some(waker)));
-                Poll::Pending
-            }
-        }
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, _: &mut std::task::Context<'_>) -> Poll<crate::Result<()>> {
-        Poll::Ready(Ok(()))
-    }
-}
-
-impl<C> AsyncRead for KcpCore<C>
-where
-    C: UdpSocket + Unpin + 'static,
-{
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut crate::ReadBuf<'_>,
-    ) -> Poll<crate::Result<usize>> {
-        match self.kcp.try_lock_arc() {
-            None => {
-                let waker = cx.waker().clone();
-                drop(std::mem::replace(&mut self.read_waker, Some(waker)));
-                Poll::Pending
-            }
-            Some(mut kcp) => {
-                let unfilled = buf.initialize_unfilled();
-
-                if !kcp.0.is_empty() {
-                    let n = kcp.0.read_to_buffer(unfilled);
-                    return Poll::Ready(Ok(n));
-                }
-
-                match kcp.1.recv(unfilled) {
-                    Ok(n) => {
-                        buf.advance(n);
-                        return Poll::Ready(Ok(n));
-                    }
-                    Err(e) => match e.kind() {
-                        Kind::Kcp(KcpErr::RecvQueueEmpty | KcpErr::ExpectingFragment) => {
-                            let waker = cx.waker().clone();
-                            drop(std::mem::replace(&mut self.read_waker, Some(waker)));
-                            return Poll::Pending;
-                        }
-                        Kind::Kcp(KcpErr::UserBufTooSmall) => unsafe {
-                            let size = kcp.1.peeksize().unwrap_unchecked();
-                            let mut data = Vec::with_capacity(size);
-
-                            data.set_len(size);
-
-                            let n = kcp.1.recv(&mut data)?;
-                            data.truncate(n);
-                            let len = unfilled.len();
-
-                            std::ptr::copy(data.as_ptr(), unfilled.as_mut_ptr(), len);
-
-                            buf.advance(len);
-
-                            kcp.0.push_back(&data[len..]);
-
-                            return Poll::Ready(Ok(len));
-                        },
-                        _ => Poll::Ready(Err(e)),
-                    },
-                }
-            }
-        }
-    }
-}
-
-impl<C> Clone for KcpCore<C> {
-    fn clone(&self) -> Self {
-        KcpCore {
-            kcp: self.kcp.clone(),
-            write_waker: self.write_waker.clone(),
-            read_waker: self.read_waker.clone(),
-            close_waker: self.close_waker.clone(),
-        }
-    }
-}
-
 impl<C> Clone for Session<C> {
     fn clone(&self) -> Self {
         Self {
             conv: self.conv,
+            task: self.task.clone(),
             kcore: self.kcore.clone(),
             target: self.target.clone(),
         }
@@ -513,17 +371,23 @@ impl Default for Increment {
     }
 }
 
-impl<C> KcpConnector<C>
+impl<C, E> KcpConnector<C, E>
 where
     C: UdpSocket + Unpin + Clone + Send + Sync + 'static,
+    E: Executor + Clone + Send + 'static,
 {
-    pub fn new(core: C) -> Self {
-        Self {
+    pub fn new(core: C, executor: E) -> Self {
+        let this = Self {
             core: core,
+            executor: executor.clone(),
             increment: Default::default(),
             sessions: Default::default(),
             close_callbacks: Default::default(),
-        }
+        };
+
+        executor.spawn(this.safe_connect(0));
+
+        this
     }
 
     fn safe_connect(&self, _: u32) -> BoxedFuture<crate::Result<()>> {
@@ -555,8 +419,8 @@ where
                         log::warn!("package error {}", e);
                         drop(session);
                         let mut session = unsafe { sessions.remove(&conv).unwrap_unchecked() };
-                        let _ = session.kcore.flush().await;
-                        let _ = session.kcore.close().await;
+                        // let _ = session.flush().await;
+                        // let _ = session.close().await;
                     }
                 }
 
@@ -600,7 +464,7 @@ where
 
         let (close_callbacks, sessions) = (self.close_callbacks.clone(), self.sessions.clone());
 
-        let session = Session::new(conv, None, self.core.clone());
+        let session = Session::new(conv, None, self.core.clone(), self.executor.clone());
 
         self.sessions.lock().await.insert(conv, session.clone());
 
@@ -611,7 +475,7 @@ where
                 let sessions = sessions.clone();
                 let close_fut = async move {
                     if let Some(session) = sessions.lock().await.remove(&conv) {
-                        drop(session.close().await);
+                        // drop(session.close().await);
                     }
                 };
 
@@ -622,7 +486,7 @@ where
             }
         };
 
-        Ok(session.new_client(Box::pin(fut), Some(Box::new(close_callback))))
+        Ok(session.new_client(Some(Box::new(close_callback))))
     }
 }
 
@@ -639,13 +503,97 @@ impl Increment {
     }
 }
 
+unsafe impl<C> Sync for KcpUpdate<C> {}
+unsafe impl<C> Send for KcpUpdate<C> {}
+
+impl<C> Future for KcpUpdate<C>
+where
+    C: UdpSocket + Unpin + 'static,
+{
+    type Output = crate::Result<()>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        loop {
+            let state = match self.kupdate.take() {
+                Some(inner) => inner,
+                None => UpdateState::WaitUpdate({
+                    let next = self.kcore.lock()?.check(now_mills());
+
+                    // log::debug!("next update {}ms", next);
+
+                    Box::pin(async move {
+                        time::sleep(Duration::from_millis(next as u64)).await;
+                        Ok(())
+                    })
+                }),
+            };
+
+            match state {
+                UpdateState::Updating(mut fut) => match Pin::new(&mut fut).poll(cx)? {
+                    Poll::Pending => {
+                        drop(std::mem::replace(
+                            &mut self.kupdate,
+                            Some(UpdateState::Updating(fut)),
+                        ));
+
+                        return Poll::Pending;
+                    }
+                    _ => {}
+                },
+                UpdateState::WaitUpdate(mut fut) => match Pin::new(&mut fut).poll(cx)? {
+                    Poll::Pending => {
+                        drop(std::mem::replace(
+                            &mut self.kupdate,
+                            Some(UpdateState::WaitUpdate(fut)),
+                        ));
+
+                        return Poll::Pending;
+                    }
+                    Poll::Ready(()) => {
+                        let kcore = self.kcore.clone();
+
+                        let fut = async move {
+                            let mut kcore = kcore.lock()?;
+
+                            kcore.kcp.update(now_mills()).await?;
+
+                            if kcore.peeksize().is_ok() {
+                                kcore.read_waker.take().map(Waker::wake);
+                            }
+
+                            if kcore.wait_snd() > 0 {
+                                kcore.write_waker.take().map(Waker::wake);
+                            }
+
+                            if kcore.wait_snd() == 0 {
+                                kcore.close_waker.take().map(Waker::wake);
+                            }
+
+                            if kcore.is_dead_link() {
+                                Err(KcpErr::IoError(std::io::ErrorKind::TimedOut.into()).into())
+                            } else {
+                                Ok(())
+                            }
+                        };
+
+                        drop(std::mem::replace(
+                            &mut self.kupdate,
+                            Some(UpdateState::Updating(Box::pin(fut))),
+                        ));
+                    }
+                },
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
     use crate::{
         ext::{AsyncReadExt, AsyncWriteExt},
-        AccepterExt,
+        AccepterExt, TokioExecutor, io,
     };
 
     use super::{KcpConnector, KcpListener};
@@ -666,19 +614,27 @@ mod tests {
                 let udp = tokio::net::UdpSocket::bind("0.0.0.0:7777").await.unwrap();
                 let udp = Arc::new(udp);
 
-                let mut kcp = KcpListener::bind(udp).unwrap();
+                let mut kcp = KcpListener::bind(udp, TokioExecutor).unwrap();
 
                 loop {
                     match kcp.accept().await {
                         Ok(mut kcp) => {
                             tokio::spawn(async move {
+
+                                let (mut reader, mut writer) = io::split(kcp);
+
                                 loop {
                                     let mut buf = Vec::new();
                                     buf.resize(1500, 0);
-                                    let n = kcp.read(&mut buf).await.unwrap();
+                                    let n = reader.read(&mut buf).await.unwrap();
                                     buf.truncate(n);
-                                    let _ = kcp.write_all(b"hello world").await;
-                                    log::debug!("{:?}", String::from_utf8_lossy(&buf));
+
+                                    let mut writer = writer.clone();
+                                    tokio::spawn(async move {
+                                        let _ = writer.write_all(b"hello world").await;
+                                    });
+
+                                    log::debug!("read ... {:?}", String::from_utf8_lossy(&buf));
                                 }
                             });
                         }
@@ -698,7 +654,7 @@ mod tests {
                 let udp = tokio::net::UdpSocket::bind("0.0.0.0:0").await.unwrap();
                 udp.connect("127.0.0.1:7777").await.unwrap();
 
-                let kcp = KcpConnector::new(Arc::new(udp));
+                let kcp = KcpConnector::new(Arc::new(udp), TokioExecutor);
 
                 let mut kcp = kcp.connect().await.unwrap();
 

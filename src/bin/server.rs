@@ -3,7 +3,7 @@
 async fn main() -> fuso::Result<()> {
     use std::time::Duration;
 
-    use fuso::{Socket, TokioUdpServerFactory, UdpForwardFactory};
+    use fuso::{Socket, TokioUdpServerFactory, UdpForwardFactory, TokioExecutor};
 
     env_logger::builder()
         .filter_module("fuso", log::LevelFilter::Debug)
@@ -12,7 +12,7 @@ async fn main() -> fuso::Result<()> {
         .init();
 
     fuso::builder_server_with_tokio()
-        .with_kcp_accepter(TokioUdpServerFactory)
+        .with_kcp_accepter(TokioUdpServerFactory, TokioExecutor)
         .with_penetrate()
         .read_timeout(None)
         .max_wait_time(Duration::from_secs(5))

@@ -8,7 +8,7 @@ use crate::{
     kcp,
     penetrate::SocksClientUdpForward,
     ready, server, Accepter, Addr, ClientFactory, Executor, Factory, FactoryWrapper, FusoStream,
-    ServerFactory, Socket, SocketKind, Transfer, UdpSocket,
+    ServerFactory, Socket, SocketKind, Task, Transfer, UdpSocket,
 };
 
 type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>> + Send + 'static>>;
@@ -17,25 +17,23 @@ type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>>
 pub struct TokioExecutor;
 pub struct TokioTcpListener(tokio::net::TcpListener);
 pub struct TokioAccepter;
-pub struct TokioConnector(Arc<Mutex<Option<kcp::KcpConnector<Arc<tokio::net::UdpSocket>>>>>);
+pub struct TokioConnector(Arc<Mutex<Option<kcp::KcpConnector<Arc<tokio::net::UdpSocket>, TokioExecutor>>>>);
 
 pub struct TokioUdpSocket;
 
 pub struct TokioPenetrateConnector;
-
-pub struct MixPenetrateConnector(kcp::KcpConnector<Arc<tokio::net::UdpSocket>>);
 
 pub struct TokioUdpServerFactory;
 pub struct UdpForwardFactory;
 pub struct UdpForwardClientFactory;
 
 impl Executor for TokioExecutor {
-    fn spawn<F, O>(&self, fut: F)
+    fn spawn<F, O>(&self, fut: F) -> Task<O>
     where
         F: std::future::Future<Output = O> + Send + 'static,
         O: Send + 'static,
     {
-        tokio::spawn(fut);
+        Task::Tokio(tokio::spawn(fut))
     }
 }
 
@@ -99,7 +97,7 @@ impl Factory<Socket> for TokioConnector {
                         let addr = socket.addr();
                         let udp = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
                         udp.connect(format!("{}", addr)).await?;
-                        *kcp = Some(kcp::KcpConnector::new(Arc::new(udp)));
+                        *kcp = Some(kcp::KcpConnector::new(Arc::new(udp), TokioExecutor));
                     }
 
                     if kcp.is_some() && socket.is_ufd() {
