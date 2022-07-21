@@ -19,7 +19,7 @@ pub struct KcpAccepter<C, E>(KcpListener<C, E>);
 impl<C, E> Accepter for KcpAccepter<C, E>
 where
     C: UdpSocket + Clone + Sync + Unpin + Send + 'static,
-    E: Executor + Clone + Send + Unpin + 'static
+    E: Executor + Clone + Sync + Send + Unpin + 'static
 {
     type Stream = FusoStream;
 
@@ -58,7 +58,7 @@ where
 impl<C, E> Factory<Socket> for KcpAccepterFactory<C, E>
 where
     C: UdpSocket + Clone + Sync + Unpin + Send + 'static,
-    E: Executor + Clone + Send + 'static
+    E: Executor + Clone + Sync + Send + 'static
 {
     type Output = BoxedFuture<KcpAccepter<C, E>>;
 

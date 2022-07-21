@@ -6,11 +6,11 @@ use std::{
     task::{Poll, Waker},
 };
 
-use crate::{guard::buffer::Buffer, AsyncRead, AsyncWrite, Kind, UdpSocket};
+use crate::{guard::buffer::Buffer, AsyncRead, AsyncWrite, Kind, Task, UdpSocket};
 
 use super::KcpErr;
 
-type Callback = Option<Box<dyn Fn() + Sync + Send + 'static>>;
+type Callback = Option<Box<dyn FnOnce() + Sync + Send + 'static>>;
 
 #[pin_project::pin_project]
 pub struct KOutput<C> {
@@ -22,6 +22,7 @@ pub struct KOutput<C> {
 pub struct KcpCore<C> {
     pub(crate) kcp: super::third_party::Kcp<KOutput<C>>,
     pub(crate) kbuf: Buffer<u8>,
+    pub(crate) kupdate: Option<Task<crate::Result<()>>>,
     pub(crate) read_waker: Option<Waker>,
     pub(crate) write_waker: Option<Waker>,
     pub(crate) close_waker: Option<Waker>,
@@ -82,14 +83,18 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> Poll<crate::Result<usize>> {
-        if self.kcp.wait_snd() > 10 {
-            drop(std::mem::replace(
-                &mut self.write_waker,
-                Some(cx.waker().clone()),
-            ));
-            Poll::Pending
-        } else {
-            Poll::Ready(self.kcp.send(buf))
+        match self.kcp.send(buf) {
+            Ok(n) => Poll::Ready(Ok(n)),
+            Err(e) => match e.kind() {
+                Kind::Kcp(KcpErr::UserBufTooBig) => {
+                    drop(std::mem::replace(
+                        &mut self.write_waker,
+                        Some(cx.waker().clone()),
+                    ));
+                    Poll::Pending
+                }
+                _ => Poll::Ready(Err(e)),
+            },
         }
     }
 
@@ -201,11 +206,14 @@ where
     }
 
     fn poll_close(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
+        mut self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
     ) -> std::task::Poll<crate::Result<()>> {
-        let mut kcore = self.kcore.lock()?;
-        Pin::new(&mut *kcore).poll_close(cx)
+        if let Some(close_callback) = self.close_callback.take() {
+            close_callback();
+        }
+
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -213,7 +221,20 @@ impl<C> Drop for KcpStream<C> {
     fn drop(&mut self) {
         if let Some(close_callback) = self.close_callback.take() {
             log::debug!("close read and write conv={}", self.conv);
-            close_callback()
+            close_callback();
+        } else {
+            log::debug!("closed conv {}", self.conv);
+        }
+    }
+}
+
+impl<C> Drop for KcpCore<C> {
+    fn drop(&mut self) {
+        if let Some(kupdate) = self.kupdate.take() {
+            log::debug!("abort execution {}", self.kcp);
+            kupdate.abort();
+        } else {
+            log::debug!("kupdate finished");
         }
     }
 }

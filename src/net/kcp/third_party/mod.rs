@@ -7,6 +7,7 @@ use log::{debug, trace};
 use std::cmp;
 use std::cmp::Ordering;
 use std::collections::VecDeque;
+use std::fmt::Display;
 use std::io::{Cursor, Read};
 
 use bytes::{Buf, BufMut, BytesMut};
@@ -32,12 +33,15 @@ const KCP_CMD_CLS: u8 = 85;
 
 const KCP_CLS_NO: u8 = 0;
 const KCP_CLS_YES: u8 = 1;
+const KCP_CLS_WSND: u8 = 2;
+const KCP_CLS_WRCV: u8 = 3;
+const KCP_CLS_WAIT: u8 = 4;
 
 const KCP_ASK_SEND: u32 = 1;
 const KCP_ASK_TELL: u32 = 2;
 
-const KCP_WND_SND: u16 = 32;
-const KCP_WND_RCV: u16 = 128;
+pub const KCP_WND_SND: u16 = 32;
+pub const KCP_WND_RCV: u16 = 128;
 
 const KCP_MTU_DEF: usize = 1400;
 // const KCP_ACK_FAST: u32 = 3;
@@ -141,7 +145,7 @@ impl KcpSegment {
 }
 
 /// KCP control
-#[derive(Default)]
+
 pub struct Kcp<Output> {
     /// Conversation ID
     conv: u32,
@@ -222,8 +226,8 @@ pub struct Kcp<Output> {
     nocwnd: bool,
     /// Enable stream mode
     stream: bool,
-
-    close: u8,
+    close_last: std::time::Instant,
+    close_state: u8,
     /// Get conv from the next input call
     input_conv: bool,
 
@@ -289,8 +293,9 @@ where
             ts_flush: KCP_INTERVAL,
             ssthresh: KCP_THRESH_INIT,
             input_conv: false,
-            close: KCP_CLS_NO,
+            close_state: KCP_CLS_NO,
             output: output,
+            close_last: std::time::Instant::now(),
         }
     }
 
@@ -341,7 +346,11 @@ where
 
     /// Receive data from buffer
     pub fn recv(&mut self, buf: &mut [u8]) -> KcpResult<usize> {
-        if self.close == KCP_CLS_YES {
+        if self.close_state == KCP_CLS_YES
+            || self.close_state == KCP_CLS_WAIT
+            || self.close_state == KCP_CLS_WRCV
+            || self.close_state == KCP_CLS_WSND
+        {
             return Err(KcpErr::Closed.into());
         }
 
@@ -385,7 +394,11 @@ where
 
     /// Send bytes into buffer
     pub fn send(&mut self, mut buf: &[u8]) -> KcpResult<usize> {
-        if self.close == KCP_CLS_YES {
+        if self.close_state == KCP_CLS_YES
+            || self.close_state == KCP_CLS_WAIT
+            || self.close_state == KCP_CLS_WRCV
+            || self.close_state == KCP_CLS_WSND
+        {
             return Err(KcpErr::Closed.into());
         }
 
@@ -711,8 +724,15 @@ where
                     trace!("input wins: {}", wnd);
                 }
                 KCP_CMD_CLS => {
-                    debug!("收到对端关闭消息");
-                    self.close = KCP_CLS_YES;
+                    debug!("receiver close message cs={}", self.close_state);
+
+                    if self.close_state == KCP_CLS_WAIT {
+                        self.close_state = KCP_CLS_YES;
+                    }
+
+                    if self.close_state == KCP_CLS_NO {
+                        self.close_state = KCP_CLS_WRCV;
+                    }
                 }
                 _ => unreachable!(),
             }
@@ -982,16 +1002,34 @@ where
         Ok(())
     }
 
-    pub fn close(&mut self) -> KcpResult<()> {
-        self.close = KCP_CLS_YES;
+    pub fn force_close(&mut self) -> KcpResult<()> {
+        log::debug!("force close {}", self.conv);
+        self.close_state = KCP_CLS_YES;
+        self.close_last = std::time::Instant::now();
         Ok(())
+    }
+
+    pub fn close(&mut self) -> KcpResult<()> {
+        log::debug!("safe close {}", self.conv);
+
+        if self.close_state == KCP_CLS_NO {
+            self.close_state = KCP_CLS_WSND;
+            self.close_last = std::time::Instant::now();
+            Ok(())
+        } else {
+            Err(KcpErr::Closed.into())
+        }
+    }
+
+    pub fn closed(&self) -> bool {
+        self.close_state == KCP_CLS_YES
     }
 
     /// Update state every 10ms ~ 100ms.
     ///
     /// Or you can ask `check` when to call this again.
     pub async fn update(&mut self, current: u32) -> KcpResult<()> {
-        if self.close == KCP_CLS_YES {
+        if self.close_state == KCP_CLS_YES {
             return Err(KcpErr::Closed.into());
         }
 
@@ -1015,6 +1053,44 @@ where
                 self.ts_flush = self.current + self.interval;
             }
             self.flush().await?;
+        }
+
+        if self.close_state == KCP_CLS_WSND {
+            let _ = self.flush_ack().await;
+        }
+
+        if self.close_state == KCP_CLS_WSND && self.wait_snd() == 0 {
+            log::debug!("wait close KCP_CLS_WSND");
+            let mut seg = KcpSegment::new_with_data(Default::default());
+
+            seg.conv = self.conv;
+            seg.cmd = KCP_CMD_CLS;
+
+            let mut buf = BytesMut::new();
+
+            seg.encode(&mut buf);
+            self.output.write_all(&buf[..seg.encoded_len()]).await?;
+            self.close_last = std::time::Instant::now();
+            self.close_state = KCP_CLS_WAIT;
+        }
+
+        if self.close_state == KCP_CLS_WRCV {
+            log::debug!("wait close KCP_CLS_WRCV");
+            let seg = KcpSegment {
+                conv: self.conv,
+                cmd: KCP_CMD_CLS,
+                ..Default::default()
+            };
+
+            let mut buf = BytesMut::new();
+
+            seg.encode(&mut buf);
+            self.output.write_all(&buf[..seg.encoded_len()]).await?;
+            self.close_state = KCP_CLS_YES;
+        }
+
+        if self.close_state == KCP_CLS_WAIT && self.close_last.elapsed().as_secs() > 10 {
+            return Err(std::io::ErrorKind::TimedOut.into());
         }
 
         Ok(())
@@ -1180,5 +1256,11 @@ where
     /// Check if KCP connection is dead (resend times excceeded)
     pub fn is_dead_link(&self) -> bool {
         self.state != 0
+    }
+}
+
+impl<O> Display for Kcp<O> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "conv={}", self.conv)
     }
 }

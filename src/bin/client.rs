@@ -8,7 +8,7 @@ async fn main() -> fuso::Result<()> {
     use fuso::{TokioPenetrateConnector, Addr};
 
     env_logger::builder()
-        .filter_module("fuso", log::LevelFilter::Debug)
+        .filter_module("fuso", log::LevelFilter::Info)
         .default_format()
         .format_module_path(false)
         .init();
