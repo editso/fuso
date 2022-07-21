@@ -37,6 +37,7 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 1. 基本转发
 2. 可自定义性
 3. 支持tokio & smol运行时
+4. 支持kcp
 
 
 ### ✨Demo
