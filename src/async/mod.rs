@@ -13,6 +13,8 @@ use std::{
     task::{Context, Poll},
 };
 
+use crate::NetSocket;
+
 pub type BoxedFuture<'lifetime, T> = Pin<Box<dyn Future<Output = T> + 'lifetime>>;
 
 #[cfg(feature = "fuso-rt-smol")]
@@ -57,7 +59,7 @@ pub trait AsyncWrite {
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<crate::Result<()>>;
 }
 
-pub trait Stream: AsyncRead + AsyncWrite + Unpin {}
+pub trait Stream: NetSocket + AsyncRead + AsyncWrite + Unpin {}
 
 impl AsyncRead for Box<dyn Stream + Send> {
     fn poll_read(
@@ -87,8 +89,7 @@ impl AsyncWrite for Box<dyn Stream + Send> {
     }
 }
 
-impl<S> Stream for S where S: AsyncWrite + AsyncRead + Unpin {}
-
+impl<S> Stream for S where S: NetSocket +  AsyncWrite + AsyncRead + Unpin {}
 
 #[cfg(feature = "fuso-rt-tokio")]
 impl<T> AsyncWrite for T

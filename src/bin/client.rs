@@ -17,12 +17,12 @@ async fn main() -> fuso::Result<()> {
         .build(
             Socket::tcp(
                     std::env::var("ENV_SERVE")
-                    .unwrap_or(String::from("127.0.0.1:8888"))
+                    .unwrap_or(String::from("127.0.0.1:6722"))
                     .parse::<Addr>()
                     .unwrap(),
             ),
             PenetrateClientFactory {
-                connector_factory: Arc::new(TokioPenetrateConnector),
+                connector_factory: Arc::new(TokioPenetrateConnector::new().await?),
                 socket: {
                     (
                         Socket::tcp(([0, 0, 0, 0], 9999)),

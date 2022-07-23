@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 use std::fmt::Display;
 use std::io::{Cursor, Read};
 
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 pub use error::KcpErr;
 
 use crate::ext::AsyncWriteExt;
@@ -30,6 +30,7 @@ const KCP_CMD_WASK: u8 = 83;
 const KCP_CMD_WINS: u8 = 84;
 
 const KCP_CMD_CLS: u8 = 85;
+const KCP_CMD_CLF: u8 = 86;
 
 const KCP_CLS_NO: u8 = 0;
 const KCP_CLS_YES: u8 = 1;
@@ -66,6 +67,20 @@ pub fn get_conv(mut buf: &[u8]) -> u32 {
 pub fn set_conv(mut buf: &mut [u8], conv: u32) {
     assert!(buf.len() >= KCP_OVERHEAD);
     buf.put_u32_le(conv)
+}
+
+pub fn force_close(conv: u32) -> Bytes {
+    let seg = KcpSegment {
+        conv,
+        cmd: KCP_CMD_CLF,
+        ..Default::default()
+    };
+
+    let mut buf = BytesMut::new();
+
+    seg.encode(&mut buf);
+
+    buf.into()
 }
 
 /// Get `sn` from raw buffer
@@ -351,7 +366,7 @@ where
             || self.close_state == KCP_CLS_WRCV
             || self.close_state == KCP_CLS_WSND
         {
-            return Err(KcpErr::Closed.into());
+            return Err(KcpErr::ConnectionReset.into());
         }
 
         if self.rcv_queue.is_empty() {
@@ -399,7 +414,7 @@ where
             || self.close_state == KCP_CLS_WRCV
             || self.close_state == KCP_CLS_WSND
         {
-            return Err(KcpErr::Closed.into());
+            return Err(KcpErr::ConnectionReset.into());
         }
 
         let mut sent_size = 0;
@@ -651,7 +666,8 @@ where
             }
 
             match cmd {
-                KCP_CMD_PUSH | KCP_CMD_ACK | KCP_CMD_WASK | KCP_CMD_WINS | KCP_CMD_CLS => {}
+                KCP_CMD_PUSH | KCP_CMD_ACK | KCP_CMD_WASK | KCP_CMD_WINS | KCP_CMD_CLS
+                | KCP_CMD_CLF => {}
                 _ => {
                     debug!("input cmd={} unrecognized", cmd);
                     return Err(KcpErr::UnsupportedCmd(cmd).into());
@@ -733,6 +749,9 @@ where
                     if self.close_state == KCP_CLS_NO {
                         self.close_state = KCP_CLS_WRCV;
                     }
+                }
+                KCP_CMD_CLF => {
+                    self.close_state = KCP_CLS_YES;
                 }
                 _ => unreachable!(),
             }
@@ -1017,7 +1036,7 @@ where
             self.close_last = std::time::Instant::now();
             Ok(())
         } else {
-            Err(KcpErr::Closed.into())
+            Err(KcpErr::ConnectionReset.into())
         }
     }
 
@@ -1025,12 +1044,16 @@ where
         self.close_state == KCP_CLS_YES
     }
 
+    pub fn close_state(&self) -> u8 {
+        self.close_state
+    }
+
     /// Update state every 10ms ~ 100ms.
     ///
     /// Or you can ask `check` when to call this again.
     pub async fn update(&mut self, current: u32) -> KcpResult<()> {
         if self.close_state == KCP_CLS_YES {
-            return Err(KcpErr::Closed.into());
+            return Err(KcpErr::ConnectionReset.into());
         }
 
         self.current = current;
@@ -1071,12 +1094,15 @@ where
             seg.encode(&mut buf);
             self.output.write_all(&buf[..seg.encoded_len()]).await?;
             self.close_last = std::time::Instant::now();
+
+            self.snd_queue.push_back(seg);
+
             self.close_state = KCP_CLS_WAIT;
         }
 
         if self.close_state == KCP_CLS_WRCV {
             log::debug!("wait close KCP_CLS_WRCV");
-            let seg = KcpSegment {
+            let mut seg = KcpSegment {
                 conv: self.conv,
                 cmd: KCP_CMD_CLS,
                 ..Default::default()
@@ -1086,6 +1112,7 @@ where
 
             seg.encode(&mut buf);
             self.output.write_all(&buf[..seg.encoded_len()]).await?;
+
             self.close_state = KCP_CLS_YES;
         }
 

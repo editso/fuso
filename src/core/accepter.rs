@@ -1,18 +1,24 @@
-use crate::{ready, ReadBuf, Result};
+use crate::{ready, Address, ReadBuf, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::{future::Future, pin::Pin};
 
 use std::task::{Context, Poll};
 
-pub trait Accepter {
+pub trait NetSocket {
+    fn peer_addr(&self) -> crate::Result<Address>;
+
+    fn local_addr(&self) -> crate::Result<Address>;
+}
+
+pub trait Accepter: NetSocket {
     type Stream;
     fn poll_accept(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<Self::Stream>>;
 }
 
 pub struct AccepterWrapper<S>(Box<dyn Accepter<Stream = S> + Send + Unpin + 'static>);
 
-pub trait UdpSocket {
+pub trait UdpSocket: NetSocket {
     fn poll_recv_from(
         self: Pin<&Self>,
         cx: &mut Context<'_>,
@@ -85,7 +91,7 @@ pub trait UdpReceiverExt: UdpSocket {
         }
     }
 
-    fn send<'a>(&'a mut self, buf: &'a [u8]) -> UdpSend<'a, Self>
+    fn send<'a>(&'a self, buf: &'a [u8]) -> UdpSend<'a, Self>
     where
         Self: Sized + Unpin,
     {
@@ -102,7 +108,7 @@ pub trait UdpReceiverExt: UdpSocket {
         }
     }
 
-    fn send_to<'a>(&'a mut self, addr: &'a SocketAddr, buf: &'a [u8]) -> SendTo<'a, Self>
+    fn send_to<'a>(&'a self, addr: &'a SocketAddr, buf: &'a [u8]) -> SendTo<'a, Self>
     where
         Self: Sized + Unpin,
     {
@@ -178,6 +184,19 @@ where
     }
 }
 
+impl<U> NetSocket for Arc<U>
+where
+    U: UdpSocket,
+{
+    fn local_addr(&self) -> crate::Result<Address> {
+        (**self).local_addr()
+    }
+
+    fn peer_addr(&self) -> crate::Result<Address> {
+        (**self).peer_addr()
+    }
+}
+
 impl<U> UdpSocket for Arc<U>
 where
     U: UdpSocket + Unpin + 'static,
@@ -221,6 +240,16 @@ impl<S> AccepterWrapper<S> {
     }
 }
 
+impl<S> NetSocket for AccepterWrapper<S> {
+    fn local_addr(&self) -> crate::Result<Address> {
+        self.0.local_addr()
+    }
+
+    fn peer_addr(&self) -> crate::Result<Address> {
+        self.0.peer_addr()
+    }
+}
+
 impl<S> Accepter for AccepterWrapper<S>
 where
     S: Unpin,
@@ -231,4 +260,3 @@ where
         Pin::new(&mut *self.0).poll_accept(cx)
     }
 }
-

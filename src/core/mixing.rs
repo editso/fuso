@@ -1,6 +1,9 @@
 use std::{future::Future, marker::PhantomData, pin::Pin, sync::Arc, task::Poll};
 
-use crate::{server::ServerBuilder, Accepter, AccepterWrapper, Factory, ServerFactory, Socket};
+use crate::{
+    server::ServerBuilder, Accepter, AccepterWrapper, Address, Factory, NetSocket, ServerFactory,
+    Socket,
+};
 
 type BoxedFuture<T> = Pin<Box<dyn Future<Output = crate::Result<T>> + Send + 'static>>;
 
@@ -35,6 +38,26 @@ where
                 AccepterWrapper::wrap(f2.await?),
             ]))
         })
+    }
+}
+
+impl<S> NetSocket for MixAccepter<S> {
+    fn local_addr(&self) -> crate::Result<Address> {
+        let mut many = Vec::new();
+        for accepter in self.0.iter() {
+            many.push(accepter.local_addr()?);
+        }
+
+        Ok(Address::Many(many))
+    }
+
+    fn peer_addr(&self) -> crate::Result<Address> {
+        let mut many = Vec::new();
+        for accepter in self.0.iter() {
+            many.push(accepter.peer_addr()?);
+        }
+
+        Ok(Address::Many(many))
     }
 }
 

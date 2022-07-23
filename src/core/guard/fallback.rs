@@ -4,7 +4,7 @@ use std::task::Poll;
 use std::{pin::Pin, task::Context};
 
 use crate::r#async::{AsyncRead, AsyncWrite};
-use crate::Kind;
+use crate::{Kind, NetSocket, Stream};
 
 use super::buffer::Buffer;
 
@@ -78,6 +78,19 @@ impl<T> Fallback<T> {
 
             backed
         })
+    }
+}
+
+impl<T> NetSocket for Fallback<T>
+where
+    T: Stream,
+{
+    fn peer_addr(&self) -> crate::Result<crate::Address> {
+        self.target.peer_addr()
+    }
+
+    fn local_addr(&self) -> crate::Result<crate::Address> {
+        self.target.local_addr()
     }
 }
 

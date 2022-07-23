@@ -13,8 +13,8 @@ pub mod guard;
 pub mod mixing;
 pub mod protocol;
 
-use std::pin::Pin;
 use std::sync::Arc;
+use std::{fmt::Display, pin::Pin};
 
 use std::future::Future;
 
@@ -32,6 +32,10 @@ pub enum Task<T> {
     Tokio(tokio::task::JoinHandle<T>),
 }
 
+pub trait ResultDisplay {
+    fn display(&self) -> String;
+}
+
 pub trait Executor {
     fn spawn<F, O>(&self, fut: F) -> Task<O>
     where
@@ -39,11 +43,6 @@ pub trait Executor {
         O: Send + 'static;
 }
 
-pub trait Context {
-    fn spawn<F>(&self, fut: F)
-    where
-        F: Future<Output = ()>;
-}
 
 impl<E> Executor for Arc<E>
 where
@@ -66,6 +65,16 @@ impl Future for Fuso<Serve> {
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
         Pin::new(&mut self.0.fut).poll(cx)
+    }
+}
+
+impl NetSocket for FusoStream {
+    fn peer_addr(&self) -> crate::Result<Address> {
+        self.0.peer_addr()
+    }
+
+    fn local_addr(&self) -> crate::Result<Address> {
+        self.0.local_addr()
     }
 }
 
@@ -116,7 +125,7 @@ unsafe impl Sync for FusoStream {}
 
 impl<T> factory::Transfer for T
 where
-    T: Stream + Send + 'static,
+    T: NetSocket + Stream + Send + 'static,
 {
     type Output = FusoStream;
 
@@ -131,6 +140,19 @@ impl<O> Task<O> {
             Task::Tokio(tokio) => {
                 tokio.abort();
             }
+        }
+    }
+}
+
+impl<T, E> ResultDisplay for std::result::Result<T, E>
+where
+    T: Display,
+    E: Display,
+{
+    fn display(&self) -> String {
+        match self {
+            Ok(fmt) => format!("{}", fmt),
+            Err(fmt) => format!("err: {}", fmt),
         }
     }
 }

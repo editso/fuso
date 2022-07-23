@@ -32,8 +32,14 @@ where
     pub async fn run(self) -> crate::Result<()> {
         let mut accepter = self.factory.bind(self.bind.clone()).await?;
 
+        log::info!("the server listens on {}", accepter.local_addr()?);
+
         loop {
             let stream = accepter.accept().await?;
+
+            if let Ok(addr) = stream.peer_addr() {
+                log::debug!("connection from {}", addr);
+            }
 
             let executor = self.executor.clone();
             let handshake = self.handshake.clone();
@@ -84,7 +90,6 @@ where
 
                 log::warn!("stop processing");
             });
-           
         }
     }
 }

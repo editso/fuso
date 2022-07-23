@@ -1,4 +1,4 @@
-use std::{fmt::Display};
+use std::fmt::Display;
 
 use crate::kcp;
 
@@ -16,7 +16,7 @@ pub enum InvalidAddr {
 }
 
 #[derive(Debug)]
-pub enum Sync {
+pub enum SyncErr {
     Mutex,
 }
 
@@ -51,7 +51,7 @@ pub enum Kind {
     Timeout(std::time::Instant),
     Memory,
     Mark,
-    Sync(Sync),
+    Sync(SyncErr),
     Deserialize(String),
     InvalidAddr(InvalidAddr),
     Encoding(Encoding),
@@ -62,12 +62,92 @@ pub enum Kind {
     Socks(SocksErr),
     Once,
     BadForward,
-    Kcp(kcp::KcpErr)
+    Kcp(kcp::KcpErr),
+}
+
+impl Display for SyncErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", {
+            match self {
+                SyncErr::Mutex => "mutex",
+            }
+        })
+    }
+}
+
+impl Display for InvalidAddr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", {
+            match self {
+                InvalidAddr::Domain(domain) => format!("invalid domain {}", domain),
+                InvalidAddr::Socket(addr) => format!("parse addr {}", addr),
+            }
+        })
+    }
+}
+
+impl Display for Encoding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", {
+            match self {
+                Encoding::FromUtf8(utf8) => format!("encoding utf8 {}", utf8),
+            }
+        })
+    }
+}
+
+impl Display for PacketErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", {
+            match self {
+                PacketErr::Head(e) => format!("invalid packet head {:?}", e),
+            }
+        })
+    }
+}
+
+impl Display for SocksErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", {
+            match self {
+                SocksErr::Protocol => format!("invalid socks5 protocol"),
+                SocksErr::InvalidAddress => format!("invalid address"),
+                SocksErr::BindNotSupport => format!("bind not support"),
+                SocksErr::Head { ver, nmethod } => {
+                    format!("invalid socks5 head ver={}, nmethod={}", ver, nmethod)
+                }
+                SocksErr::Method(e) => format!("method err {}", e),
+                SocksErr::BadLength { expect, current } => {
+                    format!("bad socks5 packet expect {} , current={}", expect, current)
+                }
+            }
+        })
+    }
 }
 
 impl Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        let fmt = match self.kind() {
+            Kind::Channel => format!("Channel"),
+            Kind::AlreadyUsed => format!("AlreadyUsed"),
+            Kind::IO(io) => format!("{}", io),
+            Kind::Timeout(timeout) => format!("{}", timeout),
+            Kind::Memory => format!(""),
+            Kind::Mark => format!("mark"),
+            Kind::Sync(e) => format!("{}", e),
+            Kind::Deserialize(e) => format!("{}", e),
+            Kind::InvalidAddr(e) => format!("{}", e),
+            Kind::Encoding(e) => format!("{}", e),
+            Kind::Packet(e) => format!("{}", e),
+            Kind::Fallback => format!("fallback"),
+            Kind::Unexpected(e) => format!("{}", e),
+            Kind::Message(message) => format!("{}", message),
+            Kind::Socks(e) => format!("{}", e),
+            Kind::Once => format!("call once"),
+            Kind::BadForward => format!("bad forward"),
+            Kind::Kcp(e) => format!("{}", e),
+        };
+        write!(f, "{}", fmt)
     }
 }
 
@@ -79,8 +159,8 @@ impl From<InvalidAddr> for Error {
     }
 }
 
-impl From<Sync> for Error {
-    fn from(e: Sync) -> Self {
+impl From<SyncErr> for Error {
+    fn from(e: SyncErr) -> Self {
         Self {
             kind: Kind::Sync(e),
         }
@@ -125,7 +205,7 @@ impl From<std::io::Error> for Error {
     }
 }
 
-impl From<kcp::KcpErr> for Error{
+impl From<kcp::KcpErr> for Error {
     fn from(e: kcp::KcpErr) -> Self {
         Kind::Kcp(e).into()
     }
@@ -133,13 +213,13 @@ impl From<kcp::KcpErr> for Error{
 
 impl<T> From<std::sync::PoisonError<T>> for Error {
     fn from(_: std::sync::PoisonError<T>) -> Self {
-        Sync::Mutex.into()
+        SyncErr::Mutex.into()
     }
 }
 
 impl From<std::cell::BorrowMutError> for Error {
     fn from(_: std::cell::BorrowMutError) -> Self {
-        Sync::Mutex.into()
+        SyncErr::Mutex.into()
     }
 }
 

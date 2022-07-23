@@ -1,16 +1,18 @@
-use std::{net::SocketAddr, pin::Pin, sync::Arc, time::Duration};
+use std::{net::SocketAddr, pin::Pin, sync::Arc};
 
 use crate::{
-    ext::{AsyncReadExt, AsyncWriteExt},
+    ext::AsyncReadExt,
     guard::Fallback,
+    io,
     penetrate::{
         server::{Peer, Visitor},
         Adapter, PenetrateAdapterBuilder,
     },
-    protocol::{make_packet, AsyncRecvPacket, AsyncSendPacket, Message, TryToMessage},
+    protocol::{make_packet, AsyncRecvPacket, AsyncSendPacket, Message, ToPacket, TryToMessage},
     select::Select,
     socks::{self, NoAuthentication, Socks},
-    Addr, Factory, FactoryWrapper, Kind, Socket, SocketKind, Stream, UdpReceiverExt, UdpSocket, time,
+    Addr, Factory, FactoryWrapper, Kind, Socket, SocketKind, Stream, UdpReceiverExt,
+    UdpSocket,
 };
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
@@ -73,8 +75,6 @@ where
     fn call(&self, stream: Fallback<S>) -> Self::Output {
         Box::pin(async move {
             let mut stream = stream;
-
-            log::debug!("call socks5");
 
             let socket = match stream
                 .socks5_handshake(&mut NoAuthentication::default())
@@ -169,7 +169,8 @@ where
 
         let fut = async move {
             let mut s1 = s1;
-            let mut s2 = s2;
+            let peer_addr = s2.peer_addr()?;
+            let (mut reader, mut writer) = io::split(s2);
 
             let (addr, mut udp) = factory.call(()).await?;
 
@@ -177,25 +178,28 @@ where
 
             socks::send_udp_forward_message(&mut s1, addr).await?;
 
-            log::debug!("forward message sent");
-
-            let fut1 = async move {
-                loop {
+            let fut1 = {
+                let mut writer = writer.clone();
+                async move {
                     let mut buf = [1];
-                    match s1.read(&mut buf).await {
-                        Ok(n) if n == 0 => {
-                            log::warn!("udp forwarding aborted");
-                            break Err(Into::<std::io::Error>::into(
-                                std::io::ErrorKind::ConnectionReset,
-                            )
-                            .into());
+
+                    loop {
+                        let r = s1.read(&mut buf).await;
+
+                        if r.is_err() {
+                            break;
                         }
-                        Err(e) => {
-                            log::warn!("udp forwarding aborted err={}", e);
-                            break Err(e);
+
+                        let n = unsafe { r.unwrap_unchecked() };
+
+                        if n == 0 {
+                            break;
                         }
-                        _ => {}
-                    };
+                    }
+
+                    let close = Message::Close.to_packet_vec();
+
+                    writer.send_packet(&close).await
                 }
             };
 
@@ -206,44 +210,34 @@ where
                     buf.set_len(1500);
                 }
 
-                log::debug!("waiting for visitor data");
+                loop {
+                    let (n, addr) = udp.recv_from(&mut buf).await?;
+                    let origin = socks::parse_and_forward_data(&mut writer, &buf[..n]).await?;
+                    log::info!("connect from {} to {}", peer_addr, origin);
 
-                let (n, addr) = udp.recv_from(&mut buf).await?;
+                    let packet = reader.recv_packet().await?;
 
-                log::debug!("visitor data received addr={}, size={}bytes", addr, n);
-
-                socks::parse_and_forward_data(&mut s2, &buf[..n]).await?;
-
-                log::debug!("wait for mapping udp forward data");
-
-                let packet = s2.recv_packet().await?;
-
-                log::debug!("receive forwarding data {}bytes", n);
-
-                socks::send_packed_udp_forward_message(
-                    &mut udp,
-                    &addr,
-                    &([0, 0, 0, 0], 0).into(),
-                    &packet.payload,
-                )
-                .await?;
-
-                s2.close().await?;
-
-                Ok(())
+                    socks::send_packed_udp_forward_message(
+                        &mut udp,
+                        &addr,
+                        origin,
+                        &packet.payload,
+                    )
+                    .await?;
+                }
             };
 
             Select::select(fut1, fut2).await
         };
 
         Box::pin(async move {
-            match time::wait_for(Duration::from_secs(5), fut).await? {
+            match fut.await {
                 Ok(()) => {
-                    log::debug!("udp forwarding ends");
+                    log::debug!("forward packet success");
                     Ok(())
                 }
                 Err(e) => {
-                    log::warn!("udp forwarding error {}", e);
+                    log::warn!("failed to forward {}", e);
                     Err(e)
                 }
             }
@@ -261,41 +255,48 @@ where
     fn call(&self, mut stream: S) -> Self::Output {
         let factory = self.0.clone();
         Box::pin(async move {
-            let message = stream.recv_packet().await?.try_message()?;
-
-            let addr = match message {
-                Message::Forward(addr) => addr,
-                message => {
-                    log::warn!("wrong message {}", message);
-                    return Ok(());
-                }
-            };
-
-            let (_, mut udp) = factory.call(addr).await?;
-
-            log::debug!("recv udp forward data ...");
-            let data = stream.recv_packet().await?;
-            
-            log::debug!("received udp forward data {:?}", data);
-
-            let _ = udp.send(&data.payload).await?;
-
             let mut buf = Vec::with_capacity(1500);
 
             unsafe {
                 buf.set_len(1500);
             }
 
-            let n = udp.recv(&mut buf).await?;
-            buf.truncate(n);
+            loop {
+                let message = stream.recv_packet().await?.try_message()?;
 
-            let packet = make_packet(buf).encode();
+                let addr = match message {
+                    Message::Forward(addr) => addr,
+                    Message::Close => {
+                        log::debug!("close udp forward");
+                        break Ok(());
+                    }
+                    message => {
+                        log::warn!("wrong message {}", message);
+                        break Ok(());
+                    }
+                };
 
-            log::debug!("send pack {:?}", packet);
+                let (_, udp) = factory.call(addr).await?;
 
-            stream.send_packet(&packet).await?;
+                let data = stream.recv_packet().await?;
 
-            stream.close().await
+                let _ = udp.send(&data.payload).await?;
+
+                log::info!(
+                    "connect from {} to {} forward {}bytes",
+                    stream.local_addr()?,
+                    udp.peer_addr()?,
+                    data.payload.len()
+                );
+
+                let n = udp.recv(&mut buf).await?;
+
+                let packet = make_packet(buf[..n].to_vec()).encode();
+
+                stream.send_packet(&packet).await?;
+
+                log::debug!("forward success {}bytes", n);
+            }
         })
     }
 }

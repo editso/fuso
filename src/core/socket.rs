@@ -27,6 +27,12 @@ macro_rules! impl_socket {
     };
 }
 
+#[derive(Clone)]
+pub enum Address {
+    Single(Socket),
+    Many(Vec<Address>),
+}
+
 #[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum InnerAddr {
     Socket(SocketAddr),
@@ -83,18 +89,34 @@ impl From<(String, u16)> for Addr {
     }
 }
 
-impl<T> From<(&T, u16)> for Addr
-where
-    T: ToString,
-{
-    fn from(addr: (&T, u16)) -> Self {
-        Self(InnerAddr::Domain(addr.0.to_string(), addr.1))
+impl From<(IpAddr, u16)> for Addr {
+    fn from(addr: (IpAddr, u16)) -> Self {
+        Self(InnerAddr::Socket((addr.0, addr.1).into()))
     }
 }
 
 impl From<u16> for Addr {
     fn from(port: u16) -> Self {
         ([0, 0, 0, 0], port).into()
+    }
+}
+
+impl Display for Address {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let fmt = match self {
+            Address::Single(addr) => format!("{}", addr),
+            Address::Many(address) => {
+                format!("{}", {
+                    address
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<String>>()
+                        .join(" | ")
+                })
+            }
+        };
+
+        write!(f, "{}", fmt)
     }
 }
 
@@ -130,7 +152,13 @@ impl Debug for Addr {
 impl Display for Addr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let fmt = match &self.0 {
-            InnerAddr::Socket(addr) => format!("{}", addr),
+            InnerAddr::Socket(addr) => {
+                if addr.ip().is_unspecified() {
+                    format!("[::{}]", addr.port())
+                } else {
+                    format!("{}", addr)
+                }
+            }
             InnerAddr::Domain(domain, port) => format!("{}:{}", domain, port),
         };
         write!(f, "{}", fmt)
@@ -155,39 +183,82 @@ impl SocketKind {
     }
 }
 
+#[cfg(debug_assertions)]
 impl Display for SocketKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let fmt = match self {
-            SocketKind::Kcp => "kcp",
-            SocketKind::Udp => "udp",
-            SocketKind::Tcp => "tcp",
-            SocketKind::Quic => "quic",
-            SocketKind::Ufd => "ufd",
+            SocketKind::Kcp => "KCP",
+            SocketKind::Udp => "UDP",
+            SocketKind::Tcp => "TCP",
+            SocketKind::Quic => "QUIC",
+            SocketKind::Ufd => "UFD",
         };
 
         write!(f, "{}", fmt)
     }
 }
 
+#[cfg(not(debug_assertions))]
+impl Display for SocketKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let fmt = match self {
+            SocketKind::Kcp => "K",
+            SocketKind::Udp => "U",
+            SocketKind::Tcp => "T",
+            SocketKind::Quic => "Q",
+            SocketKind::Ufd => "F",
+        };
+
+        write!(f, "{}", fmt)
+    }
+}
+
+#[cfg(debug_assertions)]
 impl Display for Socket {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let fmt_addr = {
             if self.is_default() {
-                format!("<default>")
+                format!("--")
             } else {
                 format!("{}", self.addr())
             }
         };
 
         if self.is_mixed() && !self.is_ufd() {
-            write!(f, "mixed addr={}", fmt_addr)
+            write!(f, "{} MIX", fmt_addr)
         } else {
-            write!(f, "{} addr={}", self.kind(), fmt_addr)
+            write!(f, "{} {}", fmt_addr, self.kind)
+        }
+    }
+}
+
+#[cfg(not(debug_assertions))]
+impl Display for Socket {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let fmt_addr = {
+            if self.is_default() {
+                format!("--")
+            } else {
+                format!("{}", self.addr())
+            }
+        };
+
+        if self.is_mixed() && !self.is_ufd() {
+            write!(f, "{} M", fmt_addr)
+        } else {
+            write!(f, " {} {}", fmt_addr, self.kind)
         }
     }
 }
 
 impl Addr {
+    pub fn as_string(&self) -> String {
+        match &self.0 {
+            InnerAddr::Socket(addr) => format!("{}", addr),
+            InnerAddr::Domain(host, port) => format!("{}:{}", host, port),
+        }
+    }
+
     pub fn is_ip(&self) -> bool {
         match &self.0 {
             InnerAddr::Socket(_) => true,
@@ -267,6 +338,10 @@ impl Addr {
     pub fn inner(&self) -> &InnerAddr {
         &self.0
     }
+    
+    pub fn into_inner(self) -> InnerAddr{
+        self.0
+    }
 }
 
 impl Socket {
@@ -331,3 +406,4 @@ impl Default for Socket {
         }
     }
 }
+

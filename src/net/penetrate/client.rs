@@ -264,14 +264,8 @@ where
 
                         Ok(State::Ready({
                             match s2 {
-                                Mapper::Forward(s2) => {
-                                    log::debug!("forwarding");
-                                    Box::pin(io::forward(s1, s2))
-                                }
-                                Mapper::Consume(s2) => {
-                                    log::debug!("consumed");
-                                    s2.call(s1)
-                                }
+                                Mapper::Forward(s2) => Box::pin(io::forward(s1, s2)),
+                                Mapper::Consume(s2) => s2.call(s1),
                             }
                         }))
                     };
@@ -292,7 +286,7 @@ where
             }
         }
 
-        log::trace!("{} futures remaining", self.futures.len());
+        log::debug!("{} futures remaining", self.futures.len());
 
         Poll::Pending
     }

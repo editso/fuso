@@ -1,5 +1,3 @@
-use crate::FusoStream;
-
 use std::{pin::Pin, sync::Arc};
 
 use crate::Socket;
@@ -51,8 +49,6 @@ where
     #[inline]
     pub async fn bind<Sock: Into<Socket>>(&self, socket: Sock) -> crate::Result<S> {
         let socket = socket.into();
-        log::debug!("{}", socket);
-
         self.accepter_factory.call(socket).await
     }
 
@@ -77,12 +73,12 @@ where
     C: Factory<Socket, Output = BoxedFuture<O>>,
     O: Send + 'static,
 {
-    pub(crate) fn with_server_socket(mut self, socket: Socket) -> Self{
+    pub(crate) fn with_server_socket(mut self, socket: Socket) -> Self {
         self.server_socket = socket;
         self
     }
 
-    pub(crate) fn default_socket(&self) -> &Socket{
+    pub(crate) fn default_socket(&self) -> &Socket {
         &self.server_socket
     }
 
@@ -109,20 +105,6 @@ impl<C> Clone for ClientFactory<C> {
             server_socket: self.server_socket.clone(),
             connect_factory: self.connect_factory.clone(),
         }
-    }
-}
-
-#[derive(Default)]
-pub struct Handshake;
-
-impl Factory<FusoStream> for Handshake {
-    type Output = BoxedFuture<FusoStream>;
-
-    fn call(&self, stream: FusoStream) -> Self::Output {
-        Box::pin(async move {
-            log::debug!("handshake");
-            Ok(stream)
-        })
     }
 }
 

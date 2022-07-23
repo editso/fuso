@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Buffer<T> {
     len: usize,
     buf: VecDeque<Vec<T>>,

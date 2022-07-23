@@ -16,16 +16,19 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Poll, Waker},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use async_mutex::Mutex;
 
-use crate::{guard::buffer::Buffer, time, Accepter, Executor, Task, UdpReceiverExt, UdpSocket};
+use crate::{
+    guard::buffer::Buffer, time, Accepter, Address, Executor, NetSocket, Socket, Task,
+    UdpReceiverExt, UdpSocket,
+};
 
 type BoxedFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 
-type Manager<C> = Arc<Mutex<HashMap<u64, HashMap<u32, Session<C>>>>>;
+type Manager<C> = Arc<Mutex<HashMap<u64, HashMap<u32, KLife<C>>>>>;
 type Callback = Option<Box<dyn FnOnce() + Sync + Send + 'static>>;
 
 pub fn now_mills() -> u32 {
@@ -36,13 +39,18 @@ pub fn now_mills() -> u32 {
 }
 
 pub enum State<C> {
-    Open((u64, u32, Session<C>)),
+    Open((u64, u32, Session<C>, Address)),
     Close(u32),
 }
 
 enum UpdateState {
     Updating(Pin<Box<dyn Future<Output = crate::Result<()>> + 'static>>),
     WaitUpdate(Pin<Box<dyn Future<Output = crate::Result<()>> + 'static>>),
+}
+
+pub enum KLife<C> {
+    Dead(Instant, Session<C>),
+    Active(Session<C>),
 }
 
 pub struct KcpUpdate<C> {
@@ -70,7 +78,7 @@ pub struct KcpConnector<C, E> {
     core: C,
     task: Task<crate::Result<()>>,
     executor: E,
-    sessions: Arc<Mutex<HashMap<u32, Session<C>>>>,
+    sessions: Arc<Mutex<HashMap<u32, KLife<C>>>>,
     increment: Increment,
 }
 
@@ -105,12 +113,16 @@ where
 {
     pub fn new(
         conv: u32,
+        local_addr: Address,
+        peer_addr: Address,
         kcore: Arc<std::sync::Mutex<KcpCore<C>>>,
         close_callback: Callback,
     ) -> Self {
         Self {
             conv,
             kcore,
+            local_addr,
+            peer_addr,
             close_callback,
         }
     }
@@ -156,7 +168,7 @@ where
 
         let mut kcp = third_party::Kcp::new(conv, output);
 
-        kcp.set_wndsize(512, 521);
+        kcp.set_wndsize(1024, 1024);
         kcp.set_nodelay(true, 20, 2, true);
         kcp.set_maximum_resend_times(10);
 
@@ -192,15 +204,26 @@ where
     }
 
     fn force_close(&self) -> crate::Result<()> {
-        self.kcore.lock()?.force_close()
+        self.kcore.lock()?.close()
     }
 
     async fn safe_close(&self) -> crate::Result<()> {
         self.kcore.lock()?.close()
     }
 
-    fn stream(&self, close_callback: Callback) -> KcpStream<C> {
-        KcpStream::new(self.conv, self.kcore.clone(), close_callback)
+    fn stream(
+        &self,
+        local_addr: Address,
+        peer_addr: Address,
+        close_callback: Callback,
+    ) -> KcpStream<C> {
+        KcpStream::new(
+            self.conv,
+            local_addr,
+            peer_addr,
+            self.kcore.clone(),
+            close_callback,
+        )
     }
 }
 
@@ -254,38 +277,73 @@ where
 
             let sessions = sessions.entry(id).or_default();
 
+            sessions.retain(|_, klife| match klife {
+                KLife::Dead(now, _) => now.elapsed().as_secs() < 30,
+                _ => true,
+            });
+
             let new_kcp = !sessions.contains_key(&conv);
 
-            let session = Session::new(conv, Some(addr), core.clone(), executor.clone(), {
-                {
-                    let manager = manager.clone();
-                    move |conv| async move {
-                        if let Some(session) = manager
-                            .lock()
-                            .await
-                            .get_mut(&id)
-                            .map_or(None, |sessions| sessions.remove(&conv))
+            if new_kcp {
+                let new_session = KLife::Active({
+                    Session::new(conv, Some(addr), core.clone(), executor.clone(), {
                         {
-                            drop(session);
-                            log::debug!("clean the session id={}, conv={}", id, conv)
-                        }
+                            let manager = manager.clone();
+                            move |conv| async move {
+                                let mut sessions = manager.lock().await;
+                                let sessions = sessions.get_mut(&id);
 
-                        ()
+                                if let Some(sessions) = sessions {
+                                    if let Some(session) = sessions.remove(&conv) {
+                                        let dead_session = match session {
+                                            KLife::Dead(now, session) => KLife::Dead(now, session),
+                                            KLife::Active(session) => {
+                                                let _ = session.force_close();
+                                                KLife::Dead(Instant::now(), session)
+                                            }
+                                        };
+
+                                        sessions.insert(conv, dead_session);
+                                    }
+                                }
+
+                                ()
+                            }
+                        }
+                    })?
+                });
+
+                sessions.insert(conv, new_session);
+            }
+
+            let klife = unsafe { sessions.get_mut(&conv).unwrap_unchecked() };
+
+            match klife {
+                KLife::Dead(now, session) => {
+                    let _ = session.force_close();
+
+                    if now.elapsed().as_secs() < 30 {
+                        if let Some(target) = session.target.as_ref() {
+                            core.send_to(target, &third_party::force_close(session.conv))
+                                .await?;
+                        }
                     }
                 }
-            })?;
-
-            let session = sessions.entry(conv).or_insert_with(|| session);
-
-            if let Err(e) = session.input(data).await {
-                log::warn!("failed to input {}", e);
-                if let Some(session) = sessions.remove(&conv) {
-                    if let Err(e) = session.force_close() {
-                        log::warn!("failed to close {}", e);
+                KLife::Active(session) => {
+                    if let Err(e) = session.input(data).await {
+                        log::warn!("failed to input {}", e);
+                        if let Err(e) = session.force_close() {
+                            log::warn!("failed to close {}", e);
+                        };
+                    } else if new_kcp {
+                        break Ok(State::Open((
+                            id,
+                            conv,
+                            session.clone(),
+                            Address::Single(Socket::udp(addr)),
+                        )));
                     }
-                };
-            } else if new_kcp {
-                break Ok(State::Open((id, conv, session.clone())));
+                }
             }
         }
     }
@@ -295,20 +353,38 @@ where
         let executor = self.executor.clone();
         let close_callback = move || {
             executor.spawn(async move {
-                let sessions = manager.lock().await;
+                let mut sessions = manager.lock().await;
                 let session = sessions
-                    .get(&id)
-                    .map_or(None, |sessions| sessions.get(&conv));
+                    .get_mut(&id)
+                    .map_or(None, |sessions| sessions.get_mut(&conv));
 
                 if let Some(session) = session {
-                    if let Err(e) = session.safe_close().await {
-                        log::warn!("failed to close {}", e);
+                    match session {
+                        KLife::Active(session) => {
+                            if let Err(e) = session.safe_close().await {
+                                log::warn!("failed to close {}", e);
+                            }
+                        }
+                        _ => {}
                     }
                 }
             });
         };
 
         Some(Box::new(close_callback))
+    }
+}
+
+impl<C, E> NetSocket for KcpListener<C, E>
+where
+    C: NetSocket,
+{
+    fn peer_addr(&self) -> crate::Result<crate::Address> {
+        self.core.peer_addr()
+    }
+
+    fn local_addr(&self) -> crate::Result<crate::Address> {
+        self.core.local_addr()
     }
 }
 
@@ -336,7 +412,7 @@ where
                 Poll::Pending => {
                     self.futures.push(future);
                 }
-                Poll::Ready(Ok(State::Open((id, conv, kcp)))) => {
+                Poll::Ready(Ok(State::Open((id, conv, kcp, peer_addr)))) => {
                     let accept_fut = Self::run_accept(
                         self.core.clone(),
                         self.manager.clone(),
@@ -349,7 +425,11 @@ where
 
                     let close_fn = self.make_close_fn(id, conv);
 
-                    return Poll::Ready(Ok(kcp.stream(close_fn)));
+                    return Poll::Ready(Ok(kcp.stream(
+                        self.core.local_addr()?,
+                        peer_addr,
+                        close_fn,
+                    )));
                 }
             }
         }
@@ -380,7 +460,7 @@ where
     E: Executor + Clone + Sync + Send + 'static,
 {
     pub fn new(core: C, executor: E) -> Self {
-        let sessions: Arc<Mutex<HashMap<u32, Session<C>>>> = Default::default();
+        let sessions: Arc<Mutex<HashMap<u32, KLife<C>>>> = Default::default();
 
         let task = { executor.spawn(Self::run_connect(core.clone(), sessions.clone())) };
 
@@ -395,7 +475,7 @@ where
 
     fn run_connect(
         core: C,
-        sessions: Arc<Mutex<HashMap<u32, Session<C>>>>,
+        sessions: Arc<Mutex<HashMap<u32, KLife<C>>>>,
     ) -> BoxedFuture<crate::Result<()>> {
         let fut = async move {
             loop {
@@ -417,19 +497,28 @@ where
 
                 let mut sessions = sessions.lock().await;
 
+                sessions.retain(|_, klife| match klife {
+                    KLife::Dead(now, _) => now.elapsed().as_secs() < 30,
+                    _ => true,
+                });
+
                 if let Some(session) = sessions.get_mut(&conv) {
-                    unsafe {
-                        if let Err(e) = session.input(buf).await {
-                            log::warn!("failed to input {}", e);
-                            drop(session);
-                            if let Err(e) = sessions.remove(&conv).unwrap_unchecked().force_close()
-                            {
-                                log::warn!("failed to force close {}", e);
+                    match session {
+                        KLife::Active(session) => {
+                            if let Err(e) = session.input(buf).await {
+                                log::warn!("failed to input {}", e);
+                                if let Err(e) = session.force_close() {
+                                    log::warn!("force close failed {}", e);
+                                }
                             }
+                        }
+                        KLife::Dead(_, session) => {
+                            core.send(&third_party::force_close(session.conv)).await?;
                         }
                     }
                 } else {
-                    log::warn!("bad conv: {}", conv)
+                    // FIXME 需要处理time_wait
+                    core.send(&third_party::force_close(conv)).await?;
                 }
             }
         };
@@ -463,28 +552,50 @@ where
         let session = Session::new(conv, None, self.core.clone(), self.executor.clone(), {
             let sessions = self.sessions.clone();
             move |conv| async move {
-                if let Some(session) = sessions.lock().await.remove(&conv) {
-                    drop(session);
+                let mut sessions = sessions.lock().await;
+                if let Some(session) = sessions.remove(&conv) {
+                    let dead_session = match session {
+                        KLife::Dead(now, session) => KLife::Dead(now, session),
+                        KLife::Active(session) => {
+                            let _ = session.force_close();
+                            KLife::Dead(Instant::now(), session)
+                        }
+                    };
+
+                    sessions.insert(conv, dead_session);
                     log::debug!("clean the session conv={}", conv);
                 }
+
                 ()
             }
         })?;
 
-        self.sessions.lock().await.insert(conv, session.clone());
+        self.sessions
+            .lock()
+            .await
+            .insert(conv, KLife::Active(session.clone()));
 
         let close_callback = move || {
             executor.spawn(async move {
                 log::debug!("closing conv {}", conv);
                 if let Some(session) = sessions.lock().await.get_mut(&conv) {
-                    if let Err(e) = session.safe_close().await {
-                        log::warn!("failed to close {}", e);
+                    match session {
+                        KLife::Active(session) => {
+                            if let Err(e) = session.safe_close().await {
+                                log::warn!("failed to close {}", e);
+                            }
+                        }
+                        _ => {}
                     }
                 }
             });
         };
 
-        Ok(session.stream(Some(Box::new(close_callback))))
+        Ok(session.stream(
+            self.core.local_addr()?,
+            self.core.peer_addr()?,
+            Some(Box::new(close_callback)),
+        ))
     }
 }
 
@@ -528,10 +639,15 @@ where
                         kcore.close_waker.take().map(Waker::wake);
                         kcore.write_waker.take().map(Waker::wake);
                         kcore.read_waker.take().map(Waker::wake);
-                        return Poll::Ready(Err(KcpErr::Closed.into()));
+                        return Poll::Ready(Err(KcpErr::ConnectionReset.into()));
                     }
 
-                    log::trace!("next update {}ms", next);
+                    log::trace!(
+                        "next update {}ms conv={} cls={}",
+                        next,
+                        kcore.conv(),
+                        kcore.close_state()
+                    );
 
                     Box::pin(async move {
                         time::sleep(Duration::from_millis(next as u64)).await;
@@ -648,7 +764,7 @@ mod tests {
 
                                     log::debug!("receive  {:?}", s);
                                     if s.contains("close") {
-                                        writer.close().await;
+                                        let _ = writer.close().await;
                                         log::debug!("close ....");
                                         break;
                                     }

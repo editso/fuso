@@ -1,3 +1,5 @@
+pub mod udp;
+
 #[cfg(feature = "fuso-kcp")]
 pub mod kcp;
 

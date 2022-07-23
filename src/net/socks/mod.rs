@@ -1,16 +1,15 @@
 mod auth;
 pub use auth::*;
-
 use std::net::SocketAddr;
 use std::{pin::Pin, task::Poll};
 
 use std::future::Future;
 
 use crate::ext::AsyncWriteExt;
-use crate::protocol::{make_packet, AsyncSendPacket, Message, ToPacket};
+use crate::protocol::{make_packet, Message, ToPacket};
 use crate::{
-    ready, Addr, AsyncRead, AsyncWrite, Kind, ReadBuf, Socket, SocksErr, Stream, UdpReceiverExt,
-    UdpSocket,
+    ready, Addr, AsyncRead, AsyncWrite, Kind, NetSocket, ReadBuf, Socket, SocksErr, Stream,
+    UdpReceiverExt, UdpSocket,
 };
 use std::task::Context;
 
@@ -154,7 +153,7 @@ impl<'a> TryFrom<&'a [u8]> for Head {
     }
 }
 
-impl<T> Socks for T where T: AsyncRead + AsyncWrite + Unpin {}
+impl<T> Socks for T where T: NetSocket + AsyncRead + AsyncWrite + Unpin {}
 
 fn parse_address(cmd: u8, _: u8, atype: u8, data: &[u8]) -> crate::Result<Socket> {
     if cmd == 0x02 {
@@ -379,7 +378,7 @@ where
 //  +----+------+------+----------+----------+----------+
 //  | 2  |  1   |  1   | Variable |    2     | Variable |
 //  +----+------+------+----------+----------+----------+
-pub async fn parse_and_forward_data<S>(s1: &mut S, data: &[u8]) -> crate::Result<()>
+pub async fn parse_and_forward_data<S>(s1: &mut S, data: &[u8]) -> crate::Result<Addr>
 where
     S: AsyncWrite + Unpin,
 {
@@ -392,11 +391,11 @@ where
     let atype = data[3];
 
     log::debug!(
-        "rsv={}, frag={}, atype={} data={:?}",
+        "rsv={}, frag={}, atype={} data={}bytes",
         rsv,
         frag,
         atype,
-        data
+        data.len()
     );
 
     let (size, data) = match atype {
@@ -408,13 +407,9 @@ where
 
     let addr = parse_address(0x03, 0, atype, data)?.into_addr();
 
-    let message = Message::Forward(addr).to_packet_vec();
-
-    log::debug!("send forward addr = {:?}", &data[..size]);
+    let message = Message::Forward(addr.clone()).to_packet_vec();
 
     s1.write_all(&message).await?;
-
-    log::debug!("send forward data {:?}", &data[size..]);
 
     let data = make_packet(data[size..].to_vec()).encode();
 
@@ -422,13 +417,13 @@ where
 
     log::debug!("send forward data success");
 
-    Ok(())
+    Ok(addr)
 }
 
 pub async fn send_packed_udp_forward_message<U>(
     udp: &mut U,
     to: &SocketAddr,
-    origin: &SocketAddr,
+    origin: Addr,
     data: &[u8],
 ) -> crate::Result<()>
 where
@@ -437,26 +432,35 @@ where
     let mut buf = Vec::new();
     buf.extend(&[0x00, 0x00, 0x00]);
 
-    match origin {
-        SocketAddr::V4(v1) => {
-            buf.push(0x01);
-            buf.extend(&v1.ip().octets());
-            buf.extend(&v1.port().to_be_bytes());
-        }
-        SocketAddr::V6(v2) => {
-            buf.push(0x04);
-            buf.write_all(&v2.ip().octets());
-            buf.extend(&v2.port().to_be_bytes());
+    match origin.into_inner() {
+        crate::InnerAddr::Socket(origin) => match origin {
+            SocketAddr::V4(v1) => {
+                buf.push(0x01);
+                buf.extend(&v1.ip().octets());
+                buf.extend(&v1.port().to_be_bytes());
+            }
+            SocketAddr::V6(v2) => {
+                buf.push(0x04);
+                buf.extend(&v2.ip().octets());
+                buf.extend(&v2.port().to_be_bytes());
+            }
+        },
+        crate::InnerAddr::Domain(domain, port) => {
+            let domain = domain.as_bytes();
+            buf.push(0x03);
+            buf.push(domain.len() as u8);
+            buf.extend(domain);
+            buf.extend(&port.to_be_bytes());
         }
     }
 
     buf.extend(data);
 
     match udp.send_to(to, &buf).await {
+        Err(e) => Err(e),
         Ok(n) => {
             log::debug!("forward {}bytes", n);
             Ok(())
         }
-        Err(e) => Err(e),
     }
 }

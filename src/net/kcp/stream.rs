@@ -6,7 +6,9 @@ use std::{
     task::{Poll, Waker},
 };
 
-use crate::{guard::buffer::Buffer, AsyncRead, AsyncWrite, Kind, Task, UdpSocket};
+use crate::{
+    guard::buffer::Buffer, Address, AsyncRead, AsyncWrite, Kind, NetSocket, Task, UdpSocket,
+};
 
 use super::KcpErr;
 
@@ -30,6 +32,8 @@ pub struct KcpCore<C> {
 
 pub struct KcpStream<C> {
     pub(crate) conv: u32,
+    pub(crate) local_addr: Address,
+    pub(crate) peer_addr: Address,
     pub(crate) kcore: Arc<std::sync::Mutex<KcpCore<C>>>,
     /// 在被drop或手动调用close时触发通知内部进行更新
     pub(crate) close_callback: Callback,
@@ -109,6 +113,7 @@ where
             ));
             Poll::Pending
         } else {
+            self.kcp.force_close()?;
             Poll::Ready(Ok(()))
         }
     }
@@ -214,6 +219,16 @@ where
         }
 
         Poll::Ready(Ok(()))
+    }
+}
+
+impl<C> NetSocket for KcpStream<C> {
+    fn peer_addr(&self) -> crate::Result<crate::Address> {
+        Ok(self.peer_addr.clone())
+    }
+
+    fn local_addr(&self) -> crate::Result<crate::Address> {
+        Ok(self.local_addr.clone())
     }
 }
 

@@ -19,8 +19,7 @@ pub enum KcpErr {
     UserBufTooBig,
     UserBufTooSmall,
     NoMoreConv,
-    Closed,
-    Lock
+    ConnectionReset,
 }
 
 impl StdError for KcpErr {
@@ -49,7 +48,13 @@ impl fmt::Display for KcpErr {
             }
             KcpErr::IoError(ref e) => e.fmt(f),
             KcpErr::UnsupportedCmd(ref e) => write!(f, "cmd {} is not supported", *e),
-            ref e => write!(f, "{}", e),
+            KcpErr::NeedUpdate => write!(f, "NeedUpdate"),
+            KcpErr::RecvQueueEmpty => write!(f, "RecvQueueEmpty"),
+            KcpErr::ExpectingFragment => write!(f, "ExpectingFragment"),
+            KcpErr::UserBufTooBig => write!(f, "UserBufTooBig"),
+            KcpErr::UserBufTooSmall => write!(f, "UserBufTooSmall"),
+            KcpErr::NoMoreConv => write!(f, "NoMoreConv"),
+            KcpErr::ConnectionReset => write!(f, "ConnectionReset"),
         }
     }
 }
@@ -76,8 +81,7 @@ impl From<KcpErr> for io::Error {
             KcpErr::UserBufTooBig => ErrorKind::Other,
             KcpErr::UserBufTooSmall => ErrorKind::Other,
             KcpErr::NoMoreConv => ErrorKind::Other,
-            KcpErr::Lock => ErrorKind::Other,
-            KcpErr::Closed => ErrorKind::ConnectionReset
+            KcpErr::ConnectionReset => ErrorKind::ConnectionReset,
         };
 
         make_io_error(kind, err)

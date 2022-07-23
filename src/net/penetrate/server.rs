@@ -15,7 +15,7 @@ use crate::{
 };
 
 use super::unpacker::Unpacker;
-use crate::{time, Kind};
+use crate::{time, Address, Kind, NetSocket, ResultDisplay};
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
 
@@ -71,6 +71,7 @@ pub struct PenetrateFactory<T> {
 pub struct Penetrate<T, A> {
     writer: WriteHalf<T>,
     config: Config,
+    client_addr: Address,
     unpacker: Arc<Unpacker<T>>,
     wait_for: WaitFor<async_channel::Sender<Fallback<T>>>,
     futures: Vec<BoxedFuture<State<T>>>,
@@ -107,10 +108,9 @@ where
     T: Stream + Sync + Send + 'static,
     A: Accepter<Stream = T> + Unpin + Send + 'static,
 {
-    pub fn new(config: Config, unpacker: Arc<Unpacker<T>>, target: T, accepter: A) -> Self {
-        log::debug!("{}", config);
-
-        let (reader, writer) = crate::io::split(target);
+    pub fn new(config: Config, unpacker: Arc<Unpacker<T>>, client: T, accepter: A) -> Self {
+        let client_addr = unsafe { client.peer_addr().unwrap_unchecked() };
+        let (reader, writer) = crate::io::split(client);
 
         let wait_for = WaitFor {
             identify: Default::default(),
@@ -126,6 +126,7 @@ where
             unpacker,
             accepter,
             wait_for,
+            client_addr,
             futures: vec![Box::pin(recv_fut), Box::pin(write_fut)],
         }
     }
@@ -192,77 +193,82 @@ where
         let wait_for = self.wait_for.clone();
         let fallback_strict_mode = self.config.fallback_strict_mode;
         let is_mixed = self.config.is_mixed;
+        let client_addr = self.client_addr.clone();
 
         let fut = async move {
             let mut fallback = Fallback::new(stream, fallback_strict_mode);
             let _ = fallback.mark().await?;
-            match factory.call(fallback).await? {
+
+            let peer = factory.call(fallback).await?;
+
+            match peer {
                 Peer::Visitor(visit, socket) => {
                     let (accept_tx, accept_ax) = async_channel::bounded(1);
                     let id = wait_for.push(accept_tx).await;
+                    let target_addr = socket.clone();
 
-                    let future = async move {
-                        // 通知客户端建立连接
+                    let future = {
+                        let client_addr = client_addr.clone();
+                        async move {
+                            // 通知客户端建立连接
+                            let socket = socket.if_stream_mixed(is_mixed);
 
-                        let message =
-                            Message::Map(id, socket.if_stream_mixed(is_mixed)).to_packet_vec();
+                            log::info!("connect from {} to {}", client_addr, socket);
 
-                        log::debug!("notify the client to create the mapping");
+                            let message = Message::Map(id, socket.clone()).to_packet_vec();
 
-                        if let Err(e) = writer.send_packet(&message).await {
-                            log::warn!(
-                                "notify the client that the connection establishment failed"
-                            );
-                            return Ok(State::Error(e));
-                        }
+                            if let Err(e) = writer.send_packet(&message).await {
+                                log::warn!(
+                                    "notify the {} that the connection establishment failed",
+                                    client_addr
+                                );
+                                return Ok(State::Error(e));
+                            }
 
-                        log::debug!("client notified, waiting for mapping");
+                            log::trace!("client notified, waiting for mapping");
 
-                        match visit {
-                            Visitor::Forward(stream) => {
-                                let mut s1 = stream;
-                                let mut s2 = accept_ax.recv().await?;
+                            match visit {
+                                Visitor::Forward(stream) => {
+                                    let mut s1 = stream;
+                                    let mut s2 = accept_ax.recv().await?;
 
-                                s1.backward().await?;
+                                    s1.backward().await?;
 
-                                if let Some(data) = s1.back_data() {
-                                    log::debug!("copy data to peer {}bytes", data.len());
+                                    if let Some(data) = s1.back_data() {
+                                        log::trace!("copy data to peer {}bytes", data.len());
 
-                                    if let Err(e) = s2.write_all(&data).await {
-                                        log::warn!(
-                                            "mapping failed, the client has closed the connection"
-                                        );
-                                        return Err(e.into());
+                                        if let Err(e) = s2.write_all(&data).await {
+                                            log::warn!(
+                                                "mapping failed, the client has closed the connection"
+                                            );
+                                            return Err(e.into());
+                                        }
                                     }
+
+                                    Ok::<_, crate::Error>(State::Forward(
+                                        s1.into_inner(),
+                                        s2.into_inner(),
+                                    ))
                                 }
-
-                                Ok::<_, crate::Error>(State::Forward(
-                                    s1.into_inner(),
-                                    s2.into_inner(),
-                                ))
-                            }
-                            Visitor::Consume(factory) => {
-                                Ok(State::Consume(factory.call(accept_ax.recv().await?)))
+                                Visitor::Consume(factory) => {
+                                    Ok(State::Consume(factory.call(accept_ax.recv().await?)))
+                                }
                             }
                         }
                     };
 
-                    let r = match time::wait_for(timeout, future).await {
-                        Ok(Ok(r)) => Ok(r),
-                        Ok(Err(e)) => Err(e),
-                        Err(e) => {
-                            log::warn!("mapping timed out");
-                            Err(e.into())
-                        }
-                    };
-
-                    match r {
+                    match future.await {
                         Ok(s) => {
                             log::debug!("mapping was established successfully");
                             Ok(s)
                         }
                         Err(e) => {
-                            log::debug!("mapping failed, clear mapping information");
+                            log::warn!(
+                                "failed connect from {} to {}, err: {}",
+                                client_addr,
+                                target_addr,
+                                e
+                            );
                             wait_for.remove(id).await.map(|r| r.close());
                             Err(e)
                         }
@@ -276,23 +282,40 @@ where
                         Ok(State::Close(stream.into_inner()))
                     }
                     Some(sender) => {
-                        log::warn!("mapping request established");
                         sender.send(stream).await?;
                         Ok(State::Finish)
                     }
                 },
-                Peer::Finished(s) => {
-                    log::info!("closed");
-                    Ok(State::Close(s.into_inner()))
-                }
+                Peer::Finished(s) => Ok(State::Close(s.into_inner())),
                 Peer::Unknown(s) => {
-                    log::warn!("illegal connection");
+                    log::warn!("illegal connection {}", s.local_addr().display());
                     Ok(State::Close(s.into_inner()))
                 }
             }
         };
 
-        Box::pin(fut)
+        let wait_fut = crate::time::wait_for(timeout, fut);
+
+        Box::pin(async move {
+            match wait_fut.await {
+                Ok(ok) => ok,
+                Err(e) => Err(e.into()),
+            }
+        })
+    }
+}
+
+impl<T, A> NetSocket for Penetrate<T, A>
+where
+    T: Stream,
+    A: Accepter<Stream = T>,
+{
+    fn peer_addr(&self) -> crate::Result<Address> {
+        self.accepter.peer_addr()
+    }
+
+    fn local_addr(&self) -> crate::Result<Address> {
+        self.accepter.local_addr()
     }
 }
 
@@ -338,31 +361,25 @@ where
                         )));
                     }
                     Poll::Ready(Ok(State::Stop)) => {
-                        log::warn!("client closes connection");
+                        log::warn!("client aborted {}", self.client_addr);
                         return Poll::Ready(Err(crate::error::Kind::Channel.into()));
                     }
                     Poll::Ready(Ok(State::Error(e))) => {
-                        log::warn!("client error {}", e);
+                        log::warn!("client error {}, err: {}", self.client_addr, e);
                         return Poll::Ready(Err(e));
                     }
                     Poll::Ready(Ok(State::Close(mut s))) => {
-                        self.futures.push(Box::pin(async move {
+                        futures.push(Box::pin(async move {
                             let _ = s.close().await;
                             Ok(State::Finish)
                         }));
-                        log::warn!("Peer is closed");
                     }
-                    Poll::Ready(Ok(State::Finish)) => {
-                        log::warn!("finished");
-                    }
-                    Poll::Ready(Err(e)) => {
-                        log::warn!("encountered other errors {}", e);
-                    }
+                    _ => {}
                 }
             }
         }
 
-        log::trace!("{} futures remaining", self.futures.len());
+        log::debug!("{} futures remaining", self.futures.len());
 
         Poll::Pending
     }
@@ -416,9 +433,12 @@ where
                         Err(e)
                     } else {
                         log::info!(
-                            "the listener was created successfully and bound to {}",
-                            socket
+                            "start port mapping ! client is {} and the server is {}",
+                            client.peer_addr()?,
+                            accepter.local_addr()?
                         );
+
+                        log::info!("please visit {} for port mapping", accepter.local_addr()?);
 
                         Ok(PenetrateGenerator(Penetrate::new(
                             config,

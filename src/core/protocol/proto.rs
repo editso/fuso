@@ -35,6 +35,7 @@ pub enum Auth {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Message {
     Ping,
+    Close,
     MapError(u32, String),
     Bind(Bind),
     Map(u32, Socket),
