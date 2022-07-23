@@ -72,7 +72,7 @@ async fn main() -> fuso::Result<()> {
 
     let args = FusoArgs::parse();
 
-    init_logger(args.log_level);
+    init_logger(args.log_level);   
 
     fuso::builder_server_with_tokio()
         .with_kcp_accepter(TokioUdpServerFactory, TokioExecutor)

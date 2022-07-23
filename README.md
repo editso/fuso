@@ -145,6 +145,11 @@ fuc [options] <server-host> <server-port>
 
 ### 😶部分功能还待完善敬请期待..
 
+
+### External
++ kcp: [https://github.com/Matrix-Zhang/kcp](https://github.com/Matrix-Zhang/kcp)
++ lz4: [https://github.com/lz4/lz4](https://github.com/lz4/lz4)
+
 ### 注意
 - 本项目所用技术**仅用于学习交流**，**请勿直接用于任何商业场合和非法用途**。
 

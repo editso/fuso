@@ -440,6 +440,7 @@ dependencies = [
  "axum",
  "bincode",
  "bytes",
+ "cc",
  "clap",
  "env_logger",
  "futures",
