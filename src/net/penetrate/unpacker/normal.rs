@@ -6,7 +6,7 @@ use crate::{
         server::{Peer, Visitor},
         Adapter,
     },
-    protocol::{AsyncRecvPacket, Message, TryToMessage},
+    protocol::{AsyncRecvPacket, Poto, TryToPoto},
     Factory,
     Socket, Stream,
 };
@@ -29,7 +29,7 @@ where
                 Ok(packet) => match packet.try_message() {
                     Err(_) => Ok(Adapter::Reject(stream)),
                     Ok(message) => match message {
-                        Message::Map(id, socket) => {
+                        Poto::Map(id, socket) => {
                             log::debug!("client establishes mapping to {}", socket);
                             Ok(Adapter::Accept(Peer::Mapper(id, stream)))
                         }

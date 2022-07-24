@@ -8,7 +8,7 @@ use crate::{
         server::{Peer, Visitor},
         Adapter, PenetrateAdapterBuilder,
     },
-    protocol::{make_packet, AsyncRecvPacket, AsyncSendPacket, Message, ToPacket, TryToMessage},
+    protocol::{make_packet, AsyncRecvPacket, AsyncSendPacket, Poto, ToPacket, TryToPoto},
     select::Select,
     socks::{self, NoAuthentication, Socks},
     Addr, Factory, FactoryWrapper, Kind, Socket, SocketKind, Stream, UdpReceiverExt,
@@ -197,7 +197,7 @@ where
                         }
                     }
 
-                    let close = Message::Close.to_packet_vec();
+                    let close = Poto::Close.to_packet_vec();
 
                     writer.send_packet(&close).await
                 }
@@ -265,8 +265,8 @@ where
                 let message = stream.recv_packet().await?.try_message()?;
 
                 let addr = match message {
-                    Message::Forward(addr) => addr,
-                    Message::Close => {
+                    Poto::Forward(addr) => addr,
+                    Poto::Close => {
                         log::debug!("close udp forward");
                         break Ok(());
                     }

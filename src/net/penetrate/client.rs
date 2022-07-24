@@ -7,7 +7,7 @@ use crate::io::{ReadHalf, WriteHalf};
 use crate::{
     client::Mapper,
     generator::Generator,
-    protocol::{AsyncRecvPacket, AsyncSendPacket, Bind, Message, ToPacket, TryToMessage},
+    protocol::{AsyncRecvPacket, AsyncSendPacket, Bind, Poto, ToPacket, TryToPoto},
     Kind, Socket, Stream, {ClientFactory, Factory},
 };
 
@@ -24,8 +24,8 @@ macro_rules! async_connect {
             match $connector.call(socket).await {
                 Ok(ok) => Ok(ok),
                 Err(err) => {
-                    let message = Message::MapError($id, err.to_string()).to_packet_vec();
-                    return match writer.send_packet(&message).await {
+                    let poto = Poto::MapError($id, err.to_string()).to_packet_vec();
+                    return match writer.send_packet(&poto).await {
                         Ok(_) => Err(err),
                         Err(err) => Err(err),
                     };
@@ -71,7 +71,7 @@ where
         Box::pin(async move {
             let mut stream = stream;
             let (remote, local) = socket;
-            let message = Message::Bind(Bind::Bind(remote.clone())).to_packet_vec();
+            let message = Poto::Bind(Bind::Bind(remote.clone())).to_packet_vec();
 
             if let Err(e) = stream.send_packet(&message).await {
                 log::error!("failed to send listen message to server err={}", e);
@@ -94,7 +94,7 @@ where
             let message = unsafe { message.unwrap_unchecked() };
 
             match message {
-                Message::Bind(Bind::Bind(mut remote_bind)) => {
+                Poto::Bind(Bind::Bind(mut remote_bind)) => {
                     log::info!("the server is bound to {}", remote_bind);
 
                     if remote_bind.is_ip_unspecified() {
@@ -112,7 +112,7 @@ where
                         connector_factory,
                     ))
                 }
-                Message::Bind(Bind::Failed(socket, e)) => {
+                Poto::Bind(Bind::Failed(socket, e)) => {
                     log::error!(
                         "an error occurred while creating the listener on the server addr={}, err={}",
                         socket,
@@ -160,7 +160,7 @@ where
     }
 
     async fn guard_server_heartbeat(mut writer: WriteHalf<S>) -> crate::Result<State> {
-        let ping = Message::Ping.to_packet_vec();
+        let ping = Poto::Ping.to_packet_vec();
 
         loop {
             if let Err(e) = writer.send_packet(&ping).await {
@@ -187,7 +187,7 @@ where
             let message = unsafe { message.unwrap_unchecked() };
 
             match message {
-                Message::Map(id, socket) => {
+                Poto::Map(id, socket) => {
                     break Ok(State::Map(id, socket));
                 }
                 message => {
@@ -250,11 +250,11 @@ where
 
                         let (mut s1, s2) = r?;
 
-                        let message = Message::Map(id, s2_socket).to_packet_vec();
+                        let message = Poto::Map(id, s2_socket).to_packet_vec();
 
                         if let Err(e) = s1.send_packet(&message).await {
                             drop(s2);
-                            let message = Message::MapError(id, e.to_string()).to_packet_vec();
+                            let message = Poto::MapError(id, e.to_string()).to_packet_vec();
                             if let Err(e) = writer.send_packet(&message).await {
                                 return Ok(State::Error(e));
                             } else {

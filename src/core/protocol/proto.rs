@@ -33,7 +33,7 @@ pub enum Auth {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-pub enum Message {
+pub enum Poto {
     Ping,
     Close,
     MapError(u32, String),
@@ -57,24 +57,24 @@ pub trait ToPacket {
     fn to_packet_vec(self) -> Vec<u8>;
 }
 
-pub trait TryToMessage {
-    fn try_message(self) -> crate::Result<Message>;
+pub trait TryToPoto {
+    fn try_message(self) -> crate::Result<Poto>;
 }
 
-impl ToPacket for Message {
+impl ToPacket for Poto {
     fn to_packet_vec(self) -> Vec<u8> {
         let data = unsafe { bincode::serialize(&self).unwrap_unchecked() };
         super::make_packet(data).encode()
     }
 }
 
-impl TryToMessage for Packet {
-    fn try_message(self) -> crate::Result<Message> {
+impl TryToPoto for Packet {
+    fn try_message(self) -> crate::Result<Poto> {
         bincode::deserialize(&self.payload).map_err(Into::into)
     }
 }
 
-impl Display for Message{
+impl Display for Poto{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:#?}", self)
     }

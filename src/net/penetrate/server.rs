@@ -10,7 +10,7 @@ use crate::{
     generator::Generator,
     guard::Fallback,
     io,
-    protocol::{AsyncRecvPacket, AsyncSendPacket, Bind, Message, ToPacket, TryToMessage},
+    protocol::{AsyncRecvPacket, AsyncSendPacket, Bind, Poto, ToPacket, TryToPoto},
     ready, Accepter, FactoryWrapper, Socket, Stream, {Factory, ServerFactory},
 };
 
@@ -154,10 +154,10 @@ where
             let message = unsafe { packet.unwrap_unchecked() };
 
             match message {
-                Message::Ping => {
+                Poto::Ping => {
                     log::trace!("client ping received");
                 }
-                Message::MapError(id, err) => {
+                Poto::MapError(id, err) => {
                     log::warn!("client mapping failed, msg = {}", err);
                     wait_for.remove(id).await.map(|r| r.close());
                 }
@@ -172,7 +172,7 @@ where
         mut stream: WriteHalf<T>,
         timeout: Duration,
     ) -> crate::Result<State<T>> {
-        let ping = Message::Ping.to_packet_vec();
+        let ping = Poto::Ping.to_packet_vec();
 
         loop {
             log::trace!("send heartbeat packet to client");
@@ -215,7 +215,7 @@ where
 
                             log::info!("connect from {} to {}", client_addr, socket);
 
-                            let message = Message::Map(id, socket.clone()).to_packet_vec();
+                            let message = Poto::Map(id, socket.clone()).to_packet_vec();
 
                             if let Err(e) = writer.send_packet(&message).await {
                                 log::warn!(
@@ -402,7 +402,7 @@ where
             let message = client.recv_packet().await?.try_message()?;
 
             let (socket, accepter) = match message {
-                Message::Bind(Bind::Bind(addr)) => {
+                Poto::Bind(Bind::Bind(addr)) => {
                     log::debug!("try to bind the server to {}", addr);
                     (addr.clone(), factory.bind(addr).await)
                 }
@@ -415,7 +415,7 @@ where
             match accepter {
                 Err(e) => {
                     let message =
-                        Message::Bind(Bind::Failed(socket, e.to_string())).to_packet_vec();
+                        Poto::Bind(Bind::Failed(socket, e.to_string())).to_packet_vec();
 
                     log::warn!("failed to create listener err={}", e);
 
@@ -426,7 +426,7 @@ where
                     return Err(e);
                 }
                 Ok(accepter) => {
-                    let message = Message::Bind(Bind::Bind(socket.clone())).to_packet_vec();
+                    let message = Poto::Bind(Bind::Bind(socket.clone())).to_packet_vec();
                     if let Err(e) = client.send_packet(&message).await {
                         drop(accepter);
                         log::warn!("failed to send message to client err={}", e);

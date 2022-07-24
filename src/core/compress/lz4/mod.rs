@@ -6,22 +6,38 @@ use crate::{guard::buffer::Buffer, AsyncRead, AsyncWrite, Lz4Err, NetSocket, Rea
 
 use super::{Decoder, Encoder};
 
+/// ref https://github.com/lz4/lz4/blob/dev/examples/blockStreaming_ringBuffer.c
 pub struct Lz4Compress<T> {
     lz4_stream: T,
-    lz4_read_buf: Buffer<u8>,
+    /// 上层读取时，如果解压后的数据大于了提供的缓冲区时，数据将缓存到此处
+    lz4_rbuf: Buffer<u8>,
+    /// 压缩缓冲区
     lz4_ebuf: Vec<u8>,
+    /// 解压缓冲区
     lz4_dbuf: Vec<u8>,
+    /// 需要从lz4_stream读取的数据
     lz4_dneed: usize,
+    /// lz4_dbuf偏移
     lz4_doffset: usize,
+    /// dbuf 初始化状态
     lz4_dinit: bool,
+    /// 环形压缩缓冲
     lz4_ering_buf: Vec<u8>,
+    /// 环形解压缓冲
     lz4_dring_buf: Vec<u8>,
+    /// 偏移量
     lz4_dring_offset: usize,
+    /// 偏移量
     lz4_ering_offset: usize,
+    /// 相对lz4_ebuf写入偏移
     lz4_woffset: usize,
+    /// 对于write提供的buf偏移
     lz4_compressed_offset: usize,
+    /// 一次最多能压缩的数据
     lz4_compress_max_bytes: usize,
+    /// ----
     lz4_encode_insptr: *mut c_void,
+    /// ----
     lz4_decode_insptr: *mut c_void,
 }
 
@@ -52,6 +68,7 @@ where
         let mut lz4_dring_buf = Vec::with_capacity(1024 * 8 + 1024 + 1024);
 
         unsafe {
+            // 临时使用，未来将改为配置文件的形式
             lz4_ering_buf.set_len(1024 * 8 + 1024);
             lz4_dring_buf.set_len(1024 * 8 + 1024 + 1024);
         }
@@ -68,7 +85,7 @@ where
             lz4_doffset: 0,
             lz4_dring_buf,
             lz4_ering_buf,
-            lz4_read_buf: Default::default(),
+            lz4_rbuf: Default::default(),
             lz4_ering_offset: 0,
             lz4_dring_offset: 0,
             lz4_compressed_offset: 0,
@@ -106,9 +123,9 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &mut crate::ReadBuf<'_>,
     ) -> std::task::Poll<crate::Result<usize>> {
-        if !self.lz4_read_buf.is_empty() {
+        if !self.lz4_rbuf.is_empty() {
             let unfilled = buf.initialize_unfilled();
-            let n = self.lz4_read_buf.read_to_buffer(unfilled);
+            let n = self.lz4_rbuf.read_to_buffer(unfilled);
             buf.advance(n);
 
             return Poll::Ready(Ok(n));
@@ -170,6 +187,10 @@ where
             });
 
             if ebuf.is_empty() {
+                // ebuf.len() == 0 说明是第一次写, 进行初始化
+                // 用户提供的数据有可能会超过lz4_compress_max_bytes, 那么这里就需要进行分片压缩
+                // 还挺复杂...
+
                 let need_compress = &buf[self.lz4_compressed_offset..];
                 let need_compress_len = need_compress.len() + 4;
                 let compress_len = {
@@ -275,10 +296,13 @@ where
             let mut need_offset = self.lz4_doffset;
 
             if need_size == 0 {
+                // 读入前4个字节获取到压缩块大小
                 unsafe { dbuf.set_len(4) };
                 self.lz4_dneed = 4;
                 need_offset = 0;
             } else if need_size == need_offset && !self.lz4_dinit {
+                // 获取到压缩块大小，继续读取....
+            
                 need_size =
                     unsafe { *(dbuf.as_ptr() as *const i32).as_ref().unwrap_unchecked() } as usize;
 
@@ -316,6 +340,7 @@ where
                 };
 
                 if decompress_size <= 0 {
+                    // 解压失败了 呜呜呜.....
                     return Poll::Ready(Err(Lz4Err::Decompress.into()));
                 }
 
@@ -339,11 +364,14 @@ where
                 let dring_buf = &self.lz4_dring_buf[dring_offset..];
 
                 if unfilled_len < decompress_size {
+                    // 提供的缓冲区不够存放当前解压后的数据，临时存放到 lz4_rbuf
+
                     unsafe {
                         let unfilled = buf.initialize_unfilled();
                         std::ptr::copy(dring_buf.as_ptr(), unfilled.as_mut_ptr(), unfilled_len)
                     }
 
+                    // 区间小细节 ..decompress_size
                     let rem = dring_buf[unfilled_len..decompress_size].to_vec();
 
                     log::debug!(
@@ -353,11 +381,13 @@ where
                         rem.len()
                     );
 
-                    self.lz4_read_buf.push_all(rem);
+                    self.lz4_rbuf.push_all(rem);
                     buf.advance(unfilled_len);
 
                     return Poll::Ready(Ok(unfilled_len));
                 } else {
+                    // 提供的缓冲区完全够大，直接copy
+
                     unsafe {
                         let unfilled = buf.initialize_unfilled();
                         std::ptr::copy(dring_buf.as_ptr(), unfilled.as_mut_ptr(), decompress_size)
@@ -380,6 +410,7 @@ where
             let n = match Pin::new(&mut self.lz4_stream).poll_read(cx, &mut read_buf)? {
                 Poll::Ready(n) => n,
                 Poll::Pending => {
+                    // 未就绪，直接返回 等待下层 wake
                     drop(std::mem::replace(&mut self.lz4_dbuf, dbuf));
                     return Poll::Pending;
                 }
@@ -390,14 +421,15 @@ where
                 self.lz4_doffset = 0;
                 return Poll::Ready(Ok(0));
             } else {
-                drop(std::mem::replace(&mut self.lz4_dbuf, dbuf));
                 self.lz4_doffset += n;
+                drop(std::mem::replace(&mut self.lz4_dbuf, dbuf));
             }
         }
     }
 }
 
 #[cfg(test)]
+#[allow(unused)]
 mod tests {
 
     use std::time::Duration;
@@ -407,7 +439,7 @@ mod tests {
     use super::Lz4Compress;
     use crate::{
         ext::AsyncWriteExt,
-        protocol::{AsyncRecvPacket, Message, ToPacket},
+        protocol::{AsyncRecvPacket, Poto, ToPacket},
         r#async::ext::AsyncReadExt,
         time,
     };
@@ -431,7 +463,7 @@ mod tests {
                 loop {
                     let mut text = String::new();
                     time::sleep(Duration::from_secs(1)).await;
-                    let data = Message::Ping.to_packet_vec();
+                    let data = Poto::Ping.to_packet_vec();
 
                     lz4.write_all(&data).await.unwrap();
 
