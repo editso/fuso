@@ -5,15 +5,13 @@ use fuso::{penetrate::client::PenetrateClientFactory, Socket};
 #[cfg(feature = "fuso-rt-tokio")]
 #[tokio::main]
 async fn main() -> fuso::Result<()> {
-    use fuso::{compress::Lz4Compress, Addr, TokioPenetrateConnector};
+    use fuso::{Addr, TokioPenetrateConnector};
 
     env_logger::builder()
-        .filter_module("fuso", log::LevelFilter::Info)
+        .filter_module("fuso", log::LevelFilter::Debug)
         .default_format()
         .format_module_path(false)
         .init();
-
-    Lz4Compress::new(lz4_stream);
 
     fuso::builder_client_with_tokio()
         .build(

@@ -2,7 +2,7 @@ mod third_party;
 
 use std::{ffi::c_void, pin::Pin, task::Poll};
 
-use crate::{guard::buffer::Buffer, AsyncRead, AsyncWrite, Lz4Err, ReadBuf};
+use crate::{guard::buffer::Buffer, AsyncRead, AsyncWrite, Lz4Err, NetSocket, ReadBuf};
 
 use super::{Decoder, Encoder};
 
@@ -28,6 +28,19 @@ pub struct Lz4Compress<T> {
 unsafe impl<T> Send for Lz4Compress<T> {}
 unsafe impl<T> Sync for Lz4Compress<T> {}
 
+impl<T> NetSocket for Lz4Compress<T>
+where
+    T: NetSocket,
+{
+    fn local_addr(&self) -> crate::Result<crate::Address> {
+        self.lz4_stream.local_addr()
+    }
+
+    fn peer_addr(&self) -> crate::Result<crate::Address> {
+        self.lz4_stream.peer_addr()
+    }
+}
+
 impl<T> Lz4Compress<T>
 where
     T: AsyncRead + AsyncWrite + Unpin,
@@ -42,6 +55,8 @@ where
             lz4_ering_buf.set_len(1024 * 8 + 1024);
             lz4_dring_buf.set_len(1024 * 8 + 1024 + 1024);
         }
+
+        log::debug!("use lz4 compression");
 
         Self {
             lz4_ebuf,
@@ -95,6 +110,7 @@ where
             let unfilled = buf.initialize_unfilled();
             let n = self.lz4_read_buf.read_to_buffer(unfilled);
             buf.advance(n);
+
             return Poll::Ready(Ok(n));
         }
 
@@ -176,7 +192,7 @@ where
                         compress_len,
                     );
 
-                    let compress_len = third_party::LZ4_compress_fast_continue(
+                    let compressed_len = third_party::LZ4_compress_fast_continue(
                         lz4_encode_ins,
                         need_ring_buf.as_ptr(),
                         ebuf.as_mut_ptr().add(4),
@@ -185,15 +201,22 @@ where
                         0,
                     );
 
-                    if compress_len <= 0 {
+                    log::debug!(
+                        "total {}bytes, compressed: {}bytes, need: {}",
+                        buf.len(),
+                        compressed_len,
+                        need_compress_len
+                    );
+
+                    if compressed_len <= 0 {
                         return Poll::Ready(Err(Lz4Err::Compress.into()));
                     }
 
-                    let compress_len_bytes = compress_len.to_le_bytes();
+                    let compress_len_bytes = compressed_len.to_le_bytes();
 
                     std::ptr::copy(compress_len_bytes.as_ptr(), ebuf.as_mut_ptr(), 4);
 
-                    ebuf.set_len(compress_len as usize + 4);
+                    ebuf.set_len(compressed_len as usize + 4);
                 }
 
                 self.lz4_compressed_offset += compress_len as usize;
@@ -320,9 +343,19 @@ where
                         let unfilled = buf.initialize_unfilled();
                         std::ptr::copy(dring_buf.as_ptr(), unfilled.as_mut_ptr(), unfilled_len)
                     }
-                    let rem = dring_buf[unfilled_len..].to_vec();
+
+                    let rem = dring_buf[unfilled_len..decompress_size].to_vec();
+
+                    log::debug!(
+                        "buffer {}bytes, decompressed: {}bytes, rem: {}bytes",
+                        buf.len(),
+                        decompress_size,
+                        rem.len()
+                    );
+
                     self.lz4_read_buf.push_all(rem);
                     buf.advance(unfilled_len);
+
                     return Poll::Ready(Ok(unfilled_len));
                 } else {
                     unsafe {
@@ -331,6 +364,12 @@ where
                     }
 
                     buf.advance(decompress_size);
+
+                    log::debug!(
+                        "buffer {}bytes, decompressed: {}bytes",
+                        buf.len(),
+                        decompress_size
+                    );
 
                     return Poll::Ready(Ok(decompress_size));
                 }
@@ -360,17 +399,80 @@ where
 
 #[cfg(test)]
 mod tests {
-    
+
+    use std::time::Duration;
+
+    use tokio::net::{TcpListener, TcpStream};
 
     use super::Lz4Compress;
-    use crate::{ext::AsyncWriteExt, r#async::ext::AsyncReadExt};
+    use crate::{
+        ext::AsyncWriteExt,
+        protocol::{AsyncRecvPacket, Message, ToPacket},
+        r#async::ext::AsyncReadExt,
+        time,
+    };
+
+    fn init_logger() {
+        env_logger::Builder::default()
+            .filter_module("fuso", log::LevelFilter::Debug)
+            .init();
+    }
+
+    #[test]
+    fn test_lz4_client() {
+        init_logger();
+
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async move {
+                let tcp = TcpStream::connect("127.0.0.1:6666").await.unwrap();
+                let mut lz4 = Lz4Compress::new(tcp);
+
+                loop {
+                    let mut text = String::new();
+                    time::sleep(Duration::from_secs(1)).await;
+                    let data = Message::Ping.to_packet_vec();
+
+                    lz4.write_all(&data).await.unwrap();
+
+                    let mut buf = [0u8; 1024];
+                    let n = lz4.recv_packet().await.unwrap();
+                    println!("recv {:?}", n);
+                }
+            });
+    }
+
+    #[test]
+    fn test_lz4_server() {
+        init_logger();
+
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async move {
+                let tcp = TcpListener::bind("127.0.0.1:6666").await.unwrap();
+
+                loop {
+                    let (tcp, _) = tcp.accept().await.unwrap();
+                    let mut lz4 = Lz4Compress::new(tcp);
+                    loop {
+                        let mut buf = [0u8; 1024];
+                        let n = lz4.recv_packet().await.unwrap();
+                        println!("recv {:?}", n);
+
+                        lz4.write_all(&n.encode()).await.unwrap();
+                    }
+                }
+            });
+    }
 
     #[test]
     fn test_lz4_compress() {
         tokio::runtime::Runtime::new()
             .unwrap()
             .block_on(async move {
-                let file = tokio::fs::File::create("compress.txt").await.unwrap();
+                let file = tokio::fs::File::create("target/compress.txt")
+                    .await
+                    .unwrap();
 
                 let mut lz4 = Lz4Compress::new(file);
 
@@ -384,7 +486,7 @@ mod tests {
 
                 lz4.close().await.unwrap();
 
-                let file = tokio::fs::File::open("compress.txt").await.unwrap();
+                let file = tokio::fs::File::open("target/compress.txt").await.unwrap();
                 let mut lz4 = Lz4Compress::new(file);
 
                 let mut buf = Vec::new();
