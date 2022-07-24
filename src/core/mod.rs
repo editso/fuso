@@ -1,7 +1,7 @@
 mod factory;
 pub use factory::*;
 
-mod compress;
+pub mod compress;
 
 mod accepter;
 pub use accepter::*;

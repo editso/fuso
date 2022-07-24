@@ -5,7 +5,7 @@ use fuso::{penetrate::client::PenetrateClientFactory, Socket};
 #[cfg(feature = "fuso-rt-tokio")]
 #[tokio::main]
 async fn main() -> fuso::Result<()> {
-    use fuso::{TokioPenetrateConnector, Addr};
+    use fuso::{compress::Lz4Compress, Addr, TokioPenetrateConnector};
 
     env_logger::builder()
         .filter_module("fuso", log::LevelFilter::Info)
@@ -13,10 +13,12 @@ async fn main() -> fuso::Result<()> {
         .format_module_path(false)
         .init();
 
+    Lz4Compress::new(lz4_stream);
+
     fuso::builder_client_with_tokio()
         .build(
             Socket::tcp(
-                    std::env::var("ENV_SERVE")
+                std::env::var("ENV_SERVE")
                     .unwrap_or(String::from("127.0.0.1:6722"))
                     .parse::<Addr>()
                     .unwrap(),

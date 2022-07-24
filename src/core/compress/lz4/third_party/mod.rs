@@ -1,4 +1,6 @@
 /// lz4: https://github.com/lz4/lz4
+use std::ffi::c_void;
+
 
 #[link(name = "lib_third_party_compress_lz4", kind = "static")]
 #[allow(unused)]
@@ -24,6 +26,36 @@ extern "C" {
         dstCapacity: i32,
         acceleration: i32,
     ) -> i32;
+
+    pub(super) fn LZ4_createStream() -> *mut c_void;
+
+    pub(super) fn LZ4_freeStream(streamPtr: *mut c_void) -> i32;
+
+    pub(super) fn LZ4_resetStream_fast(streamPtr: *mut c_void);
+
+    pub(super) fn LZ4_createStreamDecode() -> *mut c_void;
+
+    pub(super) fn LZ4_freeStreamDecode(LZ4_stream: *mut c_void) -> i32;
+
+    pub(super) fn LZ4_compressBound(inputSize: i32) -> i32;
+
+    pub(super) fn LZ4_compress_fast_continue(
+        streamPtr: *mut c_void,
+        src: *const u8,
+        dst: *mut u8,
+        srcSize: i32,
+        dstCapacity: i32,
+        acceleration: i32,
+    ) -> i32;
+
+    pub(super) fn LZ4_decompress_safe_continue(
+        LZ4_streamDecode: *mut c_void,
+        src: *const u8,
+        dst: *mut u8,
+        srcSize: i32,
+        dstCapacity: i32,
+    ) -> i32;
+
 }
 
 #[cfg(test)]

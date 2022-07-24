@@ -41,6 +41,19 @@ pub enum SocksErr {
 }
 
 #[derive(Debug)]
+pub enum Lz4Err {
+    Compress,
+    Decompress,
+    DecodeReleased,
+    EncodeReleased,
+}
+
+#[derive(Debug)]
+pub enum CompressErr {
+    Lz4(Lz4Err),
+}
+
+#[derive(Debug)]
 pub enum Kind {
     Channel,
     AlreadyUsed,
@@ -63,6 +76,7 @@ pub enum Kind {
     Once,
     BadForward,
     Kcp(kcp::KcpErr),
+    Compress(CompressErr),
 }
 
 impl Display for SyncErr {
@@ -146,6 +160,9 @@ impl Display for Error {
             Kind::Once => format!("call once"),
             Kind::BadForward => format!("bad forward"),
             Kind::Kcp(e) => format!("{}", e),
+            Kind::Compress(e) => {
+                format!("{:?}", e)
+            }
         };
         write!(f, "{}", fmt)
     }
@@ -258,6 +275,12 @@ impl From<PacketErr> for Error {
 impl From<std::time::Instant> for Error {
     fn from(e: std::time::Instant) -> Self {
         Kind::Timeout(e).into()
+    }
+}
+
+impl From<Lz4Err> for Error {
+    fn from(e: Lz4Err) -> Self {
+        Kind::Compress(CompressErr::Lz4(e)).into()
     }
 }
 

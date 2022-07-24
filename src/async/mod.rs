@@ -89,7 +89,7 @@ impl AsyncWrite for Box<dyn Stream + Send> {
     }
 }
 
-impl<S> Stream for S where S: NetSocket +  AsyncWrite + AsyncRead + Unpin {}
+impl<S> Stream for S where S: NetSocket + AsyncWrite + AsyncRead + Unpin {}
 
 #[cfg(feature = "fuso-rt-tokio")]
 impl<T> AsyncWrite for T

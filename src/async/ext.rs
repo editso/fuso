@@ -168,9 +168,9 @@ where
             if rem != 0 {
                 match Pin::new(&mut **reader).poll_read(cx, buf)? {
                     Poll::Pending => break Poll::Pending,
-                    Poll::Ready(_) => {
-                        if rem == buf.remaining() {
-                            break Poll::Ready(Err(eof().into()));
+                    Poll::Ready(n) => {
+                        if n == 0 {
+                            return Poll::Ready(Err(eof().into()));
                         }
                     }
                 }
