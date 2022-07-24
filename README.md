@@ -35,10 +35,10 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 
 ### 重构进度
 1. 基本转发
-2. 可自定义性
-3. 支持tokio & smol运行时
-4. 支持kcp
-
+2. 支持tokio & smol运行时
+3. 支持kcp
+4. 支持socks5 & udp转发
+5. lz4压缩
 
 ### ✨Demo
 
