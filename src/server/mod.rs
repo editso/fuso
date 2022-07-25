@@ -5,8 +5,8 @@ use crate::{generator::GeneratorEx, Serve, Socket};
 use std::{pin::Pin, sync::Arc};
 
 use crate::{
-    generator::Generator, Accepter, AccepterExt, Executor, Factory, FactoryTransfer, Fuso,
-    ServerFactory, Stream,
+    generator::Generator, Accepter, AccepterExt, Executor, Provider, ProviderTransfer, Fuso,
+    ServerProvider, Stream,
 };
 
 type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>> + Send + 'static>>;
@@ -15,22 +15,22 @@ pub struct Server<E, H, SF, CF, SI> {
     pub(crate) bind: Socket,
     pub(crate) executor: E,
     pub(crate) handler: Arc<H>,
-    pub(crate) factory: ServerFactory<SF, CF>,
-    pub(crate) handshake: Option<Arc<FactoryTransfer<SI>>>,
+    pub(crate) provider: ServerProvider<SF, CF>,
+    pub(crate) handshake: Option<Arc<ProviderTransfer<SI>>>,
 }
 
 impl<E, H, A, G, SF, CF, SI> Server<E, H, SF, CF, SI>
 where
     E: Executor + Send + Clone + 'static,
     A: Accepter<Stream = SI> + Unpin + Send + 'static,
-    H: Factory<(ServerFactory<SF, CF>, SI), Output = BoxedFuture<G>> + Send + Sync + 'static,
+    H: Provider<(ServerProvider<SF, CF>, SI), Output = BoxedFuture<G>> + Send + Sync + 'static,
     G: Generator<Output = Option<BoxedFuture<()>>> + Unpin + Send + 'static,
-    SF: Factory<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
-    CF: Factory<Socket, Output = BoxedFuture<SI>> + Send + Sync + 'static,
+    SF: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
+    CF: Provider<Socket, Output = BoxedFuture<SI>> + Send + Sync + 'static,
     SI: Stream + Send + 'static,
 {
     pub async fn run(self) -> crate::Result<()> {
-        let mut accepter = self.factory.bind(self.bind.clone()).await?;
+        let mut accepter = self.provider.bind(self.bind.clone()).await?;
 
         log::info!("the server listens on {}", accepter.local_addr()?);
 
@@ -43,15 +43,15 @@ where
 
             let executor = self.executor.clone();
             let handshake = self.handshake.clone();
-            let factory = self.factory.clone();
+            let provider = self.provider.clone();
             let handler = self.handler.clone();
 
             self.executor.spawn(async move {
                 let stream = match handshake.as_ref() {
                     None => Ok(stream),
-                    Some(factory) => {
+                    Some(provider) => {
                         log::debug!("start shaking hands");
-                        factory.call(stream).await
+                        provider.call(stream).await
                     }
                 };
 
@@ -62,7 +62,7 @@ where
                     }
                     Ok(stream) => {
                         log::debug!("start processing the connection");
-                        handler.call((factory.clone(), stream)).await
+                        handler.call((provider.clone(), stream)).await
                     }
                 };
 
@@ -98,16 +98,16 @@ impl<E, H, A, G, SF, CF, SI> Fuso<Server<E, H, SF, CF, SI>>
 where
     E: Executor + Send + Clone + 'static,
     A: Accepter<Stream = SI> + Unpin + Send + 'static,
-    H: Factory<(ServerFactory<SF, CF>, SI), Output = BoxedFuture<G>> + Send + Sync + 'static,
+    H: Provider<(ServerProvider<SF, CF>, SI), Output = BoxedFuture<G>> + Send + Sync + 'static,
     G: Generator<Output = Option<BoxedFuture<()>>> + Unpin + Send + 'static,
-    SF: Factory<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
-    CF: Factory<Socket, Output = BoxedFuture<SI>> + Send + Sync + 'static,
+    SF: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
+    CF: Provider<Socket, Output = BoxedFuture<SI>> + Send + Sync + 'static,
     SI: Stream + Send + 'static,
 {
     pub fn bind<T: Into<Socket>>(self, bind: T) -> Self {
         Fuso(Server {
             bind: bind.into(),
-            factory: self.0.factory,
+            provider: self.0.provider,
             executor: self.0.executor,
             handshake: self.0.handshake,
             handler: self.0.handler,

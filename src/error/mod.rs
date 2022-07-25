@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::kcp;
+use crate::{kcp, Socket, SocketKind};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -54,6 +54,13 @@ pub enum CompressErr {
 }
 
 #[derive(Debug)]
+pub enum SocketErr {
+    BadAddress(Socket),
+    NotSupport(Socket),
+    NotExpected { expect: SocketKind, current: Socket },
+}
+
+#[derive(Debug)]
 pub enum Kind {
     Channel,
     AlreadyUsed,
@@ -77,6 +84,7 @@ pub enum Kind {
     BadForward,
     Kcp(kcp::KcpErr),
     Compress(CompressErr),
+    Socket(SocketErr),
 }
 
 impl Display for SyncErr {
@@ -139,6 +147,23 @@ impl Display for SocksErr {
     }
 }
 
+impl Display for SocketErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let fmt = match self {
+            SocketErr::BadAddress(socket) => format!("invalid socket {}", socket),
+            Self::NotSupport(socket) => format!("socket not support {}", socket),
+            SocketErr::NotExpected { expect, current } => format!(
+                "socket not expected ! expect: {}, current: {}, addr: {}",
+                expect,
+                current,
+                current.addr()
+            ),
+        };
+
+        writeln!(f, "{}", fmt)
+    }
+}
+
 impl Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let fmt = match self.kind() {
@@ -163,6 +188,7 @@ impl Display for Error {
             Kind::Compress(e) => {
                 format!("{:?}", e)
             }
+            Kind::Socket(socket) => format!("{}", socket),
         };
         write!(f, "{}", fmt)
     }
@@ -195,6 +221,14 @@ impl From<SocksErr> for Error {
 impl From<Kind> for Error {
     fn from(kind: Kind) -> Self {
         Self { kind }
+    }
+}
+
+impl From<SocketErr> for Error {
+    fn from(socket: SocketErr) -> Self {
+        Self {
+            kind: Kind::Socket(socket),
+        }
     }
 }
 

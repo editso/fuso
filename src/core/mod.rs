@@ -1,10 +1,13 @@
-mod factory;
-pub use factory::*;
+mod provider;
+pub use provider::*;
 
 pub mod compress;
 
 mod accepter;
 pub use accepter::*;
+
+mod boxed;
+pub use boxed::*;
 
 mod socket;
 pub use socket::*;
@@ -19,10 +22,6 @@ use std::sync::Arc;
 use std::{fmt::Display, pin::Pin};
 
 use std::future::Future;
-
-use crate::{AsyncRead, AsyncWrite, Stream};
-
-pub struct FusoStream(Box<dyn Stream + Send + 'static>);
 
 pub struct Fuso<T>(pub(crate) T);
 
@@ -45,7 +44,6 @@ pub trait Executor {
         O: Send + 'static;
 }
 
-
 impl<E> Executor for Arc<E>
 where
     E: Executor + Send + ?Sized,
@@ -67,72 +65,6 @@ impl Future for Fuso<Serve> {
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
         Pin::new(&mut self.0.fut).poll(cx)
-    }
-}
-
-impl NetSocket for FusoStream {
-    fn peer_addr(&self) -> crate::Result<Address> {
-        self.0.peer_addr()
-    }
-
-    fn local_addr(&self) -> crate::Result<Address> {
-        self.0.local_addr()
-    }
-}
-
-impl AsyncWrite for FusoStream {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<crate::Result<usize>> {
-        Pin::new(&mut *self.0).poll_write(cx, buf)
-    }
-
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<crate::Result<()>> {
-        Pin::new(&mut *self.0).poll_flush(cx)
-    }
-
-    fn poll_close(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<crate::Result<()>> {
-        Pin::new(&mut *self.0).poll_close(cx)
-    }
-}
-
-impl AsyncRead for FusoStream {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut crate::ReadBuf<'_>,
-    ) -> std::task::Poll<crate::Result<usize>> {
-        Pin::new(&mut *self.0).poll_read(cx, buf)
-    }
-}
-
-impl FusoStream {
-    pub fn new<T>(t: T) -> Self
-    where
-        T: Stream + Send + 'static,
-    {
-        Self(Box::new(t))
-    }
-}
-
-unsafe impl Sync for FusoStream {}
-
-impl<T> factory::Transfer for T
-where
-    T: NetSocket + Stream + Send + 'static,
-{
-    type Output = FusoStream;
-
-    fn transfer(self) -> Self::Output {
-        FusoStream::new(self)
     }
 }
 

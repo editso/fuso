@@ -5,10 +5,10 @@ use std::{future::Future, task::Poll};
 
 use crate::io::{ReadHalf, WriteHalf};
 use crate::{
-    client::Mapper,
+    client::Route,
     generator::Generator,
     protocol::{AsyncRecvPacket, AsyncSendPacket, Bind, Poto, ToPacket, TryToPoto},
-    Kind, Socket, Stream, {ClientFactory, Factory},
+    Kind, Socket, Stream, {ClientProvider, Provider},
 };
 
 use crate::{io, join, time};
@@ -35,9 +35,9 @@ macro_rules! async_connect {
     }};
 }
 
-pub struct PenetrateClientFactory<C> {
-    pub socket: (Socket, Socket),
-    pub connector_factory: Arc<C>,
+pub struct PenetrateClientProvider<C> {
+    pub transform: (Socket, Socket),
+    pub connector_provider: Arc<C>,
 }
 
 enum State {
@@ -51,22 +51,22 @@ pub struct PenetrateClient<CF, C, S> {
     reader: ReadHalf<S>,
     writer: WriteHalf<S>,
     futures: Vec<BoxedFuture<State>>,
-    client_factory: ClientFactory<CF>,
-    connector_factory: Arc<C>,
+    client_provider: ClientProvider<CF>,
+    connector_provider: Arc<C>,
 }
 
-impl<CF, C, S> Factory<(ClientFactory<CF>, S)> for PenetrateClientFactory<C>
+impl<CF, C, S> Provider<(ClientProvider<CF>, S)> for PenetrateClientProvider<C>
 where
-    CF: Factory<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
-    C: Factory<Socket, Output = BoxedFuture<Mapper<S>>> + Send + Sync + 'static,
+    CF: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
+    C: Provider<Socket, Output = BoxedFuture<Route<S>>> + Send + Sync + 'static,
     S: Stream + Send + 'static,
 {
     type Output = BoxedFuture<PenetrateClient<CF, C, S>>;
 
-    fn call(&self, (client_factory, stream): (ClientFactory<CF>, S)) -> Self::Output {
-        let socket = self.socket.clone();
+    fn call(&self, (client_provider, stream): (ClientProvider<CF>, S)) -> Self::Output {
+        let socket = self.transform.clone();
 
-        let connector_factory = self.connector_factory.clone();
+        let connector_provider = self.connector_provider.clone();
 
         Box::pin(async move {
             let mut stream = stream;
@@ -98,7 +98,7 @@ where
                     log::info!("the server is bound to {}", remote_bind);
 
                     if remote_bind.is_ip_unspecified() {
-                        remote_bind.from_set_host(client_factory.default_socket());
+                        remote_bind.from_set_host(client_provider.default_socket());
                     }
 
                     if remote_bind.is_ip_unspecified() {
@@ -108,8 +108,8 @@ where
                     Ok(PenetrateClient::new(
                         (remote_bind, local),
                         stream,
-                        client_factory,
-                        connector_factory,
+                        client_provider,
+                        connector_provider,
                     ))
                 }
                 Poto::Bind(Bind::Failed(socket, e)) => {
@@ -141,8 +141,8 @@ where
     pub fn new(
         socket: (Socket, Socket),
         conn: S,
-        client_factory: ClientFactory<CF>,
-        connector_factory: Arc<C>,
+        client_provider: ClientProvider<CF>,
+        connector_provider: Arc<C>,
     ) -> Self {
         let (reader, writer) = io::split(conn);
 
@@ -151,8 +151,8 @@ where
 
         Self {
             socket,
-            client_factory,
-            connector_factory,
+            client_provider,
+            connector_provider,
             reader: reader.clone(),
             writer: writer.clone(),
             futures: vec![fut1, fut2],
@@ -200,8 +200,8 @@ where
 
 impl<CF, C, S> Generator for PenetrateClient<CF, C, S>
 where
-    CF: Factory<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
-    C: Factory<Socket, Output = BoxedFuture<Mapper<S>>> + Unpin + Send + Sync + 'static,
+    CF: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
+    C: Provider<Socket, Output = BoxedFuture<Route<S>>> + Unpin + Send + Sync + 'static,
     S: Stream + Send + 'static,
 {
     type Output = Option<BoxedFuture<()>>;
@@ -228,8 +228,8 @@ where
                         .with_kind(socket.kind());
 
                     let s2_socket = socket.default_or(local);
-                    let s1_connector = self.client_factory.clone();
-                    let s2_connector = self.connector_factory.clone();
+                    let s1_connector = self.client_provider.clone();
+                    let s2_connector = self.connector_provider.clone();
                     let writer = self.writer.clone();
 
                     let server_fut = async_connect!(writer, s1_connector, id, s1_socket);
@@ -264,8 +264,8 @@ where
 
                         Ok(State::Ready({
                             match s2 {
-                                Mapper::Forward(s2) => Box::pin(io::forward(s1, s2)),
-                                Mapper::Consume(s2) => s2.call(s1),
+                                Route::Forward(s2) => Box::pin(io::forward(s1, s2)),
+                                Route::Provider(s2) => s2.call(s1),
                             }
                         }))
                     };

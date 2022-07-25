@@ -11,10 +11,10 @@ use crate::{
     guard::Fallback,
     io,
     protocol::{AsyncRecvPacket, AsyncSendPacket, Bind, Poto, ToPacket, TryToPoto},
-    ready, Accepter, FactoryWrapper, Socket, Stream, {Factory, ServerFactory},
+    ready, Accepter, ProviderWrapper, Socket, Stream, {Provider, ServerProvider},
 };
 
-use super::unpacker::Unpacker;
+use super::converter::Unpacker;
 use crate::{time, Address, Kind, NetSocket, ResultDisplay};
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
@@ -35,7 +35,7 @@ pub enum State<T> {
 
 pub enum Visitor<T> {
     Forward(T),
-    Consume(FactoryWrapper<T, ()>),
+    Consume(ProviderWrapper<T, ()>),
 }
 
 pub struct PenetrateGenerator<T, A>(Penetrate<T, A>);
@@ -63,7 +63,7 @@ pub struct Config {
     pub fallback_strict_mode: bool,
 }
 
-pub struct PenetrateFactory<T> {
+pub struct PenetrateProvider<T> {
     pub(crate) config: Config,
     pub(crate) unpacker: Arc<Unpacker<T>>,
 }
@@ -188,7 +188,7 @@ where
 
     fn async_handle(self: &mut Pin<&mut Self>, stream: T) -> BoxedFuture<State<T>> {
         let mut writer = self.writer.clone();
-        let factory = self.unpacker.clone();
+        let provider = self.unpacker.clone();
         let timeout = self.config.max_wait_time;
         let wait_for = self.wait_for.clone();
         let fallback_strict_mode = self.config.fallback_strict_mode;
@@ -199,7 +199,7 @@ where
             let mut fallback = Fallback::new(stream, fallback_strict_mode);
             let _ = fallback.mark().await?;
 
-            let peer = factory.call(fallback).await?;
+            let peer = provider.call(fallback).await?;
 
             match peer {
                 Peer::Visitor(visit, socket) => {
@@ -250,8 +250,8 @@ where
                                         s2.into_inner(),
                                     ))
                                 }
-                                Visitor::Consume(factory) => {
-                                    Ok(State::Consume(factory.call(accept_ax.recv().await?)))
+                                Visitor::Consume(provider) => {
+                                    Ok(State::Consume(provider.call(accept_ax.recv().await?)))
                                 }
                             }
                         }
@@ -385,17 +385,17 @@ where
     }
 }
 
-impl<SF, CF, A, S> Factory<(ServerFactory<SF, CF>, S)> for PenetrateFactory<S>
+impl<SF, CF, A, S> Provider<(ServerProvider<SF, CF>, S)> for PenetrateProvider<S>
 where
-    SF: Factory<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
-    CF: Factory<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
+    SF: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
+    CF: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
     A: Accepter<Stream = S> + Send + Unpin + 'static,
     S: Stream + Sync + Send + 'static,
 {
     type Output = BoxedFuture<PenetrateGenerator<S, A>>;
 
-    fn call(&self, (factory, mut client): (ServerFactory<SF, CF>, S)) -> Self::Output {
-        let peer_factory = self.unpacker.clone();
+    fn call(&self, (provider, mut client): (ServerProvider<SF, CF>, S)) -> Self::Output {
+        let peer_provider = self.unpacker.clone();
         let config = self.config.clone();
 
         Box::pin(async move {
@@ -404,7 +404,7 @@ where
             let (socket, accepter) = match message {
                 Poto::Bind(Bind::Bind(addr)) => {
                     log::debug!("try to bind the server to {}", addr);
-                    (addr.clone(), factory.bind(addr).await)
+                    (addr.clone(), provider.bind(addr).await)
                 }
                 message => {
                     log::debug!("received an invalid message {}", message);
@@ -442,7 +442,7 @@ where
 
                         Ok(PenetrateGenerator(Penetrate::new(
                             config,
-                            peer_factory,
+                            peer_provider,
                             client,
                             accepter,
                         )))

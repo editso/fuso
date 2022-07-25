@@ -1,11 +1,11 @@
-use std::sync::Arc;
-
-use fuso::{penetrate::client::PenetrateClientFactory, Socket};
+use fuso::Socket;
 
 #[cfg(feature = "fuso-rt-tokio")]
 #[tokio::main]
 async fn main() -> fuso::Result<()> {
-    use fuso::{Addr, TokioPenetrateConnector};
+    use std::time::Duration;
+
+    use fuso::TokioPenetrateConnector;
 
     env_logger::builder()
         .filter_module("fuso", log::LevelFilter::Debug)
@@ -14,23 +14,14 @@ async fn main() -> fuso::Result<()> {
         .init();
 
     fuso::builder_client_with_tokio()
-        .build(
-            Socket::tcp(
-                std::env::var("ENV_SERVE")
-                    .unwrap_or(String::from("127.0.0.1:6722"))
-                    .parse::<Addr>()
-                    .unwrap(),
-            ),
-            PenetrateClientFactory {
-                connector_factory: Arc::new(TokioPenetrateConnector::new().await?),
-                socket: {
-                    (
-                        Socket::tcp(([0, 0, 0, 0], 9999)),
-                        Socket::tcp(([127, 0, 0, 1], 22)),
-                    )
-                },
-            },
+        .using_penetrate(
+            Socket::tcp(([127, 0, 0, 1], 6722)),
+            Socket::tcp(([127, 0, 0, 1], 22)),
         )
+        .maximum_retries(None)
+        .heartbeat_delay(Duration::from_secs(60))
+        .maximum_wait(Duration::from_secs(10))
+        .build(TokioPenetrateConnector::new().await?)
         .run()
         .await
 }

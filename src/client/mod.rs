@@ -6,48 +6,48 @@ pub use builder::*;
 
 use crate::{
     generator::{Generator, GeneratorEx},
-    time, ClientFactory, Executor, Factory, FactoryTransfer, FactoryWrapper, Fuso, Serve, Socket,
+    time, ClientProvider, Executor, Provider, ProviderTransfer, ProviderWrapper, Fuso, Serve, Socket,
     Stream,
 };
 
 pub type BoxedFuture<T> = Pin<Box<dyn Future<Output = crate::Result<T>> + Send + 'static>>;
 
-pub enum Mapper<S> {
+pub enum Route<S> {
     Forward(S),
-    Consume(FactoryWrapper<S, ()>),
+    Provider(ProviderWrapper<S, ()>),
 }
 
 pub struct Client<E, H, CF, S> {
     pub(crate) socket: Socket,
     pub(crate) executor: Arc<E>,
     pub(crate) handler: Arc<H>,
-    pub(crate) handshake: Option<FactoryTransfer<S>>,
-    pub(crate) client_factory: ClientFactory<CF>,
+    pub(crate) handshake: Option<ProviderTransfer<S>>,
+    pub(crate) client_provider: ClientProvider<CF>,
 }
 
 impl<E, H, CF, S, G> Client<E, H, CF, S>
 where
     E: Executor + 'static,
-    H: Factory<(ClientFactory<CF>, S), Output = BoxedFuture<G>> + Send + Sync + 'static,
-    CF: Factory<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
+    H: Provider<(ClientProvider<CF>, S), Output = BoxedFuture<G>> + Send + Sync + 'static,
+    CF: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
     S: Stream + Send + 'static,
     G: Generator<Output = Option<BoxedFuture<()>>> + Unpin + Send + 'static,
 {
     async fn run(self) -> crate::Result<()> {
         let executor = self.executor;
-        let factory = self.client_factory.clone();
+        let provider = self.client_provider.clone();
         let handshake = self.handshake;
 
         loop {
             let socket = self.socket.clone();
 
-            let stream = match self.client_factory.connect(socket).await {
+            let stream = match self.client_provider.connect(socket).await {
                 Ok(stream) => {
                     log::info!("connection established");
                     stream
                 }
                 Err(e) => {
-                    log::warn!("connect to {} failed err={}", self.socket, e);
+                    log::warn!("connect to {} failed err: {}", self.socket, e);
                     time::sleep(Duration::from_secs(2)).await;
                     continue;
                 }
@@ -66,7 +66,7 @@ where
                 }
             };
 
-            let mut generate = match self.handler.call((factory.clone(), stream)).await {
+            let mut generate = match self.handler.call((provider.clone(), stream)).await {
                 Ok(generate) => generate,
                 Err(e) => {
                     log::warn!("{}", e);
@@ -93,8 +93,8 @@ where
 impl<E, H, CF, S, G> Fuso<Client<E, H, CF, S>>
 where
     E: Executor + 'static,
-    H: Factory<(ClientFactory<CF>, S), Output = BoxedFuture<G>> + Send + Sync + 'static,
-    CF: Factory<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
+    H: Provider<(ClientProvider<CF>, S), Output = BoxedFuture<G>> + Send + Sync + 'static,
+    CF: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
     S: Stream + Send + 'static,
     G: Generator<Output = Option<BoxedFuture<()>>> + Unpin + Send + 'static,
 {

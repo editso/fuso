@@ -67,7 +67,7 @@ fn init_logger(log_level: log::LevelFilter) {
 #[cfg(feature = "fuso-rt-tokio")]
 #[tokio::main]
 async fn main() -> fuso::Result<()> {
-    use fuso::{Socket, TokioExecutor, TokioUdpServerFactory, UdpForwardFactory};
+    use fuso::{Socket, TokioExecutor, TokioUdpServerProvider, UdpForwardProvider};
     use std::time::Duration;
 
     let args = FusoArgs::parse();
@@ -75,14 +75,14 @@ async fn main() -> fuso::Result<()> {
     init_logger(args.log_level);   
 
     fuso::builder_server_with_tokio()
-        .with_kcp_accepter(TokioUdpServerFactory, TokioExecutor)
+        .with_kcp_accepter(TokioUdpServerProvider, TokioExecutor)
         .with_penetrate()
         .max_wait_time(Duration::from_secs(args.maximum_wctime))
         .heartbeat_timeout(Duration::from_secs(args.heartbeat_delay))
         .with_adapter_mode()
         .with_normal_unpacker()
         .with_socks_unpacker()
-        .with_udp_forward(UdpForwardFactory)
+        .with_udp_forward(UdpForwardProvider)
         .build()
         .bind(Socket::tcp((args.listen, args.port)))
         .run()

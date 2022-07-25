@@ -11,7 +11,7 @@ use crate::{
     protocol::{make_packet, AsyncRecvPacket, AsyncSendPacket, Poto, ToPacket, TryToPoto},
     select::Select,
     socks::{self, NoAuthentication, Socks},
-    Addr, Factory, FactoryWrapper, Kind, Socket, SocketKind, Stream, UdpReceiverExt,
+    Addr, Provider, ProviderWrapper, Kind, Socket, SocketKind, Stream, UdpReceiverExt,
     UdpSocket,
 };
 
@@ -21,16 +21,16 @@ pub struct PenetrateSocksBuilder<E, SF, CF, S> {
     pub(crate) adapter_builder: PenetrateAdapterBuilder<E, SF, CF, S>,
 }
 
-pub struct SocksUnpacker<U> {
-    pub(crate) udp_factory: Arc<FactoryWrapper<(), (SocketAddr, U)>>,
+pub struct SocksConverter<U> {
+    pub(crate) udp_provider: Arc<ProviderWrapper<(), (SocketAddr, U)>>,
 }
 
-pub struct SocksNoUdpForwardUnpacker;
+pub struct SimpleSocksConverter;
 
-pub struct SocksClientUdpForward<U>(pub(crate) FactoryWrapper<Addr, (SocketAddr, U)>);
+pub struct SocksUdpForwardConverter<U>(pub(crate) ProviderWrapper<Addr, (SocketAddr, U)>);
 
 pub struct SocksUdpForward<S, U> {
-    udp_factory: Arc<FactoryWrapper<(), (SocketAddr, U)>>,
+    udp_provider: Arc<ProviderWrapper<(), (SocketAddr, U)>>,
     guard: std::sync::Mutex<Option<S>>,
 }
 
@@ -41,7 +41,7 @@ where
     pub fn no_udp_forward(mut self) -> PenetrateAdapterBuilder<E, SF, CF, S> {
         self.adapter_builder
             .adapters
-            .insert(0, FactoryWrapper::wrap(SocksNoUdpForwardUnpacker));
+            .insert(0, ProviderWrapper::wrap(SimpleSocksConverter));
 
         self.adapter_builder
     }
@@ -51,22 +51,22 @@ where
         udp_forward: UF,
     ) -> PenetrateAdapterBuilder<E, SF, CF, S>
     where
-        UF: Factory<(), Output = BoxedFuture<(SocketAddr, U)>> + Send + Sync + 'static,
+        UF: Provider<(), Output = BoxedFuture<(SocketAddr, U)>> + Send + Sync + 'static,
         U: UdpSocket + Unpin + Send + Sync + 'static,
     {
-        let udp_forward = FactoryWrapper::wrap(udp_forward);
+        let udp_forward = ProviderWrapper::wrap(udp_forward);
 
         self.adapter_builder.adapters.insert(
             0,
-            FactoryWrapper::wrap(SocksUnpacker {
-                udp_factory: Arc::new(FactoryWrapper::wrap(udp_forward)),
+            ProviderWrapper::wrap(SocksConverter {
+                udp_provider: Arc::new(ProviderWrapper::wrap(udp_forward)),
             }),
         );
         self.adapter_builder
     }
 }
 
-impl<S> Factory<Fallback<S>> for SocksNoUdpForwardUnpacker
+impl<S> Provider<Fallback<S>> for SimpleSocksConverter
 where
     S: Stream + Send + Sync + 'static,
 {
@@ -102,7 +102,7 @@ where
     }
 }
 
-impl<S, U> Factory<Fallback<S>> for SocksUnpacker<U>
+impl<S, U> Provider<Fallback<S>> for SocksConverter<U>
 where
     S: Stream + Send + Sync + 'static,
     U: UdpSocket + Unpin + Send + Sync + 'static,
@@ -110,7 +110,7 @@ where
     type Output = BoxedFuture<Adapter<S>>;
 
     fn call(&self, stream: Fallback<S>) -> Self::Output {
-        let udp_factory = self.udp_factory.clone();
+        let udp_provider = self.udp_provider.clone();
         Box::pin(async move {
             let mut stream = stream;
 
@@ -133,12 +133,12 @@ where
                 SocketKind::Udp => Ok({
                     let stream = stream.into_inner();
                     let udp_forward = SocksUdpForward {
-                        udp_factory,
+                        udp_provider,
                         guard: std::sync::Mutex::new(Some(stream)),
                     };
 
                     Adapter::Accept(Peer::Visitor(
-                        Visitor::Consume(FactoryWrapper::wrap(udp_forward)),
+                        Visitor::Consume(ProviderWrapper::wrap(udp_forward)),
                         Socket::ufd(socket.into_addr()),
                     ))
                 }),
@@ -148,7 +148,7 @@ where
     }
 }
 
-impl<S, U> Factory<Fallback<S>> for SocksUdpForward<S, U>
+impl<S, U> Provider<Fallback<S>> for SocksUdpForward<S, U>
 where
     S: Stream + Send + 'static,
     U: UdpSocket + Unpin + Send + Sync + 'static,
@@ -165,14 +165,14 @@ where
             },
         };
 
-        let factory = self.udp_factory.clone();
+        let provider = self.udp_provider.clone();
 
         let fut = async move {
             let mut s1 = s1;
             let peer_addr = s2.peer_addr()?;
             let (mut reader, mut writer) = io::split(s2);
 
-            let (addr, mut udp) = factory.call(()).await?;
+            let (addr, mut udp) = provider.call(()).await?;
 
             log::debug!("udp forwarding service listening on {}", addr);
 
@@ -245,7 +245,7 @@ where
     }
 }
 
-impl<S, U> Factory<S> for SocksClientUdpForward<U>
+impl<S, U> Provider<S> for SocksUdpForwardConverter<U>
 where
     S: Stream + Send + 'static,
     U: UdpSocket + Send + Unpin + Sync + 'static,
@@ -253,7 +253,7 @@ where
     type Output = BoxedFuture<()>;
 
     fn call(&self, mut stream: S) -> Self::Output {
-        let factory = self.0.clone();
+        let provider = self.0.clone();
         Box::pin(async move {
             let mut buf = Vec::with_capacity(1500);
 
@@ -276,7 +276,7 @@ where
                     }
                 };
 
-                let (_, udp) = factory.call(addr).await?;
+                let (_, udp) = provider.call(addr).await?;
 
                 let data = stream.recv_packet().await?;
 

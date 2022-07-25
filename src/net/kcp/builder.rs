@@ -1,16 +1,16 @@
 use std::{future::Future, pin::Pin, task::Poll};
 
 use crate::{
-    mixing::MixListener, server::ServerBuilder, Accepter, Executor, Factory, FactoryWrapper,
-    FusoStream, NetSocket, Socket, Transfer, UdpSocket, Address,
+    mixing::MixListener, server::ServerBuilder, Accepter, Executor, Provider, ProviderWrapper,
+    FusoStream, NetSocket, Socket, ToBoxStream, UdpSocket, Address,
 };
 
 use super::KcpListener;
 
 type BoxedFuture<T> = Pin<Box<dyn Future<Output = crate::Result<T>> + Send + 'static>>;
 
-pub struct KcpAccepterFactory<C, E> {
-    factory: FactoryWrapper<Socket, C>,
+pub struct KcpAccepterProvider<C, E> {
+    provider: ProviderWrapper<Socket, C>,
     executor: E,
 }
 
@@ -52,33 +52,33 @@ where
     ) -> Poll<crate::Result<Self::Stream>> {
         Pin::new(&mut self.0)
             .poll_accept(cx)?
-            .map(|kcp| Ok(kcp.transfer()))
+            .map(|kcp| Ok(kcp.into_boxed_stream()))
     }
 }
 
 impl<E, SF, CF, A1> ServerBuilder<E, SF, CF, FusoStream>
 where
-    SF: Factory<Socket, Output = BoxedFuture<A1>> + Send + Sync + 'static,
+    SF: Provider<Socket, Output = BoxedFuture<A1>> + Send + Sync + 'static,
     A1: Accepter<Stream = FusoStream> + Unpin + Send + 'static,
     E: Executor + Clone + Sync + Send + Unpin + 'static,
 {
     pub fn with_kcp_accepter<F, U>(
         self,
-        factory: F,
+        provider: F,
         executor: E,
-    ) -> ServerBuilder<E, MixListener<SF, KcpAccepterFactory<U, E>, FusoStream>, CF, FusoStream>
+    ) -> ServerBuilder<E, MixListener<SF, KcpAccepterProvider<U, E>, FusoStream>, CF, FusoStream>
     where
-        F: Factory<Socket, Output = BoxedFuture<U>> + Send + Sync + 'static,
+        F: Provider<Socket, Output = BoxedFuture<U>> + Send + Sync + 'static,
         U: UdpSocket + Clone + Sync + Unpin + Send + 'static,
     {
-        self.add_accepter(KcpAccepterFactory {
+        self.add_accepter(KcpAccepterProvider {
             executor,
-            factory: FactoryWrapper::wrap(factory),
+            provider: ProviderWrapper::wrap(provider),
         })
     }
 }
 
-impl<C, E> Factory<Socket> for KcpAccepterFactory<C, E>
+impl<C, E> Provider<Socket> for KcpAccepterProvider<C, E>
 where
     C: UdpSocket + Clone + Sync + Unpin + Send + 'static,
     E: Executor + Clone + Sync + Send + 'static,
@@ -86,7 +86,7 @@ where
     type Output = BoxedFuture<KcpAccepter<C, E>>;
 
     fn call(&self, arg: Socket) -> Self::Output {
-        let fut = self.factory.call(arg);
+        let fut = self.provider.call(arg);
         let executor = self.executor.clone();
         Box::pin(async move { Ok(KcpAccepter(KcpListener::bind(fut.await?, executor)?)) })
     }

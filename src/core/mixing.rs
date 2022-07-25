@@ -1,7 +1,7 @@
 use std::{future::Future, marker::PhantomData, pin::Pin, sync::Arc, task::Poll};
 
 use crate::{
-    server::ServerBuilder, Accepter, AccepterWrapper, Address, Factory, NetSocket, ServerFactory,
+    server::ServerBuilder, Accepter, AccepterWrapper, Address, Provider, NetSocket, ServerProvider,
     Socket,
 };
 
@@ -16,10 +16,10 @@ pub struct MixListener<F1, F2, S> {
 
 pub struct MixAccepter<S>(Vec<AccepterWrapper<S>>);
 
-impl<F1, F2, A1, A2, S> Factory<Socket> for MixListener<F1, F2, S>
+impl<F1, F2, A1, A2, S> Provider<Socket> for MixListener<F1, F2, S>
 where
-    F1: Factory<Socket, Output = BoxedFuture<A1>> + Send + Sync + 'static,
-    F2: Factory<Socket, Output = BoxedFuture<A2>> + Send + Sync + 'static,
+    F1: Provider<Socket, Output = BoxedFuture<A1>> + Send + Sync + 'static,
+    F2: Provider<Socket, Output = BoxedFuture<A2>> + Send + Sync + 'static,
     A1: Accepter<Stream = S> + Unpin + Send + 'static,
     A2: Accepter<Stream = S> + Unpin + Send + 'static,
     S: 'static,
@@ -84,26 +84,26 @@ where
 
 impl<E, SF, CF, S, A1> ServerBuilder<E, SF, CF, S>
 where
-    SF: Factory<Socket, Output = BoxedFuture<A1>> + Send + Sync + 'static,
+    SF: Provider<Socket, Output = BoxedFuture<A1>> + Send + Sync + 'static,
     A1: Accepter<Stream = S> + Unpin + Send + 'static,
 {
     pub fn add_accepter<SF2, A2>(
         self,
-        factory: SF2,
+        provider: SF2,
     ) -> ServerBuilder<E, MixListener<SF, SF2, S>, CF, S>
     where
-        SF2: Factory<Socket, Output = BoxedFuture<A2>> + Send + Sync + 'static,
+        SF2: Provider<Socket, Output = BoxedFuture<A2>> + Send + Sync + 'static,
         A2: Accepter<Stream = S> + Unpin + Send + 'static,
     {
         ServerBuilder {
             executor: self.executor,
             handshake: self.handshake,
             is_mixed: true,
-            server_factory: ServerFactory {
-                connector_factory: self.server_factory.connector_factory,
-                accepter_factory: Arc::new(MixListener {
-                    left: self.server_factory.accepter_factory,
-                    right: Arc::new(factory),
+            server_provider: ServerProvider {
+                connector_provider: self.server_provider.connector_provider,
+                accepter_provider: Arc::new(MixListener {
+                    left: self.server_provider.accepter_provider,
+                    right: Arc::new(provider),
                     _marked: PhantomData,
                 }),
             },
