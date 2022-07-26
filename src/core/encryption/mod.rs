@@ -1,30 +1,27 @@
-pub mod xor;
+mod aes;
+mod rsa;
+
+pub use crate::core::encryption::{aes::AESEncryptor, rsa::RSAEncryptor};
 
 use std::{
     pin::Pin,
     task::{Context, Poll},
 };
 
-use crate::{AsyncRead, AsyncWrite, Result};
-
-pub trait Encrypt {
-    fn poll_crypt(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<Vec<u8>>>;
-}
+use crate::ReadBuf;
 
 pub trait Decrypt {
-    fn poll_decrypt(
+    fn poll_decrypt_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<crate::Result<usize>>;
+}
+
+pub trait Encrypt {
+    fn poll_encrypt_write(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &[u8],
-    ) -> Poll<Result<Vec<u8>>>;
-}
-
-pub trait Encryption {
-    type Stream: AsyncRead + AsyncWrite + Unpin + 'static;
-    type Cipher: Encrypt + Decrypt + 'static;
-    fn poll_encryption(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        stream: &mut Self::Stream,
-    ) -> Poll<Result<Self::Cipher>>;
+    ) -> Poll<crate::Result<usize>>;
 }

@@ -4,7 +4,7 @@ use crate::{
     client::{Client, ClientBuilder, Route},
     guard::Fallback,
     server::{Server, ServerBuilder},
-    Accepter, Executor, Provider, ProviderWrapper, Fuso, Socket, Stream,
+    Accepter, Executor, Fuso, Provider, ProviderWrapper, Socket, Stream,
 };
 
 use super::{
@@ -154,12 +154,16 @@ where
         self
     }
 
-    pub fn build<C>(self, connector: C) -> Fuso<Client<E, PenetrateClientProvider<C>, CF, S>>
+    pub fn build<A: Into<Socket>, C>(
+        self,
+        server_socket: A,
+        connector: C,
+    ) -> Fuso<Client<E, PenetrateClientProvider<C>, CF, S>>
     where
         C: Provider<Socket, Output = BoxedFuture<Route<S>>> + Unpin + Send + Sync + 'static,
     {
         self.client_builder.build(
-            self.upstream.clone(),
+            server_socket,
             PenetrateClientProvider {
                 transform: (self.upstream, self.downstream),
                 connector_provider: Arc::new(connector),

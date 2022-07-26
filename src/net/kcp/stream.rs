@@ -245,7 +245,7 @@ impl<C> Drop for KcpStream<C> {
 
 impl<C> Drop for KcpCore<C> {
     fn drop(&mut self) {
-        if let Some(kupdate) = self.kupdate.take() {
+        if let Some(mut kupdate) = self.kupdate.take() {
             log::debug!("abort execution {}", self.kcp);
             kupdate.abort();
         } else {

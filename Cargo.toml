@@ -65,6 +65,14 @@ optional = true
 version = "0.8.1"
 optional = true
 
+[dependencies.cbc]
+version = "0.1.2"
+optional = true
+
+[dependencies.rand]
+version = "0.8.5"
+optional = true
+
 [profile.release]
 lto = true
 opt-level = 'z'
@@ -75,7 +83,7 @@ debug = false
 
 [features]
 # 默认开启tokio异步 & clap参数解析器
-default = ['fuso-rt-tokio', "fuso-kcp","fuso-clap", "fuso-log", "bytes", "fuso-serde", "fuso-socks5"]
+default = ['fuso-rt-tokio', "fuso-kcp","fuso-clap", "fuso-log", "bytes", "fuso-serde", "fuso-socks5", "fuso-crypt-rsa", "fuso-crypt-aes"]
 # 只提供api，不提供web界面
 fuso-api = ["axum", "fuso-rt-tokio"]
 # web界面
@@ -103,9 +111,9 @@ fuso-proxy = []
 # socks5代理
 fuso-socks5 = []
 # rsa加密
-fuso-crypt-rsa = []
+fuso-crypt-rsa = ["rsa", "rand"]
 # aes加密
-fuso-crypt-aes = []
+fuso-crypt-aes = ["aes", "cbc"]
 
 
 [[bin]]

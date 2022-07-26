@@ -61,6 +61,20 @@ pub enum SocketErr {
 }
 
 #[derive(Debug)]
+pub enum AesErr {
+    Pad(cbc::cipher::inout::PadError),
+    UnPad(cbc::cipher::inout::block_padding::UnpadError),
+    NotEqual(cbc::cipher::inout::NotEqualError),
+    InvalidLength(cbc::cipher::InvalidLength),
+}
+
+#[derive(Debug)]
+pub enum EncryptionErr {
+    Aes(AesErr),
+    Rsa(rsa::errors::Error),
+}
+
+#[derive(Debug)]
 pub enum Kind {
     Channel,
     AlreadyUsed,
@@ -85,6 +99,7 @@ pub enum Kind {
     Kcp(kcp::KcpErr),
     Compress(CompressErr),
     Socket(SocketErr),
+    Encryption(EncryptionErr),
 }
 
 impl Display for SyncErr {
@@ -147,6 +162,30 @@ impl Display for SocksErr {
     }
 }
 
+impl From<cbc::cipher::inout::NotEqualError> for Error {
+    fn from(e: cbc::cipher::inout::NotEqualError) -> Self {
+        Kind::Encryption(EncryptionErr::Aes(AesErr::NotEqual(e))).into()
+    }
+}
+
+impl From<cbc::cipher::inout::PadError> for Error {
+    fn from(e: cbc::cipher::inout::PadError) -> Self {
+        Kind::Encryption(EncryptionErr::Aes(AesErr::Pad(e))).into()
+    }
+}
+
+impl From<cbc::cipher::InvalidLength> for Error {
+    fn from(e: cbc::cipher::InvalidLength) -> Self {
+        Kind::Encryption(EncryptionErr::Aes(AesErr::InvalidLength(e))).into()
+    }
+}
+
+impl From<cbc::cipher::block_padding::UnpadError> for Error {
+    fn from(e: cbc::cipher::block_padding::UnpadError) -> Self {
+        Kind::Encryption(EncryptionErr::Aes(AesErr::UnPad(e))).into()
+    }
+}
+
 impl Display for SocketErr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let fmt = match self {
@@ -161,6 +200,30 @@ impl Display for SocketErr {
         };
 
         writeln!(f, "{}", fmt)
+    }
+}
+
+impl Display for AesErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", {
+            match self {
+                AesErr::Pad(e) => format!("{}", e),
+                AesErr::UnPad(e) => format!("{}", e),
+                AesErr::NotEqual(e) => format!("{}", e),
+                AesErr::InvalidLength(e) => format!("{}", e),
+            }
+        })
+    }
+}
+
+impl Display for EncryptionErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", {
+            match self {
+                EncryptionErr::Aes(e) => format!("{}", e),
+                EncryptionErr::Rsa(e) => format!("{}", e),
+            }
+        })
     }
 }
 
@@ -189,6 +252,7 @@ impl Display for Error {
                 format!("{:?}", e)
             }
             Kind::Socket(socket) => format!("{}", socket),
+            Kind::Encryption(e) => format!("{}", e),
         };
         write!(f, "{}", fmt)
     }
@@ -199,6 +263,12 @@ impl From<InvalidAddr> for Error {
         Self {
             kind: Kind::InvalidAddr(addr),
         }
+    }
+}
+
+impl From<rsa::errors::Error> for Error {
+    fn from(e: rsa::errors::Error) -> Self {
+        Kind::Encryption(EncryptionErr::Rsa(e)).into()
     }
 }
 

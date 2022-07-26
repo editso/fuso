@@ -15,13 +15,16 @@ async fn main() -> fuso::Result<()> {
 
     fuso::builder_client_with_tokio()
         .using_penetrate(
-            Socket::tcp(([127, 0, 0, 1], 6722)),
+            Socket::tcp(([0,0,0,0], 9999)),
             Socket::tcp(([127, 0, 0, 1], 22)),
         )
         .maximum_retries(None)
         .heartbeat_delay(Duration::from_secs(60))
         .maximum_wait(Duration::from_secs(10))
-        .build(TokioPenetrateConnector::new().await?)
+        .build(
+            Socket::tcp(([127, 0, 0, 1], 6722)),
+            TokioPenetrateConnector::new().await?,
+        )
         .run()
         .await
 }

@@ -165,7 +165,7 @@ impl<U> Drop for VirtualUdpSocket<U> {
 
 impl<U, E> Drop for Datagram<U, E> {
     fn drop(&mut self) {
-        if let Some(receiver) = self.udp_receiver.take() {
+        if let Some(mut receiver) = self.udp_receiver.take() {
             receiver.abort();
         }
     }

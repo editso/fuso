@@ -18,6 +18,7 @@ pub mod guard;
 pub mod mixing;
 pub mod protocol;
 
+use std::marker::PhantomData;
 use std::sync::Arc;
 use std::{fmt::Display, pin::Pin};
 
@@ -29,9 +30,13 @@ pub struct Serve {
     pub(crate) fut: Pin<Box<dyn std::future::Future<Output = crate::Result<()>> + 'static>>,
 }
 
-pub enum Task<T> {
-    Tokio(tokio::task::JoinHandle<T>),
+pub struct Task<T> {
+    pub detach_task_fn: Option<Box<dyn FnOnce() + Send + 'static>>,
+    pub abort_task_fn: Option<Box<dyn FnOnce() + Send + 'static>>,
+    pub _marked: PhantomData<T>,
 }
+
+unsafe impl<T> Sync for Task<T> {}
 
 pub trait ResultDisplay {
     fn display(&self) -> String;
@@ -69,11 +74,17 @@ impl Future for Fuso<Serve> {
 }
 
 impl<O> Task<O> {
-    pub fn abort(&self) {
-        match self {
-            Task::Tokio(tokio) => {
-                tokio.abort();
-            }
+    pub fn abort(&mut self) {
+        if let Some(abort_callback) = self.abort_task_fn.take() {
+            abort_callback()
+        }
+    }
+}
+
+impl<O> Drop for Task<O> {
+    fn drop(&mut self) {
+        if let Some(detach_callback) = self.detach_task_fn.take() {
+            detach_callback()
         }
     }
 }

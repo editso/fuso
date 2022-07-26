@@ -1,25 +1,15 @@
 mod penetrate;
 pub use penetrate::connector::*;
 
-use std::{
-    net::{SocketAddr, ToSocketAddrs},
-    pin::Pin,
-    sync::Arc,
-    task::Poll,
-};
+use std::{net::SocketAddr, pin::Pin, sync::Arc, task::Poll};
 
 use async_mutex::Mutex;
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 
 use crate::{
-    client::{self, Route},
-    kcp,
-    penetrate::SocksUdpForwardConverter,
-    ready, server,
-    udp::{Datagram, VirtualUdpSocket},
-    Accepter, Addr, Address, ClientProvider, Executor, FusoStream, InnerAddr, InvalidAddr,
-    NetSocket, Provider, ProviderWrapper, ServerProvider, Socket, SocketKind, Task, ToBoxStream,
-    UdpSocket,
+    client::{self},
+    kcp, ready, server, Accepter, Address, ClientProvider, Executor, FusoStream, NetSocket,
+    Provider, ServerProvider, Socket, SocketErr, Task, ToBoxStream, UdpSocket,
 };
 
 type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>> + Send + 'static>>;
@@ -43,10 +33,18 @@ impl Executor for TokioExecutor {
         F: std::future::Future<Output = O> + Send + 'static,
         O: Send + 'static,
     {
-        Task::Tokio(tokio::spawn(fut))
+        let task = tokio::spawn(fut);
+
+        Task {
+            detach_task_fn: None,
+            abort_task_fn: Some(Box::new(move || {
+                task.abort();
+                log::debug!("abort task");
+            })),
+            _marked: std::marker::PhantomData,
+        }
     }
 }
-
 
 impl Provider<Socket> for TokioAccepter {
     type Output = BoxedFuture<TokioTcpListener>;
@@ -57,13 +55,9 @@ impl Provider<Socket> for TokioAccepter {
                 if socket.is_tcp() {
                     TcpListener::bind(socket.as_string())
                         .await
-                        .map_err(|e| {
-                            log::warn!("tcp bind failed addr={}, err={}", socket.addr(), e);
-                            e
-                        })
                         .map(|tcp| TokioTcpListener(tcp))?
                 } else {
-                    unimplemented!()
+                    return Err(SocketErr::NotSupport(socket).into());
                 }
             })
         })
