@@ -9,7 +9,7 @@ use tokio::net::TcpListener;
 use crate::{
     client::{self},
     kcp, ready, server, Accepter, Address, ClientProvider, Executor, FusoStream, NetSocket,
-    Provider, ServerProvider, Socket, SocketErr, Task, ToBoxStream, UdpSocket,
+    Provider, Socket, SocketErr, Task, ToBoxStream, UdpSocket,
 };
 
 type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>> + Send + 'static>>;
@@ -36,8 +36,8 @@ impl Executor for TokioExecutor {
         let task = tokio::spawn(fut);
 
         Task {
-            detach_task_fn: None,
-            abort_task_fn: Some(Box::new(move || {
+            detach_fn: None,
+            abort_fn: Some(Box::new(move || {
                 task.abort();
                 log::debug!("abort task");
             })),
@@ -140,15 +140,6 @@ impl Provider<Socket> for TokioConnector {
     }
 }
 
-impl ServerProvider<TokioAccepter, TokioConnector> {
-    pub fn with_tokio() -> Self {
-        ServerProvider {
-            accepter_provider: Arc::new(TokioAccepter),
-            connector_provider: Arc::new(TokioConnector(Default::default())),
-        }
-    }
-}
-
 impl ClientProvider<TokioConnector> {
     pub fn with_tokio() -> Self {
         ClientProvider {
@@ -158,13 +149,13 @@ impl ClientProvider<TokioConnector> {
     }
 }
 
-pub fn builder_server_with_tokio(
-) -> server::ServerBuilder<TokioExecutor, TokioAccepter, TokioConnector, FusoStream> {
+pub fn builder_server_with_tokio() -> server::ServerBuilder<TokioExecutor, TokioAccepter, FusoStream>
+{
     server::ServerBuilder {
         is_mixed: false,
         executor: TokioExecutor,
         handshake: None,
-        server_provider: ServerProvider::with_tokio(),
+        server_provider: Arc::new(TokioAccepter),
     }
 }
 

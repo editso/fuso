@@ -40,7 +40,7 @@ pub enum Poto {
     Bind(Bind),
     Map(u32, Socket),
     Connect(Connect, Auth),
-    Forward(Addr)
+    Forward(Addr),
 }
 
 impl Packet {
@@ -74,7 +74,7 @@ impl TryToPoto for Packet {
     }
 }
 
-impl Display for Poto{
+impl Display for Poto {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:#?}", self)
     }

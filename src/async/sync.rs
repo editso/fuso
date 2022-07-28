@@ -1,4 +1,3 @@
-
 #[cfg(feature = "fuso-rt-smol")]
 pub use smol::lock::Mutex;
 

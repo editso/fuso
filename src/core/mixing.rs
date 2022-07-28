@@ -1,8 +1,7 @@
 use std::{future::Future, marker::PhantomData, pin::Pin, sync::Arc, task::Poll};
 
 use crate::{
-    server::ServerBuilder, Accepter, AccepterWrapper, Address, Provider, NetSocket, ServerProvider,
-    Socket,
+    server::ServerBuilder, Accepter, AccepterWrapper, Address, NetSocket, Provider, Socket,
 };
 
 type BoxedFuture<T> = Pin<Box<dyn Future<Output = crate::Result<T>> + Send + 'static>>;
@@ -82,15 +81,15 @@ where
     }
 }
 
-impl<E, SF, CF, S, A1> ServerBuilder<E, SF, CF, S>
+impl<E, SP, S, A1> ServerBuilder<E, SP, S>
 where
-    SF: Provider<Socket, Output = BoxedFuture<A1>> + Send + Sync + 'static,
+    SP: Provider<Socket, Output = BoxedFuture<A1>> + Send + Sync + 'static,
     A1: Accepter<Stream = S> + Unpin + Send + 'static,
 {
     pub fn add_accepter<SF2, A2>(
         self,
         provider: SF2,
-    ) -> ServerBuilder<E, MixListener<SF, SF2, S>, CF, S>
+    ) -> ServerBuilder<E, MixListener<SP, SF2, S>, S>
     where
         SF2: Provider<Socket, Output = BoxedFuture<A2>> + Send + Sync + 'static,
         A2: Accepter<Stream = S> + Unpin + Send + 'static,
@@ -99,14 +98,11 @@ where
             executor: self.executor,
             handshake: self.handshake,
             is_mixed: true,
-            server_provider: ServerProvider {
-                connector_provider: self.server_provider.connector_provider,
-                accepter_provider: Arc::new(MixListener {
-                    left: self.server_provider.accepter_provider,
-                    right: Arc::new(provider),
-                    _marked: PhantomData,
-                }),
-            },
+            server_provider: Arc::new(MixListener {
+                left: self.server_provider,
+                right: Arc::new(provider),
+                _marked: PhantomData,
+            }),
         }
     }
 }

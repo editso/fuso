@@ -15,8 +15,8 @@ async fn main() -> fuso::Result<()> {
 
     fuso::builder_client_with_tokio()
         .using_penetrate(
-            Socket::tcp(([0,0,0,0], 9999)),
-            Socket::tcp(([127, 0, 0, 1], 22)),
+            Socket::tcp(([0, 0, 0, 0], 8088)),
+            Socket::tcp(([127, 0, 0, 1], 8088)),
         )
         .maximum_retries(None)
         .heartbeat_delay(Duration::from_secs(60))

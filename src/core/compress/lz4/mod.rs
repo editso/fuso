@@ -302,7 +302,7 @@ where
                 need_offset = 0;
             } else if need_size == need_offset && !self.lz4_dinit {
                 // 获取到压缩块大小，继续读取....
-            
+
                 need_size =
                     unsafe { *(dbuf.as_ptr() as *const i32).as_ref().unwrap_unchecked() } as usize;
 

@@ -14,14 +14,14 @@ use super::{
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
 
-pub struct PenetrateServerBuilder<E, SF, CF, S> {
+pub struct PenetrateServerBuilder<E, SP, S> {
     is_mixed: bool,
     max_wait_time: Duration,
     heartbeat_timeout: Duration,
     read_timeout: Option<Duration>,
     write_timeout: Option<Duration>,
     fallback_strict_mode: bool,
-    server_builder: ServerBuilder<E, SF, CF, S>,
+    server_builder: ServerBuilder<E, SP, S>,
 }
 
 pub struct PenetrateClientBuilder<E, CF, S> {
@@ -40,8 +40,8 @@ pub struct PenetrateClientBuilder<E, CF, S> {
     client_builder: ClientBuilder<E, CF, S>,
 }
 
-impl<E, SF, CF, S> ServerBuilder<E, SF, CF, S> {
-    pub fn with_penetrate(self) -> PenetrateServerBuilder<E, SF, CF, S> {
+impl<E, SP, S> ServerBuilder<E, SP, S> {
+    pub fn using_penetrate(self) -> PenetrateServerBuilder<E, SP, S> {
         PenetrateServerBuilder {
             is_mixed: self.is_mixed,
             write_timeout: None,
@@ -54,13 +54,12 @@ impl<E, SF, CF, S> ServerBuilder<E, SF, CF, S> {
     }
 }
 
-impl<E, SF, CF, A, S> PenetrateServerBuilder<E, SF, CF, S>
+impl<E, SP, A, S> PenetrateServerBuilder<E, SP, S>
 where
     E: Executor + 'static,
-    SF: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
-    CF: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
     A: Accepter<Stream = S> + Unpin + Send + 'static,
     S: Stream + Send + Sync + 'static,
+    SP: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
 {
     pub fn read_timeout(mut self, time: Option<Duration>) -> Self {
         self.read_timeout = time;
@@ -92,7 +91,7 @@ where
         self
     }
 
-    pub fn build<F>(self, unpacker: F) -> Fuso<Server<E, PenetrateProvider<S>, SF, CF, S>>
+    pub fn build<F>(self, converter: F) -> Fuso<Server<E, PenetrateProvider<S>, SP, S>>
     where
         F: Provider<Fallback<S>, Output = BoxedFuture<Peer<Fallback<S>>>> + Send + Sync + 'static,
     {
@@ -105,7 +104,7 @@ where
                 write_timeout: self.write_timeout,
                 fallback_strict_mode: self.fallback_strict_mode,
             },
-            unpacker: Arc::new(ProviderWrapper::wrap(unpacker)),
+            converter: Arc::new(ProviderWrapper::wrap(converter)),
         })
     }
 }

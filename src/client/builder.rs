@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use crate::{
-    generator::Generator, ClientProvider, Executor, Provider, ProviderTransfer, Fuso, Socket, Stream,
+    generator::Generator, ClientProvider, Executor, Fuso, Provider, ProviderTransfer, Socket,
+    Stream,
 };
 
 use super::{BoxedFuture, Client};

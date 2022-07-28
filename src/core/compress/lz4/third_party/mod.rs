@@ -1,7 +1,6 @@
 /// lz4: https://github.com/lz4/lz4
 use std::ffi::c_void;
 
-
 #[link(name = "lib_third_party_compress_lz4", kind = "static")]
 #[allow(unused)]
 extern "C" {

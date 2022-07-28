@@ -34,7 +34,7 @@ where
         self.len = 0;
     }
 
-    pub fn push_all(&mut self, data: Vec<T>){
+    pub fn push_all(&mut self, data: Vec<T>) {
         let len = data.len();
         self.buf.push_back(data);
         self.len += len;

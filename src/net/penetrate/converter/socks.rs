@@ -11,14 +11,13 @@ use crate::{
     protocol::{make_packet, AsyncRecvPacket, AsyncSendPacket, Poto, ToPacket, TryToPoto},
     select::Select,
     socks::{self, NoAuthentication, Socks},
-    Addr, Provider, ProviderWrapper, Kind, Socket, SocketKind, Stream, UdpReceiverExt,
-    UdpSocket,
+    Addr, Kind, Provider, ProviderWrapper, Socket, SocketKind, Stream, UdpReceiverExt, UdpSocket,
 };
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
 
-pub struct PenetrateSocksBuilder<E, SF, CF, S> {
-    pub(crate) adapter_builder: PenetrateAdapterBuilder<E, SF, CF, S>,
+pub struct PenetrateSocksBuilder<E, SP, S> {
+    pub(crate) adapter_builder: PenetrateAdapterBuilder<E, SP, S>,
 }
 
 pub struct SocksConverter<U> {
@@ -34,11 +33,11 @@ pub struct SocksUdpForward<S, U> {
     guard: std::sync::Mutex<Option<S>>,
 }
 
-impl<E, SF, CF, S> PenetrateSocksBuilder<E, SF, CF, S>
+impl<E, SP, S> PenetrateSocksBuilder<E, SP, S>
 where
     S: Stream + Send + Sync + 'static,
 {
-    pub fn no_udp_forward(mut self) -> PenetrateAdapterBuilder<E, SF, CF, S> {
+    pub fn no_udp_forward(mut self) -> PenetrateAdapterBuilder<E, SP, S> {
         self.adapter_builder
             .adapters
             .insert(0, ProviderWrapper::wrap(SimpleSocksConverter));
@@ -46,10 +45,7 @@ where
         self.adapter_builder
     }
 
-    pub fn with_udp_forward<UF, U>(
-        mut self,
-        udp_forward: UF,
-    ) -> PenetrateAdapterBuilder<E, SF, CF, S>
+    pub fn using_udp_forward<UF, U>(mut self, udp_forward: UF) -> PenetrateAdapterBuilder<E, SP, S>
     where
         UF: Provider<(), Output = BoxedFuture<(SocketAddr, U)>> + Send + Sync + 'static,
         U: UdpSocket + Unpin + Send + Sync + 'static,

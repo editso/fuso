@@ -7,14 +7,12 @@ use crate::{
         Adapter,
     },
     protocol::{AsyncRecvPacket, Poto, TryToPoto},
-    Provider,
-    Socket, Stream,
+    Provider, Socket, Stream,
 };
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
 
 pub struct NormalUnpacker;
-
 
 impl<S> Provider<Fallback<S>> for NormalUnpacker
 where

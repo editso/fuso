@@ -71,7 +71,10 @@ where
                             break Poll::Ready(Ok(buf.len()));
                         }
                     }
-                    Poll::Pending => break Poll::Pending,
+                    Poll::Pending => {
+                        drop(std::mem::replace(&mut self.wbuf, Some(wbuf)));
+                        break Poll::Pending;
+                    }
                 }
             }
         } else {

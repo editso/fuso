@@ -1,8 +1,8 @@
 use std::{future::Future, pin::Pin, task::Poll};
 
 use crate::{
-    mixing::MixListener, server::ServerBuilder, Accepter, Executor, Provider, ProviderWrapper,
-    FusoStream, NetSocket, Socket, ToBoxStream, UdpSocket, Address,
+    mixing::MixListener, server::ServerBuilder, Accepter, Address, Executor, FusoStream, NetSocket,
+    Provider, ProviderWrapper, Socket, ToBoxStream, UdpSocket,
 };
 
 use super::KcpListener;
@@ -29,7 +29,7 @@ where
     }
 }
 
-impl NetSocket for std::net::TcpStream{
+impl NetSocket for std::net::TcpStream {
     fn peer_addr(&self) -> crate::Result<crate::Address> {
         Ok(Address::Single(Socket::tcp(self.peer_addr()?)))
     }
@@ -56,17 +56,17 @@ where
     }
 }
 
-impl<E, SF, CF, A1> ServerBuilder<E, SF, CF, FusoStream>
+impl<E, SP, A1> ServerBuilder<E, SP, FusoStream>
 where
-    SF: Provider<Socket, Output = BoxedFuture<A1>> + Send + Sync + 'static,
+    SP: Provider<Socket, Output = BoxedFuture<A1>> + Send + Sync + 'static,
     A1: Accepter<Stream = FusoStream> + Unpin + Send + 'static,
     E: Executor + Clone + Sync + Send + Unpin + 'static,
 {
-    pub fn with_kcp_accepter<F, U>(
+    pub fn using_kcp<F, U>(
         self,
         provider: F,
         executor: E,
-    ) -> ServerBuilder<E, MixListener<SF, KcpAccepterProvider<U, E>, FusoStream>, CF, FusoStream>
+    ) -> ServerBuilder<E, MixListener<SP, KcpAccepterProvider<U, E>, FusoStream>, FusoStream>
     where
         F: Provider<Socket, Output = BoxedFuture<U>> + Send + Sync + 'static,
         U: UdpSocket + Clone + Sync + Unpin + Send + 'static,

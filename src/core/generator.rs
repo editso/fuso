@@ -31,4 +31,4 @@ where
     }
 }
 
-impl<T> GeneratorEx for T where T: Generator + Unpin{}
+impl<T> GeneratorEx for T where T: Generator + Unpin {}

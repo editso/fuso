@@ -1,7 +1,7 @@
 use std::{pin::Pin, sync::Arc};
 
 use crate::{
-    guard::Fallback, server::Server, Accepter, Executor, Provider, ProviderWrapper, Fuso, Socket,
+    guard::Fallback, server::Server, Accepter, Executor, Fuso, Provider, ProviderWrapper, Socket,
     Stream,
 };
 
@@ -19,13 +19,13 @@ pub enum Adapter<O> {
 
 pub struct PenetrateAdapter<A>(Arc<Vec<A>>);
 
-pub struct PenetrateAdapterBuilder<E, SF, CF, S> {
+pub struct PenetrateAdapterBuilder<E, SP, S> {
     pub(crate) adapters: Vec<ProviderWrapper<Fallback<S>, Adapter<S>>>,
-    pub(crate) penetrate_builder: PenetrateServerBuilder<E, SF, CF, S>,
+    pub(crate) penetrate_builder: PenetrateServerBuilder<E, SP, S>,
 }
 
-impl<E, SF, CF, S> PenetrateServerBuilder<E, SF, CF, S> {
-    pub fn with_adapter_mode(self) -> PenetrateAdapterBuilder<E, SF, CF, S> {
+impl<E, SP, S> PenetrateServerBuilder<E, SP, S> {
+    pub fn using_adapter(self) -> PenetrateAdapterBuilder<E, SP, S> {
         PenetrateAdapterBuilder {
             adapters: Default::default(),
             penetrate_builder: self,
@@ -33,15 +33,14 @@ impl<E, SF, CF, S> PenetrateServerBuilder<E, SF, CF, S> {
     }
 }
 
-impl<E, A, SF, CF, S> PenetrateAdapterBuilder<E, SF, CF, S>
+impl<E, A, SP, S> PenetrateAdapterBuilder<E, SP, S>
 where
     E: Executor + 'static,
-    SF: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
-    CF: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
+    SP: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
     A: Accepter<Stream = S> + Unpin + Send + 'static,
     S: Stream + Send + Sync + 'static,
 {
-    pub fn build(self) -> Fuso<Server<E, PenetrateProvider<S>, SF, CF, S>> {
+    pub fn build(self) -> Fuso<Server<E, PenetrateProvider<S>, SP, S>> {
         self.penetrate_builder
             .disable_fallback_strict_mode()
             .build(PenetrateAdapter(Arc::new(self.adapters)))

@@ -28,40 +28,6 @@ pub struct ClientProvider<C> {
     pub connect_provider: Arc<C>,
 }
 
-pub struct ServerProvider<S, C> {
-    pub accepter_provider: Arc<S>,
-    pub connector_provider: Arc<C>,
-}
-
-impl<SF, CF, S, O> ServerProvider<SF, CF>
-where
-    SF: Provider<Socket, Output = BoxedFuture<S>> + 'static,
-    CF: Provider<Socket, Output = BoxedFuture<O>> + 'static,
-    S: 'static,
-    O: 'static,
-{
-    #[inline]
-    pub async fn bind<Sock: Into<Socket>>(&self, socket: Sock) -> crate::Result<S> {
-        let socket = socket.into();
-        self.accepter_provider.call(socket).await
-    }
-
-    #[inline]
-    pub async fn connect<Sock: Into<Socket>>(&self, socket: Sock) -> crate::Result<O> {
-        let socket = socket.into();
-        self.connector_provider.call(socket).await
-    }
-}
-
-impl<S, C> Clone for ServerProvider<S, C> {
-    fn clone(&self) -> Self {
-        Self {
-            accepter_provider: self.accepter_provider.clone(),
-            connector_provider: self.connector_provider.clone(),
-        }
-    }
-}
-
 impl<C, O> ClientProvider<C>
 where
     C: Provider<Socket, Output = BoxedFuture<O>>,
@@ -165,7 +131,11 @@ where
 
     fn call(&self, cfg: A) -> Self::Output {
         let this = self.clone();
-        Box::pin(async move { this.other_provider.call(this.self_provider.call(cfg).await?).await })
+        Box::pin(async move {
+            this.other_provider
+                .call(this.self_provider.call(cfg).await?)
+                .await
+        })
     }
 }
 

@@ -31,8 +31,8 @@ pub struct Serve {
 }
 
 pub struct Task<T> {
-    pub detach_task_fn: Option<Box<dyn FnOnce() + Send + 'static>>,
-    pub abort_task_fn: Option<Box<dyn FnOnce() + Send + 'static>>,
+    pub abort_fn: Option<Box<dyn FnOnce() + Send + 'static>>,
+    pub detach_fn: Option<Box<dyn FnOnce() + Send + 'static>>,
     pub _marked: PhantomData<T>,
 }
 
@@ -75,7 +75,7 @@ impl Future for Fuso<Serve> {
 
 impl<O> Task<O> {
     pub fn abort(&mut self) {
-        if let Some(abort_callback) = self.abort_task_fn.take() {
+        if let Some(abort_callback) = self.abort_fn.take() {
             abort_callback()
         }
     }
@@ -83,7 +83,7 @@ impl<O> Task<O> {
 
 impl<O> Drop for Task<O> {
     fn drop(&mut self) {
-        if let Some(detach_callback) = self.detach_task_fn.take() {
+        if let Some(detach_callback) = self.detach_fn.take() {
             detach_callback()
         }
     }

@@ -72,17 +72,17 @@ async fn main() -> fuso::Result<()> {
 
     let args = FusoArgs::parse();
 
-    init_logger(args.log_level);   
+    init_logger(args.log_level);
 
     fuso::builder_server_with_tokio()
-        .with_kcp_accepter(TokioUdpServerProvider, TokioExecutor)
-        .with_penetrate()
+        .using_kcp(TokioUdpServerProvider, TokioExecutor)
+        .using_penetrate()
         .max_wait_time(Duration::from_secs(args.maximum_wctime))
         .heartbeat_timeout(Duration::from_secs(args.heartbeat_delay))
-        .with_adapter_mode()
-        .with_normal_unpacker()
-        .with_socks_unpacker()
-        .with_udp_forward(UdpForwardProvider)
+        .using_adapter()
+        .using_direct()
+        .using_socks()
+        .using_udp_forward(UdpForwardProvider)
         .build()
         .bind(Socket::tcp((args.listen, args.port)))
         .run()

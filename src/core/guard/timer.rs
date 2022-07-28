@@ -94,7 +94,6 @@ where
     }
 }
 
-
 #[allow(unused)]
 impl<T> AsyncWrite for Timer<T>
 where
@@ -165,7 +164,6 @@ where
         return Pin::new(&mut *target).poll_close(cx);
     }
 }
-
 
 #[allow(unused)]
 impl<T> AsyncRead for Timer<T>

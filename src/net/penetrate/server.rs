@@ -1,5 +1,6 @@
 use std::{collections::HashMap, fmt::Display, pin::Pin, sync::Arc, task::Poll, time::Duration};
 
+use crate::server::Process;
 use crate::sync::Mutex;
 use std::future::Future;
 
@@ -11,10 +12,10 @@ use crate::{
     guard::Fallback,
     io,
     protocol::{AsyncRecvPacket, AsyncSendPacket, Bind, Poto, ToPacket, TryToPoto},
-    ready, Accepter, ProviderWrapper, Socket, Stream, {Provider, ServerProvider},
+    ready, Accepter, Provider, ProviderWrapper, Socket, Stream,
 };
 
-use super::converter::Unpacker;
+use super::converter::Converter;
 use crate::{time, Address, Kind, NetSocket, ResultDisplay};
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
@@ -65,14 +66,14 @@ pub struct Config {
 
 pub struct PenetrateProvider<T> {
     pub(crate) config: Config,
-    pub(crate) unpacker: Arc<Unpacker<T>>,
+    pub(crate) converter: Arc<Converter<T>>,
 }
 
 pub struct Penetrate<T, A> {
     writer: WriteHalf<T>,
     config: Config,
     client_addr: Address,
-    unpacker: Arc<Unpacker<T>>,
+    unpacker: Arc<Converter<T>>,
     wait_for: WaitFor<async_channel::Sender<Fallback<T>>>,
     futures: Vec<BoxedFuture<State<T>>>,
     accepter: A,
@@ -108,7 +109,7 @@ where
     T: Stream + Sync + Send + 'static,
     A: Accepter<Stream = T> + Unpin + Send + 'static,
 {
-    pub fn new(config: Config, unpacker: Arc<Unpacker<T>>, client: T, accepter: A) -> Self {
+    pub fn new(config: Config, unpacker: Arc<Converter<T>>, client: T, accepter: A) -> Self {
         let client_addr = unsafe { client.peer_addr().unwrap_unchecked() };
         let (reader, writer) = crate::io::split(client);
 
@@ -385,17 +386,16 @@ where
     }
 }
 
-impl<SF, CF, A, S> Provider<(ServerProvider<SF, CF>, S)> for PenetrateProvider<S>
+impl<SP, A, S> Provider<Process<SP, S>> for PenetrateProvider<S>
 where
-    SF: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
-    CF: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
+    SP: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
     A: Accepter<Stream = S> + Send + Unpin + 'static,
     S: Stream + Sync + Send + 'static,
 {
     type Output = BoxedFuture<PenetrateGenerator<S, A>>;
 
-    fn call(&self, (provider, mut client): (ServerProvider<SF, CF>, S)) -> Self::Output {
-        let peer_provider = self.unpacker.clone();
+    fn call(&self, (provider, mut client, _): Process<SP, S>) -> Self::Output {
+        let peer_provider = self.converter.clone();
         let config = self.config.clone();
 
         Box::pin(async move {
@@ -404,7 +404,7 @@ where
             let (socket, accepter) = match message {
                 Poto::Bind(Bind::Bind(addr)) => {
                     log::debug!("try to bind the server to {}", addr);
-                    (addr.clone(), provider.bind(addr).await)
+                    (addr.clone(), provider.call(addr).await)
                 }
                 message => {
                     log::debug!("received an invalid message {}", message);
@@ -414,8 +414,7 @@ where
 
             match accepter {
                 Err(e) => {
-                    let message =
-                        Poto::Bind(Bind::Failed(socket, e.to_string())).to_packet_vec();
+                    let message = Poto::Bind(Bind::Failed(socket, e.to_string())).to_packet_vec();
 
                     log::warn!("failed to create listener err={}", e);
 

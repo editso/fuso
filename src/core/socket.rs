@@ -338,8 +338,8 @@ impl Addr {
     pub fn inner(&self) -> &InnerAddr {
         &self.0
     }
-    
-    pub fn into_inner(self) -> InnerAddr{
+
+    pub fn into_inner(self) -> InnerAddr {
         self.0
     }
 }
@@ -406,4 +406,3 @@ impl Default for Socket {
         }
     }
 }
-
