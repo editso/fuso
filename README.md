@@ -39,6 +39,7 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 3. 支持kcp
 4. 支持socks5 & udp转发
 5. lz4压缩
+6. rsa, aes加密
 
 ### ✨Demo
 
