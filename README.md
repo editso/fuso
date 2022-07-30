@@ -40,7 +40,10 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 4. 支持socks5 & udp转发
 5. lz4压缩
 6. rsa, aes加密
-7. 桥接模式
+8. 多映射
+9. 不依赖`async_trait`库, 全手工实现Future
+10. 级联代理
+
 
 ### ✨Demo
 
