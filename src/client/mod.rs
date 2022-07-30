@@ -7,7 +7,7 @@ pub use builder::*;
 use crate::{
     generator::{Generator, GeneratorEx},
     time, ClientProvider, Executor, Fuso, Provider, DecorateProvider, WrappedProvider, Serve,
-    Socket, Stream, Address,
+    Stream, Address,
 };
 
 pub type BoxedFuture<T> = Pin<Box<dyn Future<Output = crate::Result<T>> + Send + 'static>>;

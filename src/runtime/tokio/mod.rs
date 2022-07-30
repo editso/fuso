@@ -138,15 +138,16 @@ impl TokioConnector {
                     return Err(SocketErr::NotSupport(socket).into());
                 }
             }
-            Address::Many(sockets) => {
-                
-                unimplemented!()
+            Address::Many(mut sockets) => {
+                let socket = sockets.first().unwrap();
+                log::debug!("connect to {}", socket);
+                tokio::net::TcpStream::connect(socket.as_string())
+                .await?
+                .into_boxed_stream()
             }
         })
     }
 }
-
-
 
 impl Provider<Address> for TokioConnector {
     type Output = BoxedFuture<FusoStream>;

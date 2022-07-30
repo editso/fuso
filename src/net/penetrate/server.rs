@@ -251,7 +251,7 @@ where
                             src.backward().await?;
 
                             if let Some(data) = src.back_data() {
-                                log::trace!("copy data to peer {}bytes", data.len());
+                                log::debug!("copy data to peer {}bytes", data.len());
 
                                 if let Err(e) = dst.write_all(&data).await {
                                     log::warn!(

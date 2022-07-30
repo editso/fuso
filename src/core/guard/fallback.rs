@@ -197,8 +197,19 @@ where
         _: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
         let this = &mut self.0;
-        if let Some(marked) = this.marked_buf.take() {
-            drop(std::mem::replace(&mut this.backed_buf, Some(marked)));
+        if let Some(mut marked) = this.marked_buf.take() {
+            let backed_buf = if let Some(mut backed) = this.backed_buf.take() {
+                let mut buf = Vec::with_capacity(marked.len());
+                unsafe{
+                    buf.set_len(marked.len());
+                }
+                marked.read_to_buffer(&mut buf);
+                backed.push_all(buf);
+                backed
+            }else{
+                marked
+            };
+            drop(std::mem::replace(&mut this.backed_buf, Some(backed_buf)));
         }
 
         Poll::Ready(Ok(()))

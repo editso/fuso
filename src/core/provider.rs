@@ -42,8 +42,8 @@ where
         &self.server_address
     }
 
-    pub async fn connect<A: Into<Address>>(&self, socket: A) -> crate::Result<O> {
-        self.connect_provider.call(socket.into()).await
+    pub fn connect<A: Into<Address>>(&self, socket: A) -> BoxedFuture<O> {
+        self.connect_provider.call(socket.into())
     }
 }
 

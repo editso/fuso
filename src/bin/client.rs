@@ -5,7 +5,7 @@ use fuso::Socket;
 async fn main() -> fuso::Result<()> {
     use std::time::Duration;
 
-    use fuso::TokioPenetrateConnector;
+    use fuso::{TokioAccepter, TokioPenetrateConnector};
 
     env_logger::builder()
         .filter_module("fuso", log::LevelFilter::Debug)
@@ -15,16 +15,17 @@ async fn main() -> fuso::Result<()> {
 
     fuso::builder_client_with_tokio()
         .using_penetrate(
-            Socket::tcp(([0, 0, 0, 0], 8088)),
-            Socket::tcp(([127, 0, 0, 1], 8088)),
+            Socket::tcp(([0, 0, 0, 0], 8089)),
+            Socket::tcp(([127, 0, 0, 1], 8080)),
         )
         .maximum_retries(None)
         .heartbeat_delay(Duration::from_secs(60))
         .maximum_wait(Duration::from_secs(10))
         .build(
-            Socket::tcp(([127, 0, 0, 1], 6722)),
+            Socket::tcp(([127, 0, 0, 1], 8888)),
             TokioPenetrateConnector::new().await?,
         )
+        .using_bridge(Socket::tcp(8888), TokioAccepter)
         .run()
         .await
 }

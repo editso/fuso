@@ -11,8 +11,8 @@ use crate::{
     kcp::KcpConnector,
     penetrate::SocksUdpForwardConverter,
     udp::{Datagram, VirtualUdpSocket},
-    Addr, Address, FusoStream, InnerAddr, InvalidAddr, NetSocket, Provider, WrappedProvider,
-    Socket, SocketErr, SocketKind, ToBoxStream, TokioExecutor,
+    Addr, Address, FusoStream, InnerAddr, InvalidAddr, NetSocket, Provider, Socket, SocketErr,
+    SocketKind, ToBoxStream, TokioExecutor, WrappedProvider,
 };
 
 type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>> + Send + 'static>>;

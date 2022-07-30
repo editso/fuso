@@ -36,6 +36,10 @@ pub struct Serve {
     pub(crate) fut: Pin<Box<dyn std::future::Future<Output = crate::Result<()>> + 'static>>,
 }
 
+unsafe impl Send for Serve{}
+
+unsafe impl Sync for Serve{}
+
 pub struct Task<T> {
     pub abort_fn: Option<Box<dyn FnOnce() + Send + 'static>>,
     pub detach_fn: Option<Box<dyn FnOnce() + Send + 'static>>,

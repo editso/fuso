@@ -243,8 +243,6 @@ where
                     let s2_connector = self.connector_provider.clone();
                     let writer = self.writer.clone();
 
-                    
-
                     let server_fut = async_connect!(writer, s1_connector, id, s1_socket);
                     let client_fut = async_connect!(writer, s2_connector, id, s2_socket);
 

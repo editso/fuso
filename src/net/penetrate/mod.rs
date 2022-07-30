@@ -3,6 +3,7 @@ mod adapter;
 mod builder;
 mod handshake;
 mod observer;
+mod bridge;
 
 pub use handshake::*;
 pub use observer::*;

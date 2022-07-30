@@ -1,19 +1,21 @@
 use std::{future::Future, pin::Pin, task::Poll};
 
-type BoxedFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
+type BoxedFuture<T> = Pin<Box<dyn Future<Output = T> + 'static>>;
 
 pub struct Select<O> {
     futures: Vec<BoxedFuture<O>>,
 }
 
+unsafe impl<O> Send for Select<O>{}
+
 impl<O> Select<O>
 where
-    O: Send + 'static,
+    O: 'static,
 {
     pub fn select<F1, F2>(f1: F1, f2: F2) -> Self
     where
-        F1: Future<Output = O> + Send + 'static,
-        F2: Future<Output = O> + Send + 'static,
+        F1: Future<Output = O> + 'static,
+        F2: Future<Output = O> + 'static,
     {
         Select {
             futures: vec![Box::pin(f1), Box::pin(f2)],
@@ -31,7 +33,7 @@ where
 
 impl<O> Future for Select<O>
 where
-    O: Send + 'static,
+    O: 'static,
 {
     type Output = O;
 
