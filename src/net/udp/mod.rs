@@ -151,7 +151,7 @@ where
     }
 
     fn peer_addr(&self) -> crate::Result<crate::Address> {
-        Ok(Address::Single(Socket::udp(self.peer_addr.clone())))
+        Ok(Address::One(Socket::udp(self.peer_addr.clone())))
     }
 }
 

@@ -18,6 +18,22 @@ pub struct RSAEncryptor<T> {
     rsa_publ: RsaPublicKey,
 }
 
+impl<T> RSAEncryptor<T> {
+    pub fn new(target: T, publ_key: RsaPublicKey, priv_key: RsaPrivateKey) -> Self {
+        Self {
+            target,
+            rsa_priv: priv_key,
+            rsa_publ: publ_key,
+            cache: Default::default(),
+            rbuf: Default::default(),
+            wbuf: Default::default(),
+            wpos: Default::default(),
+            rpos: Default::default(),
+            dinit: Default::default(),
+        }
+    }
+}
+
 impl<T> NetSocket for RSAEncryptor<T>
 where
     T: NetSocket,

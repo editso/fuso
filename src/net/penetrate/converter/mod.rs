@@ -9,25 +9,25 @@ use self::socks::PenetrateSocksBuilder;
 pub use socks::SocksUdpForwardConverter;
 
 use super::{server::Peer, PenetrateAdapterBuilder};
-use crate::{guard::Fallback, Accepter, Executor, Provider, ProviderWrapper, Socket, Stream};
+use crate::{guard::Fallback, Accepter, Executor, Provider, Socket, Stream, WrappedProvider};
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
-pub type Converter<S> = ProviderWrapper<Fallback<S>, Peer<Fallback<S>>>;
+pub type Converter<S> = WrappedProvider<Fallback<S>, Peer<Fallback<S>>>;
 
-impl<E, SP, A, S> PenetrateAdapterBuilder<E, SP, S>
+impl<E, P, A, S, O> PenetrateAdapterBuilder<E, P, S, O>
 where
     E: Executor + 'static,
-    SP: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
     A: Accepter<Stream = S> + Unpin + Send + 'static,
     S: Stream + Send + Sync + 'static,
+    P: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
 {
     pub fn using_direct(mut self) -> Self {
         self.adapters
-            .push(ProviderWrapper::wrap(direct::NormalUnpacker));
+            .push(WrappedProvider::wrap(direct::DirectConverter));
         self
     }
 
-    pub fn using_socks(self) -> PenetrateSocksBuilder<E, SP, S> {
+    pub fn using_socks(self) -> PenetrateSocksBuilder<E, P, S, O> {
         PenetrateSocksBuilder {
             adapter_builder: self,
         }

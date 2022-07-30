@@ -8,54 +8,57 @@ use crate::{
         server::{Peer, Visitor},
         Adapter, PenetrateAdapterBuilder,
     },
-    protocol::{make_packet, AsyncRecvPacket, AsyncSendPacket, Poto, ToPacket, TryToPoto},
+    protocol::{make_packet, AsyncRecvPacket, AsyncSendPacket, Poto, ToBytes, TryToPoto},
     select::Select,
     socks::{self, NoAuthentication, Socks},
-    Addr, Kind, Provider, ProviderWrapper, Socket, SocketKind, Stream, UdpReceiverExt, UdpSocket,
+    Addr, Kind, Provider, Socket, SocketKind, Stream, UdpReceiverExt, UdpSocket, WrappedProvider,
 };
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
 
-pub struct PenetrateSocksBuilder<E, SP, S> {
-    pub(crate) adapter_builder: PenetrateAdapterBuilder<E, SP, S>,
+pub struct PenetrateSocksBuilder<E, P, S, O> {
+    pub(crate) adapter_builder: PenetrateAdapterBuilder<E, P, S, O>,
 }
 
 pub struct SocksConverter<U> {
-    pub(crate) udp_provider: Arc<ProviderWrapper<(), (SocketAddr, U)>>,
+    pub(crate) udp_provider: Arc<WrappedProvider<(), (SocketAddr, U)>>,
 }
 
 pub struct SimpleSocksConverter;
 
-pub struct SocksUdpForwardConverter<U>(pub(crate) ProviderWrapper<Addr, (SocketAddr, U)>);
+pub struct SocksUdpForwardConverter<U>(pub(crate) WrappedProvider<Addr, (SocketAddr, U)>);
 
 pub struct SocksUdpForward<S, U> {
-    udp_provider: Arc<ProviderWrapper<(), (SocketAddr, U)>>,
+    udp_provider: Arc<WrappedProvider<(), (SocketAddr, U)>>,
     guard: std::sync::Mutex<Option<S>>,
 }
 
-impl<E, SP, S> PenetrateSocksBuilder<E, SP, S>
+impl<E, P, S, O> PenetrateSocksBuilder<E, P, S, O>
 where
     S: Stream + Send + Sync + 'static,
 {
-    pub fn no_udp_forward(mut self) -> PenetrateAdapterBuilder<E, SP, S> {
+    pub fn no_udp_forward(mut self) -> PenetrateAdapterBuilder<E, P, S, O> {
         self.adapter_builder
             .adapters
-            .insert(0, ProviderWrapper::wrap(SimpleSocksConverter));
+            .insert(0, WrappedProvider::wrap(SimpleSocksConverter));
 
         self.adapter_builder
     }
 
-    pub fn using_udp_forward<UF, U>(mut self, udp_forward: UF) -> PenetrateAdapterBuilder<E, SP, S>
+    pub fn using_udp_forward<UF, U>(
+        mut self,
+        udp_forward: UF,
+    ) -> PenetrateAdapterBuilder<E, P, S, O>
     where
         UF: Provider<(), Output = BoxedFuture<(SocketAddr, U)>> + Send + Sync + 'static,
         U: UdpSocket + Unpin + Send + Sync + 'static,
     {
-        let udp_forward = ProviderWrapper::wrap(udp_forward);
+        let udp_forward = WrappedProvider::wrap(udp_forward);
 
         self.adapter_builder.adapters.insert(
             0,
-            ProviderWrapper::wrap(SocksConverter {
-                udp_provider: Arc::new(ProviderWrapper::wrap(udp_forward)),
+            WrappedProvider::wrap(SocksConverter {
+                udp_provider: Arc::new(WrappedProvider::wrap(udp_forward)),
             }),
         );
         self.adapter_builder
@@ -84,10 +87,7 @@ where
             stream.consume_back_data();
 
             match socket.kind() {
-                SocketKind::Tcp => Ok(Adapter::Accept(Peer::Visitor(
-                    Visitor::Forward(stream),
-                    socket,
-                ))),
+                SocketKind::Tcp => Ok(Adapter::Accept(Peer::Route(Visitor::Route(stream), socket))),
                 SocketKind::Udp => Ok({
                     socks::finish_udp_forward(&mut stream).await?;
                     Adapter::Accept(Peer::Finished(stream))
@@ -122,10 +122,7 @@ where
             stream.consume_back_data();
 
             match socket.kind() {
-                SocketKind::Tcp => Ok(Adapter::Accept(Peer::Visitor(
-                    Visitor::Forward(stream),
-                    socket,
-                ))),
+                SocketKind::Tcp => Ok(Adapter::Accept(Peer::Route(Visitor::Route(stream), socket))),
                 SocketKind::Udp => Ok({
                     let stream = stream.into_inner();
                     let udp_forward = SocksUdpForward {
@@ -133,8 +130,8 @@ where
                         guard: std::sync::Mutex::new(Some(stream)),
                     };
 
-                    Adapter::Accept(Peer::Visitor(
-                        Visitor::Consume(ProviderWrapper::wrap(udp_forward)),
+                    Adapter::Accept(Peer::Route(
+                        Visitor::Provider(WrappedProvider::wrap(udp_forward)),
                         Socket::ufd(socket.into_addr()),
                     ))
                 }),
@@ -193,7 +190,7 @@ where
                         }
                     }
 
-                    let close = Poto::Close.to_packet_vec();
+                    let close = Poto::Close.bytes();
 
                     writer.send_packet(&close).await
                 }
@@ -258,7 +255,7 @@ where
             }
 
             loop {
-                let message = stream.recv_packet().await?.try_message()?;
+                let message = stream.recv_packet().await?.try_poto()?;
 
                 let addr = match message {
                     Poto::Forward(addr) => addr,

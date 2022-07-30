@@ -7,11 +7,11 @@ use crate::io::{ReadHalf, WriteHalf};
 use crate::{
     client::Route,
     generator::Generator,
-    protocol::{AsyncRecvPacket, AsyncSendPacket, Bind, Poto, ToPacket, TryToPoto},
+    protocol::{AsyncRecvPacket, AsyncSendPacket, Bind, Poto, ToBytes, TryToPoto},
     Kind, Socket, Stream, {ClientProvider, Provider},
 };
 
-use crate::{io, join, time};
+use crate::{io, join, time, Address};
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
 
@@ -24,13 +24,25 @@ macro_rules! async_connect {
             match $connector.call(socket).await {
                 Ok(ok) => Ok(ok),
                 Err(err) => {
-                    let poto = Poto::MapError($id, err.to_string()).to_packet_vec();
+                    let poto = Poto::MapError($id, err.to_string()).bytes();
                     return match writer.send_packet(&poto).await {
                         Ok(_) => Err(err),
                         Err(err) => Err(err),
                     };
                 }
             }
+        }
+    }};
+}
+
+macro_rules! default_socket {
+    ($addr: expr, $default: expr) => {{
+        if $addr.is_ip_unspecified() {
+            $addr.from_set_host($default);
+        }
+
+        if $addr.is_ip_unspecified() {
+            $addr.set_ip([127, 0, 0, 1]);
         }
     }};
 }
@@ -47,7 +59,7 @@ enum State {
 }
 
 pub struct PenetrateClient<CF, C, S> {
-    socket: (Socket, Socket),
+    socket: (Address, Socket),
     reader: ReadHalf<S>,
     writer: WriteHalf<S>,
     futures: Vec<BoxedFuture<State>>,
@@ -57,7 +69,7 @@ pub struct PenetrateClient<CF, C, S> {
 
 impl<CF, C, S> Provider<(ClientProvider<CF>, S)> for PenetrateClientProvider<C>
 where
-    CF: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
+    CF: Provider<Address, Output = BoxedFuture<S>> + Send + Sync + 'static,
     C: Provider<Socket, Output = BoxedFuture<Route<S>>> + Send + Sync + 'static,
     S: Stream + Send + 'static,
 {
@@ -70,16 +82,20 @@ where
 
         Box::pin(async move {
             let mut stream = stream;
-            let (remote, local) = socket;
-            let message = Poto::Bind(Bind::Bind(remote.clone())).to_packet_vec();
+            let (visit_addr, route_addr) = socket;
+            let bind = Poto::Bind(Bind::Map(
+                Socket::tcp(0).if_stream_mixed(true),
+                visit_addr.clone(),
+            ))
+            .bytes();
 
-            if let Err(e) = stream.send_packet(&message).await {
+            if let Err(e) = stream.send_packet(&bind).await {
                 log::error!("failed to send listen message to server err={}", e);
                 return Err(e);
             }
 
             let message = match stream.recv_packet().await {
-                Ok(packet) => packet.try_message(),
+                Ok(packet) => packet.try_poto(),
                 Err(e) => {
                     log::error!("the listen message was sent successfully, but the server seems to have an error err={}", e);
                     return Err(e);
@@ -94,31 +110,26 @@ where
             let message = unsafe { message.unwrap_unchecked() };
 
             match message {
-                Poto::Bind(Bind::Bind(mut remote_bind)) => {
-                    log::info!("the server is bound to {}", remote_bind);
+                Poto::Bind(Bind::Success(mut server_addr, mut visit_addr)) => {
+                    default_socket!(visit_addr, client_provider.default_socket());
+                    default_socket!(server_addr, client_provider.default_socket());
 
-                    if remote_bind.is_ip_unspecified() {
-                        remote_bind.from_set_host(client_provider.default_socket());
-                    }
-
-                    if remote_bind.is_ip_unspecified() {
-                        remote_bind.set_ip([127, 0, 0, 1]);
-                    }
+                    log::info!("the server is bound to {}", server_addr);
+                    log::info!("please visit {}", visit_addr);
 
                     Ok(PenetrateClient::new(
-                        (remote_bind, local),
+                        (server_addr, route_addr),
                         stream,
                         client_provider,
                         connector_provider,
                     ))
                 }
-                Poto::Bind(Bind::Failed(socket, e)) => {
+                Poto::Bind(Bind::Failed(fail)) => {
                     log::error!(
-                        "an error occurred while creating the listener on the server addr={}, err={}",
-                        socket,
-                        e
+                        "an error occurred while creating the listener on the server {}",
+                        fail,
                     );
-                    Err(Kind::Message(e).into())
+                    Err(Kind::Message(fail).into())
                 }
                 message => {
                     log::error!(
@@ -139,7 +150,7 @@ where
     CF: 'static,
 {
     pub fn new(
-        socket: (Socket, Socket),
+        socket: (Address, Socket),
         conn: S,
         client_provider: ClientProvider<CF>,
         connector_provider: Arc<C>,
@@ -160,7 +171,7 @@ where
     }
 
     async fn guard_server_heartbeat(mut writer: WriteHalf<S>) -> crate::Result<State> {
-        let ping = Poto::Ping.to_packet_vec();
+        let ping = Poto::Ping.bytes();
 
         loop {
             if let Err(e) = writer.send_packet(&ping).await {
@@ -175,7 +186,7 @@ where
     async fn register_server_handle(mut reader: ReadHalf<S>) -> crate::Result<State> {
         loop {
             let message = match reader.recv_packet().await {
-                Ok(packet) => packet.try_message(),
+                Ok(packet) => packet.try_poto(),
                 Err(e) => return Ok(State::Error(e)),
             };
 
@@ -200,7 +211,7 @@ where
 
 impl<CF, C, S> Generator for PenetrateClient<CF, C, S>
 where
-    CF: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
+    CF: Provider<Address, Output = BoxedFuture<S>> + Send + Sync + 'static,
     C: Provider<Socket, Output = BoxedFuture<Route<S>>> + Unpin + Send + Sync + 'static,
     S: Stream + Send + 'static,
 {
@@ -232,6 +243,8 @@ where
                     let s2_connector = self.connector_provider.clone();
                     let writer = self.writer.clone();
 
+                    
+
                     let server_fut = async_connect!(writer, s1_connector, id, s1_socket);
                     let client_fut = async_connect!(writer, s2_connector, id, s2_socket);
 
@@ -250,11 +263,11 @@ where
 
                         let (mut s1, s2) = r?;
 
-                        let message = Poto::Map(id, s2_socket).to_packet_vec();
+                        let message = Poto::Map(id, s2_socket).bytes();
 
                         if let Err(e) = s1.send_packet(&message).await {
                             drop(s2);
-                            let message = Poto::MapError(id, e.to_string()).to_packet_vec();
+                            let message = Poto::MapError(id, e.to_string()).bytes();
                             if let Err(e) = writer.send_packet(&message).await {
                                 return Ok(State::Error(e));
                             } else {

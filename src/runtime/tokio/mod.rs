@@ -8,8 +8,9 @@ use tokio::net::TcpListener;
 
 use crate::{
     client::{self},
-    kcp, ready, server, Accepter, Address, ClientProvider, Executor, FusoStream, NetSocket,
-    Provider, Socket, SocketErr, Task, ToBoxStream, UdpSocket,
+    kcp::{self, KcpConnector},
+    ready, server, Accepter, Address, ClientProvider, Executor, FusoStream, Kind, NetSocket,
+    Observer, Provider, Socket, SocketErr, Task, ToBoxStream, UdpSocket,
 };
 
 type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>> + Send + 'static>>;
@@ -50,37 +51,37 @@ impl Provider<Socket> for TokioAccepter {
     type Output = BoxedFuture<TokioTcpListener>;
 
     fn call(&self, socket: Socket) -> Self::Output {
-        Box::pin(async move {
-            Ok({
-                if socket.is_tcp() {
+        if socket.is_tcp() || socket.is_mixed() {
+            Box::pin(async move {
+                Ok({
                     TcpListener::bind(socket.as_string())
                         .await
                         .map(|tcp| TokioTcpListener(tcp))?
-                } else {
-                    return Err(SocketErr::NotSupport(socket).into());
-                }
+                })
             })
-        })
+        } else {
+            Box::pin(async move { Err(Kind::Unsupported(socket).into()) })
+        }
     }
 }
 
 impl NetSocket for tokio::net::TcpStream {
     fn peer_addr(&self) -> crate::Result<Address> {
-        Ok(Address::Single(Socket::tcp(self.peer_addr()?)))
+        Ok(Address::One(Socket::tcp(self.peer_addr()?)))
     }
 
     fn local_addr(&self) -> crate::Result<Address> {
-        Ok(Address::Single(Socket::tcp(self.local_addr()?)))
+        Ok(Address::One(Socket::tcp(self.local_addr()?)))
     }
 }
 
 impl NetSocket for TokioTcpListener {
     fn local_addr(&self) -> crate::Result<crate::Address> {
-        Ok(Address::Single(Socket::tcp(self.0.local_addr()?)))
+        Ok(Address::One(Socket::tcp(self.0.local_addr()?)))
     }
 
     fn peer_addr(&self) -> crate::Result<Address> {
-        Ok(Address::Single(Socket::tcp(self.0.local_addr()?)))
+        Ok(Address::One(Socket::tcp(self.0.local_addr()?)))
     }
 }
 
@@ -102,19 +103,18 @@ impl Accepter for TokioTcpListener {
     }
 }
 
-impl Provider<Socket> for TokioConnector {
-    type Output = BoxedFuture<FusoStream>;
-
-    fn call(&self, socket: Socket) -> Self::Output {
-        let kcp = self.0.clone();
-
-        Box::pin(async move {
-            Ok({
-                if !socket.is_mixed() {
+impl TokioConnector {
+    pub async fn connect(
+        kcp: Arc<Mutex<Option<kcp::KcpConnector<Arc<tokio::net::UdpSocket>, TokioExecutor>>>>,
+        address: Address,
+    ) -> crate::Result<FusoStream> {
+        Ok(match address {
+            Address::One(socket) => {
+                if socket.is_tcp() {
                     tokio::net::TcpStream::connect(socket.as_string())
                         .await?
                         .into_boxed_stream()
-                } else {
+                } else if socket.is_kcp() {
                     let mut kcp = kcp.lock().await;
 
                     if kcp.is_none() {
@@ -134,27 +134,50 @@ impl Provider<Socket> for TokioConnector {
                             })?
                             .into_boxed_stream()
                     }
+                } else {
+                    return Err(SocketErr::NotSupport(socket).into());
                 }
-            })
+            }
+            Address::Many(sockets) => {
+                
+                unimplemented!()
+            }
         })
+    }
+}
+
+
+
+impl Provider<Address> for TokioConnector {
+    type Output = BoxedFuture<FusoStream>;
+
+    fn call(&self, address: Address) -> Self::Output {
+        let kcp = self.0.clone();
+
+        Box::pin(async move { Self::connect(kcp, address).await })
     }
 }
 
 impl ClientProvider<TokioConnector> {
     pub fn with_tokio() -> Self {
         ClientProvider {
-            server_socket: Default::default(),
+            server_address: Default::default(),
             connect_provider: Arc::new(TokioConnector(Default::default())),
         }
     }
 }
 
-pub fn builder_server_with_tokio() -> server::ServerBuilder<TokioExecutor, TokioAccepter, FusoStream>
+pub fn builder_server_with_tokio<O>(
+    observer: O,
+) -> server::ServerBuilder<TokioExecutor, TokioAccepter, FusoStream, O>
+where
+    O: Observer + Send + Sync + 'static,
 {
     server::ServerBuilder {
         is_mixed: false,
         executor: TokioExecutor,
         handshake: None,
+        observer: Some(Arc::new(observer)),
         server_provider: Arc::new(TokioAccepter),
     }
 }
@@ -170,11 +193,11 @@ pub fn builder_client_with_tokio(
 
 impl NetSocket for tokio::net::UdpSocket {
     fn peer_addr(&self) -> crate::Result<Address> {
-        Ok(Address::Single(Socket::udp((*self).peer_addr()?)))
+        Ok(Address::One(Socket::udp((*self).peer_addr()?)))
     }
 
     fn local_addr(&self) -> crate::Result<Address> {
-        Ok(Address::Single(Socket::udp((*self).local_addr()?)))
+        Ok(Address::One(Socket::udp((*self).local_addr()?)))
     }
 }
 

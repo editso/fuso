@@ -439,7 +439,7 @@ mod tests {
     use super::Lz4Compress;
     use crate::{
         ext::AsyncWriteExt,
-        protocol::{AsyncRecvPacket, Poto, ToPacket},
+        protocol::{AsyncRecvPacket, Poto, ToBytes},
         r#async::ext::AsyncReadExt,
         time,
     };
@@ -463,7 +463,7 @@ mod tests {
                 loop {
                     let mut text = String::new();
                     time::sleep(Duration::from_secs(1)).await;
-                    let data = Poto::Ping.to_packet_vec();
+                    let data = Poto::Ping.bytes();
 
                     lz4.write_all(&data).await.unwrap();
 

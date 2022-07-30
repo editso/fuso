@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt::Display, pin::Pin, sync::Arc, task::Poll, time::Duration};
 
-use crate::server::Process;
+use crate::penetrate::accepter::PenetrateAccepter;
 use crate::sync::Mutex;
 use std::future::Future;
 
@@ -11,45 +11,58 @@ use crate::{
     generator::Generator,
     guard::Fallback,
     io,
-    protocol::{AsyncRecvPacket, AsyncSendPacket, Bind, Poto, ToPacket, TryToPoto},
-    ready, Accepter, Provider, ProviderWrapper, Socket, Stream,
+    protocol::{AsyncRecvPacket, AsyncSendPacket, Bind, Poto, ToBytes, TryToPoto},
+    ready, Accepter, Provider, Socket, Stream, WrappedProvider,
 };
 
+use super::accepter::Pen;
 use super::converter::Converter;
-use crate::{time, Address, Kind, NetSocket, ResultDisplay};
+use super::PenetrateObserver;
+use crate::{join, time, Address, Error, Kind, NetSocket, Processor};
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
 
-pub enum PenetrateOutcome<T> {
-    Map(T, T),
-    Customize(BoxedFuture<()>),
+macro_rules! throw_client_error {
+    ($result: expr) => {
+        match $result {
+            Ok(t) => t,
+            Err(e) => {
+                log::warn!("client error {}", e);
+                return Ok(State::Error(e));
+            }
+        }
+    };
+}
+
+pub enum Outcome<T> {
+    Route(T, T),
+    Future(BoxedFuture<()>),
 }
 
 pub enum State<T> {
     Stop,
     Close(T),
     Finish,
-    Forward(T, T),
-    Consume(BoxedFuture<()>),
+    Route(T, T),
+    Provider(BoxedFuture<()>),
     Error(crate::Error),
 }
 
 pub enum Visitor<T> {
-    Forward(T),
-    Consume(ProviderWrapper<T, ()>),
+    Route(T),
+    Provider(WrappedProvider<T, ()>),
 }
 
-pub struct PenetrateGenerator<T, A>(Penetrate<T, A>);
+pub struct PenetrateGenerator<P, T, A, O>(Penetrate<P, T, PenetrateAccepter<A, A>, O>);
 
 pub enum Peer<T> {
-    Mapper(u32, T),
-    Visitor(Visitor<T>, Socket),
+    Route(Visitor<T>, Socket),
     Finished(T),
     Unknown(T),
 }
 
 #[derive(Default, Clone)]
-pub struct WaitFor<T> {
+pub struct MQueue<T> {
     identify: Arc<Mutex<u32>>,
     wait_list: Arc<async_mutex::Mutex<HashMap<u32, T>>>,
 }
@@ -69,17 +82,19 @@ pub struct PenetrateProvider<T> {
     pub(crate) converter: Arc<Converter<T>>,
 }
 
-pub struct Penetrate<T, A> {
-    writer: WriteHalf<T>,
+pub struct Penetrate<P, S, A, O> {
+    address: Address,
+    writer: WriteHalf<S>,
+    processor: Processor<P, S, O>,
     config: Config,
-    client_addr: Address,
-    unpacker: Arc<Converter<T>>,
-    wait_for: WaitFor<async_channel::Sender<Fallback<T>>>,
-    futures: Vec<BoxedFuture<State<T>>>,
+    futures: Vec<BoxedFuture<State<S>>>,
     accepter: A,
+    mqueue: MQueue<async_channel::Sender<S>>,
+    converter: Arc<Converter<S>>,
+    client_addr: Address,
 }
 
-impl<T> WaitFor<T> {
+impl<T> MQueue<T> {
     pub async fn push(&self, item: T) -> u32 {
         // FIXME cur === next may lead to an infinite loop
         let mut ident = self.identify.lock().await;
@@ -104,36 +119,47 @@ impl<T> WaitFor<T> {
     }
 }
 
-impl<T, A> Penetrate<T, A>
+impl<P, T, A, O> Penetrate<P, T, A, O>
 where
     T: Stream + Sync + Send + 'static,
-    A: Accepter<Stream = T> + Unpin + Send + 'static,
+    A: Accepter<Stream = Pen<T>> + Unpin + Send + 'static,
+    O: PenetrateObserver + Sync + Send + 'static,
+    P: Sync + Send + 'static,
 {
-    pub fn new(config: Config, unpacker: Arc<Converter<T>>, client: T, accepter: A) -> Self {
+    pub fn new(
+        config: Config,
+        converter: Arc<Converter<T>>,
+        processor: Processor<P, T, O>,
+        address: Address,
+        client: T,
+        accepter: A,
+    ) -> Self {
         let client_addr = unsafe { client.peer_addr().unwrap_unchecked() };
         let (reader, writer) = crate::io::split(client);
 
-        let wait_for = WaitFor {
+        let mqueue = MQueue {
             identify: Default::default(),
             wait_list: Default::default(),
         };
 
-        let recv_fut = Self::poll_handle_recv(wait_for.clone(), reader.clone());
+        let recv_fut = Self::poll_handle_recv(mqueue.clone(), reader.clone());
         let write_fut = Self::poll_heartbeat_future(writer.clone(), config.heartbeat_timeout);
 
         Self {
             writer,
             config,
-            unpacker,
+            converter,
             accepter,
-            wait_for,
+            mqueue,
             client_addr,
+            processor,
+            address,
             futures: vec![Box::pin(recv_fut), Box::pin(write_fut)],
         }
     }
 
     async fn poll_handle_recv(
-        wait_for: WaitFor<async_channel::Sender<Fallback<T>>>,
+        mqueue: MQueue<async_channel::Sender<T>>,
         mut stream: ReadHalf<T>,
     ) -> crate::Result<State<T>> {
         loop {
@@ -145,7 +171,7 @@ where
                 return Ok(State::Error(err));
             }
 
-            let packet = unsafe { packet.unwrap_unchecked() }.try_message();
+            let packet = unsafe { packet.unwrap_unchecked() }.try_poto();
 
             if packet.is_err() {
                 log::warn!("The client sent an invalid packet");
@@ -160,7 +186,7 @@ where
                 }
                 Poto::MapError(id, err) => {
                     log::warn!("client mapping failed, msg = {}", err);
-                    wait_for.remove(id).await.map(|r| r.close());
+                    mqueue.remove(id).await.map(|r| r.close());
                 }
                 message => {
                     log::warn!("ignore client message {:?}", message);
@@ -173,7 +199,7 @@ where
         mut stream: WriteHalf<T>,
         timeout: Duration,
     ) -> crate::Result<State<T>> {
-        let ping = Poto::Ping.to_packet_vec();
+        let ping = Poto::Ping.bytes();
 
         loop {
             log::trace!("send heartbeat packet to client");
@@ -187,110 +213,97 @@ where
         }
     }
 
-    fn async_handle(self: &mut Pin<&mut Self>, stream: T) -> BoxedFuture<State<T>> {
+    fn async_penetrate_handle(self: &mut Pin<&mut Self>, pen: Pen<T>) -> BoxedFuture<State<T>> {
         let mut writer = self.writer.clone();
-        let provider = self.unpacker.clone();
+        let provider = self.converter.clone();
         let timeout = self.config.max_wait_time;
-        let wait_for = self.wait_for.clone();
+        let mqueue = self.mqueue.clone();
         let fallback_strict_mode = self.config.fallback_strict_mode;
-        let is_mixed = self.config.is_mixed;
-        let client_addr = self.client_addr.clone();
+        let processor = self.processor.clone();
 
         let fut = async move {
-            let mut fallback = Fallback::new(stream, fallback_strict_mode);
-            let _ = fallback.mark().await?;
-
-            let peer = provider.call(fallback).await?;
-
-            match peer {
-                Peer::Visitor(visit, socket) => {
+            match pen {
+                Pen::Visit(visitor) => {
+                    let mut fallback = Fallback::new(visitor, fallback_strict_mode);
+                    let visit_addr = fallback.peer_addr()?;
+                    let _ = fallback.mark().await?;
+                    let peer = provider.call(fallback).await?;
                     let (accept_tx, accept_ax) = async_channel::bounded(1);
-                    let id = wait_for.push(accept_tx).await;
-                    let target_addr = socket.clone();
+                    let id = mqueue.push(accept_tx).await;
 
-                    let future = {
-                        let client_addr = client_addr.clone();
-                        async move {
-                            // 通知客户端建立连接
-                            let socket = socket.if_stream_mixed(is_mixed);
-
-                            log::info!("connect from {} to {}", client_addr, socket);
-
-                            let message = Poto::Map(id, socket.clone()).to_packet_vec();
-
-                            if let Err(e) = writer.send_packet(&message).await {
-                                log::warn!(
-                                    "notify the {} that the connection establishment failed",
-                                    client_addr
-                                );
-                                return Ok(State::Error(e));
-                            }
-
-                            log::trace!("client notified, waiting for mapping");
-
-                            match visit {
-                                Visitor::Forward(stream) => {
-                                    let mut s1 = stream;
-                                    let mut s2 = accept_ax.recv().await?;
-
-                                    s1.backward().await?;
-
-                                    if let Some(data) = s1.back_data() {
-                                        log::trace!("copy data to peer {}bytes", data.len());
-
-                                        if let Err(e) = s2.write_all(&data).await {
-                                            log::warn!(
-                                                "mapping failed, the client has closed the connection"
-                                            );
-                                            return Err(e.into());
-                                        }
-                                    }
-
-                                    Ok::<_, crate::Error>(State::Forward(
-                                        s1.into_inner(),
-                                        s2.into_inner(),
-                                    ))
-                                }
-                                Visitor::Consume(provider) => {
-                                    Ok(State::Consume(provider.call(accept_ax.recv().await?)))
-                                }
-                            }
-                        }
+                    let (visitor, dst) = match peer {
+                        Peer::Finished(visitor) => return Ok(State::Close(visitor.into_inner())),
+                        Peer::Unknown(visitor) => return Ok(State::Close(visitor.into_inner())),
+                        Peer::Route(visitor, dst) => (visitor, dst),
                     };
 
-                    match future.await {
-                        Ok(s) => {
-                            log::debug!("mapping was established successfully");
-                            Ok(s)
-                        }
-                        Err(e) => {
-                            log::warn!(
-                                "failed connect from {} to {}, err: {}",
-                                client_addr,
-                                target_addr,
-                                e
+                    let route = Poto::Map(id, dst).bytes();
+
+                    throw_client_error!(writer.send_packet(&route).await);
+
+                    log::trace!("client notified, waiting for mapping");
+
+                    match visitor {
+                        Visitor::Route(src) => {
+                            let mut src = src;
+                            let mut dst = accept_ax.recv().await?;
+
+                            src.backward().await?;
+
+                            if let Some(data) = src.back_data() {
+                                log::trace!("copy data to peer {}bytes", data.len());
+
+                                if let Err(e) = dst.write_all(&data).await {
+                                    log::warn!(
+                                        "mapping failed, the client has closed the connection"
+                                    );
+                                    return Err(e.into());
+                                }
+                            }
+
+                            processor.observer().on_pen_route(
+                                &writer.peer_addr()?,
+                                &visit_addr,
+                                &dst.peer_addr()?,
                             );
-                            wait_for.remove(id).await.map(|r| r.close());
-                            Err(e)
+
+                            Ok::<_, crate::Error>(State::Route(src.into_inner(), dst))
+                        }
+                        Visitor::Provider(provider) => {
+                            let fallback =
+                                Fallback::new(accept_ax.recv().await?, fallback_strict_mode);
+
+                            processor.observer().on_pen_route(
+                                &writer.peer_addr()?,
+                                &visit_addr,
+                                &fallback.peer_addr()?,
+                            );
+
+                            let dst = provider.call(fallback);
+
+                            Ok(State::Provider(dst))
                         }
                     }
                 }
-                Peer::Mapper(id, stream) => match wait_for.remove(id).await {
-                    None => {
-                        log::warn!(
-                            "the client established a mapping request, but the peer was closed"
-                        );
-                        Ok(State::Close(stream.into_inner()))
+                Pen::Client(client) => {
+                    let mut client = processor.decorate(client).await?;
+
+                    let poto = client.recv_packet().await?.try_poto()?;
+
+                    match poto {
+                        Poto::Map(id, _) => {
+                            if let Some(tx) = mqueue.remove(id).await {
+                                if let Err(_) = tx.send(client).await {
+                                    log::warn!("the client established a mapping request, but the peer was closed");
+                                }
+                            }
+                        }
+                        poto => {
+                            log::warn!("bad message {}", poto)
+                        }
                     }
-                    Some(sender) => {
-                        sender.send(stream).await?;
-                        Ok(State::Finish)
-                    }
-                },
-                Peer::Finished(s) => Ok(State::Close(s.into_inner())),
-                Peer::Unknown(s) => {
-                    log::warn!("illegal connection {}", s.local_addr().display());
-                    Ok(State::Close(s.into_inner()))
+
+                    Ok(State::Finish)
                 }
             }
         };
@@ -299,17 +312,17 @@ where
 
         Box::pin(async move {
             match wait_fut.await {
-                Ok(ok) => ok,
+                Ok(ready) => ready,
                 Err(e) => Err(e.into()),
             }
         })
     }
 }
 
-impl<T, A> NetSocket for Penetrate<T, A>
+impl<P, T, A, O> NetSocket for Penetrate<P, T, A, O>
 where
     T: Stream,
-    A: Accepter<Stream = T>,
+    A: Accepter<Stream = Pen<T>>,
 {
     fn peer_addr(&self) -> crate::Result<Address> {
         self.accepter.peer_addr()
@@ -320,12 +333,14 @@ where
     }
 }
 
-impl<T, A> Accepter for Penetrate<T, A>
+impl<P, T, A, O> Accepter for Penetrate<P, T, A, O>
 where
     T: Stream + Send + Sync + 'static,
-    A: Accepter<Stream = T> + Unpin + Send + 'static,
+    A: Accepter<Stream = Pen<T>> + Unpin + Send + 'static,
+    O: PenetrateObserver + Sync + Send + 'static,
+    P: Send + Sync + 'static,
 {
-    type Stream = PenetrateOutcome<T>;
+    type Stream = Outcome<T>;
 
     fn poll_accept(
         mut self: std::pin::Pin<&mut Self>,
@@ -340,8 +355,8 @@ where
         while poll_accepter {
             poll_accepter = match Pin::new(&mut self.accepter).poll_accept(cx)? {
                 Poll::Pending => false,
-                Poll::Ready(stream) => {
-                    futures.push(self.async_handle(stream));
+                Poll::Ready(pen) => {
+                    futures.push(self.async_penetrate_handle(pen));
                     true
                 }
             };
@@ -351,15 +366,14 @@ where
                     Poll::Pending => {
                         self.futures.push(future);
                     }
-                    Poll::Ready(Ok(State::Forward(s1, s2))) => {
+                    Poll::Ready(Ok(State::Route(s1, s2))) => {
                         self.futures.extend(futures);
-                        return Poll::Ready(Ok::<_, crate::Error>(PenetrateOutcome::Map(s1, s2)));
+
+                        return Poll::Ready(Ok::<_, crate::Error>(Outcome::Route(s1, s2)));
                     }
-                    Poll::Ready(Ok(State::Consume(fut))) => {
+                    Poll::Ready(Ok(State::Provider(fut))) => {
                         self.futures.extend(futures);
-                        return Poll::Ready(Ok::<_, crate::Error>(PenetrateOutcome::Customize(
-                            fut,
-                        )));
+                        return Poll::Ready(Ok::<_, crate::Error>(Outcome::Future(fut)));
                     }
                     Poll::Ready(Ok(State::Stop)) => {
                         log::warn!("client aborted {}", self.client_addr);
@@ -367,6 +381,7 @@ where
                     }
                     Poll::Ready(Ok(State::Error(e))) => {
                         log::warn!("client error {}, err: {}", self.client_addr, e);
+                        self.processor.observer().on_pen_error(&self.address, &e);
                         return Poll::Ready(Err(e));
                     }
                     Poll::Ready(Ok(State::Close(mut s))) => {
@@ -386,76 +401,98 @@ where
     }
 }
 
-impl<SP, A, S> Provider<Process<SP, S>> for PenetrateProvider<S>
+impl<P, A, S, O> Provider<(S, Processor<P, S, O>)> for PenetrateProvider<S>
 where
-    SP: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
     A: Accepter<Stream = S> + Send + Unpin + 'static,
     S: Stream + Sync + Send + 'static,
+    P: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
+    O: PenetrateObserver + Send + Sync + 'static,
 {
-    type Output = BoxedFuture<PenetrateGenerator<S, A>>;
+    type Output = BoxedFuture<PenetrateGenerator<P, S, A, O>>;
 
-    fn call(&self, (provider, mut client, _): Process<SP, S>) -> Self::Output {
+    fn call(&self, (mut client, processor): (S, Processor<P, S, O>)) -> Self::Output {
         let peer_provider = self.converter.clone();
         let config = self.config.clone();
-
         Box::pin(async move {
-            let message = client.recv_packet().await?.try_message()?;
-
-            let (socket, accepter) = match message {
-                Poto::Bind(Bind::Bind(addr)) => {
-                    log::debug!("try to bind the server to {}", addr);
-                    (addr.clone(), provider.call(addr).await)
+            let poto = client.recv_packet().await?.try_poto()?;
+            let penetrate = match poto {
+                Poto::Bind(Bind::Map(client_addr, visit_addr)) => {
+                    log::debug!("try to bind the server to {}", visit_addr);
+                    let visit_fut = processor.bind(visit_addr);
+                    let client_fut = processor.bind(client_addr);
+                    join::join_output(client_fut, visit_fut).await
                 }
                 message => {
                     log::debug!("received an invalid message {}", message);
-                    return Err(Kind::Unexpected(format!("{}", message)).into());
+
+                    let err: Error = Kind::Unexpected(format!("{}", message)).into();
+
+                    processor
+                        .observer()
+                        .on_pen_error(&client.peer_addr()?, &err);
+
+                    return Err(err);
                 }
             };
 
-            match accepter {
+            match penetrate {
                 Err(e) => {
-                    let message = Poto::Bind(Bind::Failed(socket, e.to_string())).to_packet_vec();
+                    let message = Poto::Bind(Bind::Failed(e.to_string())).bytes();
 
                     log::warn!("failed to create listener err={}", e);
 
                     if let Err(e) = client.send_packet(&message).await {
                         log::warn!("failed to send failure message to client err={}", e);
+                        processor.observer().on_pen_error(&client.peer_addr()?, &e);
                     }
 
-                    return Err(e);
+                    Err(e)
                 }
-                Ok(accepter) => {
-                    let message = Poto::Bind(Bind::Bind(socket.clone())).to_packet_vec();
-                    if let Err(e) = client.send_packet(&message).await {
-                        drop(accepter);
+                Ok((aclient, avisit)) => {
+                    let visit_addr = avisit.local_addr()?;
+                    let client_addr = aclient.local_addr()?;
+
+                    let poto = Poto::Bind(Bind::Success(client_addr, visit_addr));
+
+                    client.send_packet(&poto.bytes()).await.map_err(|e| {
                         log::warn!("failed to send message to client err={}", e);
-                        Err(e)
-                    } else {
-                        log::info!(
-                            "start port mapping ! client is {} and the server is {}",
-                            client.peer_addr()?,
-                            accepter.local_addr()?
-                        );
+                        e
+                    })?;
 
-                        log::info!("please visit {} for port mapping", accepter.local_addr()?);
+                    processor.observer().on_pen_start(
+                        &client.peer_addr()?,
+                        &avisit.local_addr()?,
+                        &aclient.local_addr()?,
+                    );
 
-                        Ok(PenetrateGenerator(Penetrate::new(
-                            config,
-                            peer_provider,
-                            client,
-                            accepter,
-                        )))
-                    }
+                    log::info!(
+                        "client is {} and the server is {}",
+                        client.peer_addr()?,
+                        aclient.local_addr()?
+                    );
+
+                    log::info!("please visit {} for port mapping", avisit.local_addr()?);
+
+                    Ok(PenetrateGenerator(Penetrate::new(
+                        config,
+                        peer_provider,
+                        processor,
+                        client.peer_addr()?,
+                        client,
+                        PenetrateAccepter::new(avisit, aclient),
+                    )))
                 }
             }
         })
     }
 }
 
-impl<T, A> Generator for PenetrateGenerator<T, A>
+impl<P, T, A, O> Generator for PenetrateGenerator<P, T, A, O>
 where
     A: Accepter<Stream = T> + Send + Unpin + 'static,
     T: Stream + Send + Sync + 'static,
+    O: PenetrateObserver + Sync + Send + 'static,
+    P: Send + Sync + 'static,
 {
     type Output = Option<BoxedFuture<()>>;
 
@@ -464,11 +501,11 @@ where
         cx: &mut std::task::Context,
     ) -> Poll<crate::Result<Self::Output>> {
         match ready!(Pin::new(&mut self.0).poll_accept(cx)?) {
-            PenetrateOutcome::Customize(fut) => {
-                log::debug!("custom mode");
+            Outcome::Future(fut) => {
+                log::debug!("start a future");
                 Poll::Ready(Ok(Some(fut)))
             }
-            PenetrateOutcome::Map(s1, s2) => Poll::Ready(Ok(Some(Box::pin(async move {
+            Outcome::Route(s1, s2) => Poll::Ready(Ok(Some(Box::pin(async move {
                 log::debug!("start forwarding");
                 if let Err(e) = io::forward(s1, s2).await {
                     log::warn!("forward error {}", e);

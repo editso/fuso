@@ -4,6 +4,19 @@ use crate::{
     server::ServerBuilder, Accepter, AccepterWrapper, Address, NetSocket, Provider, Socket,
 };
 
+macro_rules! mix {
+    ($fut: expr, $futures: expr) => {
+        match $fut.await {
+            Ok(a1) => $futures.push(AccepterWrapper::wrap(a1)),
+            Err(e) => {
+                if !e.is_not_support() {
+                    return Err(e);
+                }
+            }
+        }
+    };
+}
+
 type BoxedFuture<T> = Pin<Box<dyn Future<Output = crate::Result<T>> + Send + 'static>>;
 
 #[derive(Clone)]
@@ -26,37 +39,43 @@ where
     type Output = BoxedFuture<MixAccepter<S>>;
 
     fn call(&self, socket: Socket) -> Self::Output {
-        let socket = socket.if_stream_mixed(true);
-
         let f1 = self.left.call(socket.clone());
         let f2 = self.right.call(socket);
 
         Box::pin(async move {
-            Ok(MixAccepter(vec![
-                AccepterWrapper::wrap(f1.await?),
-                AccepterWrapper::wrap(f2.await?),
-            ]))
+            let mut futures = Vec::new();
+
+            mix!(f1, futures);
+            mix!(f2, futures);
+
+            Ok(MixAccepter(futures))
         })
     }
 }
 
 impl<S> NetSocket for MixAccepter<S> {
     fn local_addr(&self) -> crate::Result<Address> {
-        let mut many = Vec::new();
+        let mut addrs = Vec::new();
         for accepter in self.0.iter() {
-            many.push(accepter.local_addr()?);
+            match accepter.local_addr()? {
+                Address::One(socket) => addrs.push(socket),
+                Address::Many(sockets) => addrs.extend(sockets),
+            }
         }
 
-        Ok(Address::Many(many))
+        Ok(Address::Many(addrs))
     }
 
     fn peer_addr(&self) -> crate::Result<Address> {
-        let mut many = Vec::new();
+        let mut addrs = Vec::new();
         for accepter in self.0.iter() {
-            many.push(accepter.peer_addr()?);
+            match accepter.peer_addr()? {
+                Address::One(socket) => addrs.push(socket),
+                Address::Many(sockets) => addrs.extend(sockets),
+            }
         }
 
-        Ok(Address::Many(many))
+        Ok(Address::Many(addrs))
     }
 }
 
@@ -81,22 +100,20 @@ where
     }
 }
 
-impl<E, SP, S, A1> ServerBuilder<E, SP, S>
+impl<E, P, A, S, O> ServerBuilder<E, P, S, O>
 where
-    SP: Provider<Socket, Output = BoxedFuture<A1>> + Send + Sync + 'static,
-    A1: Accepter<Stream = S> + Unpin + Send + 'static,
+    P: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
+    A: Accepter<Stream = S> + Unpin + Send + 'static,
 {
-    pub fn add_accepter<SF2, A2>(
-        self,
-        provider: SF2,
-    ) -> ServerBuilder<E, MixListener<SP, SF2, S>, S>
+    pub fn add_accepter<P1, A1>(self, provider: P1) -> ServerBuilder<E, MixListener<P, P1, S>, S, O>
     where
-        SF2: Provider<Socket, Output = BoxedFuture<A2>> + Send + Sync + 'static,
-        A2: Accepter<Stream = S> + Unpin + Send + 'static,
+        P1: Provider<Socket, Output = BoxedFuture<A1>> + Send + Sync + 'static,
+        A1: Accepter<Stream = S> + Unpin + Send + 'static,
     {
         ServerBuilder {
             executor: self.executor,
             handshake: self.handshake,
+            observer: self.observer,
             is_mixed: true,
             server_provider: Arc::new(MixListener {
                 left: self.server_provider,

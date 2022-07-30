@@ -72,6 +72,12 @@ pub enum AesErr {
 pub enum EncryptionErr {
     Aes(AesErr),
     Rsa(rsa::errors::Error),
+    RsaPkcs7(rsa::pkcs1::Error),
+}
+
+#[derive(Debug)]
+pub enum MixErr {
+    Unsupported(Socket),
 }
 
 #[derive(Debug)]
@@ -100,6 +106,8 @@ pub enum Kind {
     Compress(CompressErr),
     Socket(SocketErr),
     Encryption(EncryptionErr),
+    Mix(MixErr),
+    Unsupported(Socket),
 }
 
 impl Display for SyncErr {
@@ -186,6 +194,12 @@ impl From<cbc::cipher::block_padding::UnpadError> for Error {
     }
 }
 
+impl From<rsa::pkcs1::Error> for Error {
+    fn from(e: rsa::pkcs1::Error) -> Self {
+        Kind::Encryption(EncryptionErr::RsaPkcs7(e)).into()
+    }
+}
+
 impl Display for SocketErr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let fmt = match self {
@@ -222,6 +236,7 @@ impl Display for EncryptionErr {
             match self {
                 EncryptionErr::Aes(e) => format!("{}", e),
                 EncryptionErr::Rsa(e) => format!("{}", e),
+                EncryptionErr::RsaPkcs7(e) => format!("{}", e),
             }
         })
     }
@@ -253,6 +268,8 @@ impl Display for Error {
             }
             Kind::Socket(socket) => format!("{}", socket),
             Kind::Encryption(e) => format!("{}", e),
+            Kind::Mix(e) => format!("{:?}", e),
+            Kind::Unsupported(e) => format!("Unsupported {}", e)
         };
         write!(f, "{}", fmt)
     }
@@ -263,6 +280,12 @@ impl From<InvalidAddr> for Error {
         Self {
             kind: Kind::InvalidAddr(addr),
         }
+    }
+}
+
+impl From<MixErr> for Error {
+    fn from(e: MixErr) -> Self {
+        Kind::Mix(e).into()
     }
 }
 
@@ -405,6 +428,13 @@ impl Error {
     pub fn is_socks_error(&self) -> bool {
         match &self.kind {
             Kind::Socks(SocksErr::Head { ver: _, nmethod: _ }) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_not_support(&self) -> bool {
+        match &self.kind {
+            Kind::Unsupported(_) => true,
             _ => false,
         }
     }

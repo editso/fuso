@@ -74,7 +74,8 @@ async fn main() -> fuso::Result<()> {
 
     init_logger(args.log_level);
 
-    fuso::builder_server_with_tokio()
+    fuso::builder_server_with_tokio(())
+        // .using_handshake(PenetrateHandshake)
         .using_kcp(TokioUdpServerProvider, TokioExecutor)
         .using_penetrate()
         .max_wait_time(Duration::from_secs(args.maximum_wctime))

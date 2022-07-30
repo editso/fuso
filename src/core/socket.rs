@@ -1,7 +1,7 @@
 use std::{
     fmt::{Debug, Display},
     net::{IpAddr, SocketAddr},
-    ops::{Deref, DerefMut},
+    ops::{Add, Deref, DerefMut},
     str::FromStr,
 };
 
@@ -27,10 +27,10 @@ macro_rules! impl_socket {
     };
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Address {
-    Single(Socket),
-    Many(Vec<Address>),
+    One(Socket),
+    Many(Vec<Socket>),
 }
 
 #[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -104,7 +104,7 @@ impl From<u16> for Addr {
 impl Display for Address {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let fmt = match self {
-            Address::Single(addr) => format!("{}", addr),
+            Address::One(addr) => format!("{}", addr),
             Address::Many(address) => {
                 format!("{}", {
                     address
@@ -383,6 +383,65 @@ impl Socket {
     }
 }
 
+impl Address {
+    pub fn if_stream_mixed(self, mixed: bool) -> Self {
+        match self {
+            Address::One(socket) => Address::One(socket.if_stream_mixed(mixed)),
+            Address::Many(addrs) => Address::Many(
+                addrs
+                    .into_iter()
+                    .map(|addr| addr.if_stream_mixed(mixed))
+                    .collect(),
+            ),
+        }
+    }
+
+    pub fn with_kind(self, kind: SocketKind) -> Self {
+        match self {
+            Address::One(socket) => Address::One(socket.with_kind(kind)),
+            Address::Many(addrs) => {
+                Address::Many(addrs.into_iter().map(|addr| addr.with_kind(kind)).collect())
+            }
+        }
+    }
+
+    pub fn set_ip<IP: Into<IpAddr>>(&mut self, ip: IP) {
+        match self {
+            Address::One(socket) => socket.set_ip(ip),
+            Address::Many(addrs) => {
+                let ip: IpAddr = ip.into();
+                for addr in addrs {
+                    addr.set_ip(ip.clone())
+                }
+            }
+        }
+    }
+
+    pub fn from_set_host(&mut self, addr: &Addr) {
+        match self {
+            Address::One(socket) => socket.from_set_host(addr),
+            Address::Many(addrs) => {
+                for socket in addrs {
+                    socket.from_set_host(addr)
+                }
+            }
+        }
+    }
+
+    pub fn is_ip_unspecified(&self) -> bool {
+        match self {
+            Address::One(socket) => socket.is_ip_unspecified(),
+            Address::Many(sockets) => {
+                if let Some(socket) = sockets.first() {
+                    socket.is_ip_unspecified()
+                } else {
+                    false
+                }
+            }
+        }
+    }
+}
+
 impl Deref for Socket {
     type Target = Addr;
 
@@ -404,5 +463,27 @@ impl Default for Socket {
             kind: SocketKind::Tcp,
             is_mixed: false,
         }
+    }
+}
+
+impl Add for Address {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        let mut address = Vec::new();
+
+        match self {
+            Address::One(socket) => address.push(socket),
+            Address::Many(sockets) => address = sockets,
+        }
+
+        match rhs {
+            Address::One(socket) => address.push(socket),
+            Address::Many(sockets) => {
+                address.extend(sockets)
+            },
+        }
+
+        Self::Many(address)
     }
 }

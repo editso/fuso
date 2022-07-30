@@ -6,7 +6,7 @@ use std::{pin::Pin, task::Poll};
 use std::future::Future;
 
 use crate::ext::AsyncWriteExt;
-use crate::protocol::{make_packet, Poto, ToPacket};
+use crate::protocol::{make_packet, Poto, ToBytes};
 use crate::{
     ready, Addr, AsyncRead, AsyncWrite, Kind, NetSocket, ReadBuf, Socket, SocksErr, Stream,
     UdpReceiverExt, UdpSocket,
@@ -407,7 +407,7 @@ where
 
     let addr = parse_address(0x03, 0, atype, data)?.into_addr();
 
-    let message = Poto::Forward(addr.clone()).to_packet_vec();
+    let message = Poto::Forward(addr.clone()).bytes();
 
     s1.write_all(&message).await?;
 

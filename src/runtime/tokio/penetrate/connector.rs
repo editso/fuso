@@ -11,7 +11,7 @@ use crate::{
     kcp::KcpConnector,
     penetrate::SocksUdpForwardConverter,
     udp::{Datagram, VirtualUdpSocket},
-    Addr, Address, FusoStream, InnerAddr, InvalidAddr, NetSocket, Provider, ProviderWrapper,
+    Addr, Address, FusoStream, InnerAddr, InvalidAddr, NetSocket, Provider, WrappedProvider,
     Socket, SocketErr, SocketKind, ToBoxStream, TokioExecutor,
 };
 
@@ -88,9 +88,9 @@ impl Provider<Socket> for TokioPenetrateConnector {
                         .into_boxed_stream(),
                 )),
                 SocketKind::Ufd => {
-                    let provider = ProviderWrapper::wrap(UdpForwardClientProvider(udp));
+                    let provider = WrappedProvider::wrap(UdpForwardClientProvider(udp));
 
-                    Ok(Route::Provider(ProviderWrapper::wrap(
+                    Ok(Route::Provider(WrappedProvider::wrap(
                         SocksUdpForwardConverter(provider),
                     )))
                 }
@@ -117,7 +117,7 @@ impl Provider<Addr> for UdpForwardClientProvider {
 
             let udp = udp.connect(addr).await?;
             match udp.local_addr()? {
-                Address::Single(socket) => match socket.into_addr().into_inner() {
+                Address::One(socket) => match socket.into_addr().into_inner() {
                     InnerAddr::Socket(addr) => return Ok((addr, udp)),
                     _ => {}
                 },

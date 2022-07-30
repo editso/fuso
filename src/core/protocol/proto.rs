@@ -3,7 +3,7 @@ use std::fmt::Display;
 use bytes::{BufMut, BytesMut};
 use serde::{Deserialize, Serialize};
 
-use crate::{Addr, Socket};
+use crate::{Addr, Socket, Address};
 
 pub const MAGIC: u32 = 0xFC;
 
@@ -22,8 +22,9 @@ pub enum Connect {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Bind {
-    Bind(Socket),
-    Failed(Socket, String),
+    Map(Socket, Socket),
+    Success(Address, Address),
+    Failed(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -53,23 +54,23 @@ impl Packet {
     }
 }
 
-pub trait ToPacket {
-    fn to_packet_vec(self) -> Vec<u8>;
+pub trait ToBytes {
+    fn bytes(self) -> Vec<u8>;
 }
 
 pub trait TryToPoto {
-    fn try_message(self) -> crate::Result<Poto>;
+    fn try_poto(self) -> crate::Result<Poto>;
 }
 
-impl ToPacket for Poto {
-    fn to_packet_vec(self) -> Vec<u8> {
+impl ToBytes for Poto {
+    fn bytes(self) -> Vec<u8> {
         let data = unsafe { bincode::serialize(&self).unwrap_unchecked() };
         super::make_packet(data).encode()
     }
 }
 
 impl TryToPoto for Packet {
-    fn try_message(self) -> crate::Result<Poto> {
+    fn try_poto(self) -> crate::Result<Poto> {
         bincode::deserialize(&self.payload).map_err(Into::into)
     }
 }

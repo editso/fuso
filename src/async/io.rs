@@ -2,7 +2,7 @@ use std::{future::Future, ops::Deref, pin::Pin, sync::Arc, task::Poll};
 
 use crate::{
     ext::{AsyncReadExt, AsyncWriteExt},
-    AsyncRead, AsyncWrite,
+    AsyncRead, AsyncWrite, NetSocket,
 };
 
 type BoxedFuture = Pin<Box<dyn Future<Output = crate::Result<()>> + Send + 'static>>;
@@ -25,6 +25,44 @@ pub struct Inner<S>(std::sync::Mutex<S>);
 pub struct ReadHalf<R>(Arc<Inner<R>>);
 
 pub struct WriteHalf<W>(Arc<Inner<W>>);
+
+impl<S> NetSocket for Inner<S>
+where
+    S: NetSocket,
+{
+    fn peer_addr(&self) -> crate::Result<crate::Address> {
+        self.0.lock()?.peer_addr()
+    }
+
+    fn local_addr(&self) -> crate::Result<crate::Address> {
+        self.0.lock()?.local_addr()
+    }
+}
+
+impl<R> NetSocket for ReadHalf<R>
+where
+    R: NetSocket,
+{
+    fn peer_addr(&self) -> crate::Result<crate::Address> {
+        self.0.peer_addr()
+    }
+    fn local_addr(&self) -> crate::Result<crate::Address> {
+        self.0.local_addr()
+    }
+}
+
+impl<W> NetSocket for WriteHalf<W>
+where
+    W: NetSocket,
+{
+    fn peer_addr(&self) -> crate::Result<crate::Address> {
+        self.0.peer_addr()
+    }
+
+    fn local_addr(&self) -> crate::Result<crate::Address> {
+        self.0.local_addr()
+    }
+}
 
 impl Future for Forward {
     type Output = crate::Result<()>;

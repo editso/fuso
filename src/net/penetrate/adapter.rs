@@ -1,13 +1,13 @@
 use std::{pin::Pin, sync::Arc};
 
 use crate::{
-    guard::Fallback, server::Server, Accepter, Executor, Fuso, Provider, ProviderWrapper, Socket,
+    guard::Fallback, server::Server, Accepter, Executor, Fuso, Provider, WrappedProvider, Socket,
     Stream,
 };
 
 use super::{
     server::{Peer, PenetrateProvider},
-    PenetrateServerBuilder,
+    PenetrateServerBuilder, PenetrateObserver,
 };
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
@@ -19,13 +19,13 @@ pub enum Adapter<O> {
 
 pub struct PenetrateAdapter<A>(Arc<Vec<A>>);
 
-pub struct PenetrateAdapterBuilder<E, SP, S> {
-    pub(crate) adapters: Vec<ProviderWrapper<Fallback<S>, Adapter<S>>>,
-    pub(crate) penetrate_builder: PenetrateServerBuilder<E, SP, S>,
+pub struct PenetrateAdapterBuilder<E, P, S, O> {
+    pub(crate) adapters: Vec<WrappedProvider<Fallback<S>, Adapter<S>>>,
+    pub(crate) penetrate_builder: PenetrateServerBuilder<E, P, S, O>,
 }
 
-impl<E, SP, S> PenetrateServerBuilder<E, SP, S> {
-    pub fn using_adapter(self) -> PenetrateAdapterBuilder<E, SP, S> {
+impl<E, P, S, O> PenetrateServerBuilder<E, P, S, O> {
+    pub fn using_adapter(self) -> PenetrateAdapterBuilder<E, P, S, O> {
         PenetrateAdapterBuilder {
             adapters: Default::default(),
             penetrate_builder: self,
@@ -33,14 +33,15 @@ impl<E, SP, S> PenetrateServerBuilder<E, SP, S> {
     }
 }
 
-impl<E, A, SP, S> PenetrateAdapterBuilder<E, SP, S>
+impl<E, A, P, S, O> PenetrateAdapterBuilder<E, P, S, O>
 where
     E: Executor + 'static,
-    SP: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
     A: Accepter<Stream = S> + Unpin + Send + 'static,
     S: Stream + Send + Sync + 'static,
+    P: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
+    O: PenetrateObserver + Send + Sync + 'static
 {
-    pub fn build(self) -> Fuso<Server<E, PenetrateProvider<S>, SP, S>> {
+    pub fn build(self) -> Fuso<Server<E, PenetrateProvider<S>, P, S, O>> {
         self.penetrate_builder
             .disable_fallback_strict_mode()
             .build(PenetrateAdapter(Arc::new(self.adapters)))

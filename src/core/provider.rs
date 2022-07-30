@@ -1,20 +1,20 @@
 use std::{pin::Pin, sync::Arc};
 
-use crate::Socket;
+use crate::{Address, Socket};
 
 type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>> + Send + 'static>>;
 
-pub struct ProviderWrapper<A, O> {
+pub struct WrappedProvider<A, O> {
     provider: Arc<Box<dyn Provider<A, Output = BoxedFuture<O>> + Send + Sync + 'static>>,
 }
 
-pub struct ProviderTransfer<A> {
-    provider: Arc<Box<dyn Provider<A, Output = BoxedFuture<A>> + Send + Sync + 'static>>,
+pub struct DecorateProvider<T> {
+    provider: Arc<Box<dyn Provider<T, Output = BoxedFuture<T>> + Send + Sync + 'static>>,
 }
 
 pub struct ProviderChain<A> {
-    self_provider: ProviderTransfer<A>,
-    other_provider: ProviderTransfer<A>,
+    self_provider: DecorateProvider<A>,
+    other_provider: DecorateProvider<A>,
 }
 
 pub trait Provider<C> {
@@ -24,37 +24,37 @@ pub trait Provider<C> {
 }
 
 pub struct ClientProvider<C> {
-    pub server_socket: Socket,
+    pub server_address: Socket,
     pub connect_provider: Arc<C>,
 }
 
 impl<C, O> ClientProvider<C>
 where
-    C: Provider<Socket, Output = BoxedFuture<O>>,
+    C: Provider<Address, Output = BoxedFuture<O>>,
     O: Send + 'static,
 {
     pub(crate) fn set_server_socket(mut self, socket: Socket) -> Self {
-        self.server_socket = socket;
+        self.server_address = socket;
         self
     }
 
     pub(crate) fn default_socket(&self) -> &Socket {
-        &self.server_socket
+        &self.server_address
     }
 
-    pub async fn connect<A: Into<Socket>>(&self, socket: A) -> crate::Result<O> {
+    pub async fn connect<A: Into<Address>>(&self, socket: A) -> crate::Result<O> {
         self.connect_provider.call(socket.into()).await
     }
 }
 
-impl<C, O> Provider<Socket> for ClientProvider<C>
+impl<C, O> Provider<Address> for ClientProvider<C>
 where
-    C: Provider<Socket, Output = BoxedFuture<O>>,
+    C: Provider<Address, Output = BoxedFuture<O>>,
     O: Send + 'static,
 {
     type Output = C::Output;
 
-    fn call(&self, arg: Socket) -> Self::Output {
+    fn call(&self, arg: Address) -> Self::Output {
         self.connect_provider.call(arg)
     }
 }
@@ -62,13 +62,13 @@ where
 impl<C> Clone for ClientProvider<C> {
     fn clone(&self) -> Self {
         Self {
-            server_socket: self.server_socket.clone(),
+            server_address: self.server_address.clone(),
             connect_provider: self.connect_provider.clone(),
         }
     }
 }
 
-impl<A, O> ProviderWrapper<A, O> {
+impl<A, O> WrappedProvider<A, O> {
     pub fn wrap<F>(provider: F) -> Self
     where
         F: Provider<A, Output = BoxedFuture<O>> + Send + Sync + 'static,
@@ -79,7 +79,7 @@ impl<A, O> ProviderWrapper<A, O> {
     }
 }
 
-impl<A> ProviderTransfer<A> {
+impl<A> DecorateProvider<A> {
     pub fn wrap<F>(provider: F) -> Self
     where
         F: Provider<A, Output = BoxedFuture<A>> + Send + Sync + 'static,
@@ -97,13 +97,13 @@ impl<A> ProviderChain<A> {
         F2: Provider<A, Output = BoxedFuture<A>> + Send + Sync + 'static,
     {
         Self {
-            self_provider: ProviderTransfer::wrap(provider),
-            other_provider: ProviderTransfer::wrap(next),
+            self_provider: DecorateProvider::wrap(provider),
+            other_provider: DecorateProvider::wrap(next),
         }
     }
 }
 
-impl<A, O> Provider<A> for ProviderWrapper<A, O>
+impl<A, O> Provider<A> for WrappedProvider<A, O>
 where
     A: Send + 'static,
     O: Send + 'static,
@@ -115,7 +115,7 @@ where
     }
 }
 
-impl<A> Provider<A> for ProviderTransfer<A> {
+impl<A> Provider<A> for DecorateProvider<A> {
     type Output = BoxedFuture<A>;
 
     fn call(&self, cfg: A) -> Self::Output {
@@ -139,7 +139,7 @@ where
     }
 }
 
-impl<A, O> Clone for ProviderWrapper<A, O> {
+impl<A, O> Clone for WrappedProvider<A, O> {
     #[inline]
     fn clone(&self) -> Self {
         Self {
@@ -148,7 +148,7 @@ impl<A, O> Clone for ProviderWrapper<A, O> {
     }
 }
 
-impl<A> Clone for ProviderTransfer<A> {
+impl<A> Clone for DecorateProvider<A> {
     fn clone(&self) -> Self {
         Self {
             provider: self.provider.clone(),

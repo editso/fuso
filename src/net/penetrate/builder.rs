@@ -4,24 +4,24 @@ use crate::{
     client::{Client, ClientBuilder, Route},
     guard::Fallback,
     server::{Server, ServerBuilder},
-    Accepter, Executor, Fuso, Provider, ProviderWrapper, Socket, Stream,
+    Accepter, Executor, Fuso, Provider, WrappedProvider, Socket, Stream, Address,
 };
 
 use super::{
     client::PenetrateClientProvider,
-    server::{Config, Peer, PenetrateProvider},
+    server::{Config, Peer, PenetrateProvider}, PenetrateObserver,
 };
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
 
-pub struct PenetrateServerBuilder<E, SP, S> {
+pub struct PenetrateServerBuilder<E, P, S, O> {
     is_mixed: bool,
     max_wait_time: Duration,
     heartbeat_timeout: Duration,
     read_timeout: Option<Duration>,
     write_timeout: Option<Duration>,
     fallback_strict_mode: bool,
-    server_builder: ServerBuilder<E, SP, S>,
+    server_builder: ServerBuilder<E, P, S, O>,
 }
 
 pub struct PenetrateClientBuilder<E, CF, S> {
@@ -40,8 +40,8 @@ pub struct PenetrateClientBuilder<E, CF, S> {
     client_builder: ClientBuilder<E, CF, S>,
 }
 
-impl<E, SP, S> ServerBuilder<E, SP, S> {
-    pub fn using_penetrate(self) -> PenetrateServerBuilder<E, SP, S> {
+impl<E, P, S, O> ServerBuilder<E, P, S, O> {
+    pub fn using_penetrate(self) -> PenetrateServerBuilder<E, P, S, O> {
         PenetrateServerBuilder {
             is_mixed: self.is_mixed,
             write_timeout: None,
@@ -54,12 +54,13 @@ impl<E, SP, S> ServerBuilder<E, SP, S> {
     }
 }
 
-impl<E, SP, A, S> PenetrateServerBuilder<E, SP, S>
+impl<E, P, A, S, O> PenetrateServerBuilder<E, P, S, O>
 where
     E: Executor + 'static,
     A: Accepter<Stream = S> + Unpin + Send + 'static,
     S: Stream + Send + Sync + 'static,
-    SP: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
+    P: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
+    O: PenetrateObserver + Send + Sync + 'static
 {
     pub fn read_timeout(mut self, time: Option<Duration>) -> Self {
         self.read_timeout = time;
@@ -91,7 +92,7 @@ where
         self
     }
 
-    pub fn build<F>(self, converter: F) -> Fuso<Server<E, PenetrateProvider<S>, SP, S>>
+    pub fn build<F>(self, converter: F) -> Fuso<Server<E, PenetrateProvider<S>, P, S, O>>
     where
         F: Provider<Fallback<S>, Output = BoxedFuture<Peer<Fallback<S>>>> + Send + Sync + 'static,
     {
@@ -104,7 +105,7 @@ where
                 write_timeout: self.write_timeout,
                 fallback_strict_mode: self.fallback_strict_mode,
             },
-            converter: Arc::new(ProviderWrapper::wrap(converter)),
+            converter: Arc::new(WrappedProvider::wrap(converter)),
         })
     }
 }
@@ -130,7 +131,7 @@ impl<E, CF, S> ClientBuilder<E, CF, S> {
 impl<E, CF, S> PenetrateClientBuilder<E, CF, S>
 where
     E: Executor + 'static,
-    CF: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
+    CF: Provider<Address, Output = BoxedFuture<S>> + Send + Sync + 'static,
     S: Stream + Send + 'static,
 {
     pub fn reconnect_delay(mut self, delay: Duration) -> Self {
