@@ -43,6 +43,7 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 8. 多映射
 9. 不依赖`async_trait`库, 全手工实现Future
 10. 级联代理
+11. 自定义握手
 
 
 ### ✨Demo
