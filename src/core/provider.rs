@@ -30,7 +30,7 @@ pub struct ClientProvider<C> {
 
 impl<C, O> ClientProvider<C>
 where
-    C: Provider<Address, Output = BoxedFuture<O>>,
+    C: Provider<Socket, Output = BoxedFuture<O>>,
     O: Send + 'static,
 {
     pub(crate) fn set_server_socket(mut self, socket: Socket) -> Self {
@@ -42,19 +42,19 @@ where
         &self.server_address
     }
 
-    pub fn connect<A: Into<Address>>(&self, socket: A) -> BoxedFuture<O> {
+    pub fn connect<A: Into<Socket>>(&self, socket: A) -> BoxedFuture<O> {
         self.connect_provider.call(socket.into())
     }
 }
 
-impl<C, O> Provider<Address> for ClientProvider<C>
+impl<C, O> Provider<Socket> for ClientProvider<C>
 where
-    C: Provider<Address, Output = BoxedFuture<O>>,
+    C: Provider<Socket, Output = BoxedFuture<O>>,
     O: Send + 'static,
 {
     type Output = C::Output;
 
-    fn call(&self, arg: Address) -> Self::Output {
+    fn call(&self, arg: Socket) -> Self::Output {
         self.connect_provider.call(arg)
     }
 }

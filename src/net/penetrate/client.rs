@@ -53,13 +53,14 @@ pub struct PenetrateClientProvider<C> {
 }
 
 enum State {
+    Leave(Socket),
     Ready(BoxedFuture<()>),
     Map(u32, Socket),
     Error(crate::Error),
 }
 
 pub struct PenetrateClient<CF, C, S> {
-    socket: (Address, Socket),
+    forward: (Address, Socket),
     reader: ReadHalf<S>,
     writer: WriteHalf<S>,
     futures: Vec<BoxedFuture<State>>,
@@ -69,7 +70,7 @@ pub struct PenetrateClient<CF, C, S> {
 
 impl<CF, C, S> Provider<(ClientProvider<CF>, S)> for PenetrateClientProvider<C>
 where
-    CF: Provider<Address, Output = BoxedFuture<S>> + Send + Sync + 'static,
+    CF: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
     C: Provider<Socket, Output = BoxedFuture<Route<S>>> + Send + Sync + 'static,
     S: Stream + Send + 'static,
 {
@@ -145,9 +146,9 @@ where
 
 impl<CF, C, S> PenetrateClient<CF, C, S>
 where
+    CF: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
+    C: Provider<Socket, Output = BoxedFuture<Route<S>>> + Send + Sync + 'static,
     S: Stream + Send + 'static,
-    C: 'static,
-    CF: 'static,
 {
     pub fn new(
         socket: (Address, Socket),
@@ -161,7 +162,7 @@ where
         let fut2 = Box::pin(Self::guard_server_heartbeat(writer.clone()));
 
         Self {
-            socket,
+            forward: socket,
             client_provider,
             connector_provider,
             reader: reader.clone(),
@@ -207,12 +208,62 @@ where
             }
         }
     }
+
+    fn start_async_forward(
+        &self,
+        id: u32,
+        server_socket: Socket,
+        target_socket: Socket,
+    ) -> BoxedFuture<State> {
+        let s1_connector = self.client_provider.clone();
+        let s2_connector = self.connector_provider.clone();
+
+        let server_fut = async_connect!(self.writer, s1_connector, id, server_socket);
+        let client_fut = async_connect!(self.writer, s2_connector, id, target_socket);
+        let server_writer = self.writer.clone();
+
+        let future = async move {
+            let mut server_writer = server_writer;
+            let result = time::wait_for(
+                Duration::from_secs(5),
+                join::join_output(server_fut, client_fut),
+            )
+            .await;
+
+            let result = match result {
+                Err(e) => Err(e),
+                Ok(r) => r,
+            };
+
+            let (mut s1, s2) = result?;
+
+            let poto = Poto::Map(id, target_socket).bytes();
+
+            if let Err(e) = s1.send_packet(&poto).await {
+                let message = Poto::MapError(id, e.to_string()).bytes();
+                if let Err(e) = server_writer.send_packet(&message).await {
+                    Ok(State::Error(e))
+                } else {
+                    Err(e)
+                }
+            } else {
+                Ok(State::Ready({
+                    match s2 {
+                        Route::Forward(s2) => Box::pin(io::forward(s1, s2)),
+                        Route::Provider(s2) => s2.call(s1),
+                    }
+                }))
+            }
+        };
+
+        Box::pin(future)
+    }
 }
 
 impl<CF, C, S> Generator for PenetrateClient<CF, C, S>
 where
-    CF: Provider<Address, Output = BoxedFuture<S>> + Send + Sync + 'static,
-    C: Provider<Socket, Output = BoxedFuture<Route<S>>> + Unpin + Send + Sync + 'static,
+    CF: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
+    C: Provider<Socket, Output = BoxedFuture<Route<S>>> + Send + Sync + 'static,
     S: Stream + Send + 'static,
 {
     type Output = Option<BoxedFuture<()>>;
@@ -229,62 +280,33 @@ where
                     log::warn!("server stops talking");
                     return Poll::Ready(Err(e));
                 }
-                Poll::Ready(Ok(State::Map(id, socket))) => {
-                    log::debug!("{}", socket);
+                Poll::Ready(Ok(State::Leave(socket))) => {
+                    log::warn!("leave {}", socket);
+                }
+                Poll::Ready(Ok(State::Map(id, target_socket))) => {
+                    log::debug!("{}", target_socket);
 
-                    let (remote, local) = self.socket.clone();
+                    let (server, local) = self.forward.clone();
+                    let target_socket = target_socket.default_or(local);
+                    let server_writer = self.writer.clone();
 
-                    let s1_socket = remote
-                        .if_stream_mixed(socket.is_mixed())
-                        .with_kind(socket.kind());
-
-                    let s2_socket = socket.default_or(local);
-                    let s1_connector = self.client_provider.clone();
-                    let s2_connector = self.connector_provider.clone();
-                    let writer = self.writer.clone();
-
-                    let server_fut = async_connect!(writer, s1_connector, id, s1_socket);
-                    let client_fut = async_connect!(writer, s2_connector, id, s2_socket);
-
-                    let future = async move {
-                        let mut writer = writer;
-
-                        let r = match time::wait_for(
-                            Duration::from_secs(5),
-                            join::join_output(server_fut, client_fut),
-                        )
-                        .await
-                        {
-                            Err(e) => Err(e),
-                            Ok(r) => r,
-                        };
-
-                        let (mut s1, s2) = r?;
-
-                        let message = Poto::Map(id, s2_socket).bytes();
-
-                        if let Err(e) = s1.send_packet(&message).await {
-                            drop(s2);
-                            let message = Poto::MapError(id, e.to_string()).bytes();
-                            if let Err(e) = writer.send_packet(&message).await {
-                                return Ok(State::Error(e));
-                            } else {
-                                return Err(e);
-                            }
+                    let future = match server.select(&target_socket) {
+                        Ok(server_socket) => {
+                            self.start_async_forward(id, server_socket, target_socket)
                         }
-
-                        Ok(State::Ready({
-                            match s2 {
-                                Route::Forward(s2) => Box::pin(io::forward(s1, s2)),
-                                Route::Provider(s2) => s2.call(s1),
+                        Err(e) => Box::pin(async move {
+                            let mut server_writer = server_writer;
+                            let poto = Poto::MapError(id, e.to_string()).bytes();
+                            match server_writer.send_packet(&poto).await {
+                                Ok(()) => Ok(State::Leave(target_socket)),
+                                Err(e) => Ok(State::Error(e)),
                             }
-                        }))
+                        }),
                     };
 
-                    let fut1 = Box::pin(future);
                     let fut2 = Box::pin(Self::register_server_handle(self.reader.clone()));
 
-                    futures.push(fut1);
+                    futures.push(future);
                     futures.push(fut2);
                 }
                 Poll::Ready(Ok(State::Ready(fut))) => {

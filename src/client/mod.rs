@@ -7,7 +7,7 @@ pub use builder::*;
 use crate::{
     generator::{Generator, GeneratorEx},
     time, ClientProvider, Executor, Fuso, Provider, DecorateProvider, WrappedProvider, Serve,
-    Stream, Address,
+    Stream, Address, Socket,
 };
 
 pub type BoxedFuture<T> = Pin<Box<dyn Future<Output = crate::Result<T>> + Send + 'static>>;
@@ -18,7 +18,7 @@ pub enum Route<S> {
 }
 
 pub struct Client<E, H, CF, S> {
-    pub(crate) socket: Address,
+    pub(crate) socket: Socket,
     pub(crate) executor: Arc<E>,
     pub(crate) handler: Arc<H>,
     pub(crate) handshake: Option<DecorateProvider<S>>,
@@ -29,7 +29,7 @@ impl<E, H, CF, S, G> Client<E, H, CF, S>
 where
     E: Executor + 'static,
     H: Provider<(ClientProvider<CF>, S), Output = BoxedFuture<G>> + Send + Sync + 'static,
-    CF: Provider<Address, Output = BoxedFuture<S>> + Send + Sync + 'static,
+    CF: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
     S: Stream + Send + 'static,
     G: Generator<Output = Option<BoxedFuture<()>>> + Unpin + Send + 'static,
 {
@@ -94,7 +94,7 @@ impl<E, H, CF, S, G> Fuso<Client<E, H, CF, S>>
 where
     E: Executor + 'static,
     H: Provider<(ClientProvider<CF>, S), Output = BoxedFuture<G>> + Send + Sync + 'static,
-    CF: Provider<Address, Output = BoxedFuture<S>> + Send + Sync + 'static,
+    CF: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
     S: Stream + Send + 'static,
     G: Generator<Output = Option<BoxedFuture<()>>> + Unpin + Send + 'static,
 {

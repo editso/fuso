@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     generator::Generator, ClientProvider, Executor, Fuso, Provider, DecorateProvider, Socket,
-    Stream, Address,
+    Stream,
 };
 
 use super::{BoxedFuture, Client};
@@ -16,7 +16,7 @@ pub struct ClientBuilder<E, P, S> {
 impl<E, P, S> ClientBuilder<E, P, S>
 where
     E: Executor + 'static,
-    P: Provider<Address, Output = BoxedFuture<S>> + Send + Sync + 'static,
+    P: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
     S: Stream + Send + 'static,
 {
     pub fn build<A: Into<Socket>, H, G>(self, socket: A, handler: H) -> Fuso<Client<E, H, P, S>>
@@ -27,7 +27,7 @@ where
         let socket = socket.into();
 
         Fuso(Client {
-            socket: Address::One(socket.clone()),
+            socket: socket.clone(),
             handler: Arc::new(handler),
             executor: Arc::new(self.executor),
             handshake: self.handshake,

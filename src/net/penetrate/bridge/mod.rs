@@ -1,8 +1,8 @@
-use std::pin::Pin;
+use std::{net::IpAddr, pin::Pin};
 
 use crate::{
-    client::Client, generator::Generator, io, select::Select, Accepter, AccepterExt, Address,
-    ClientProvider, Executor, Fuso, Provider, Serve, Socket, Stream,
+    client::Client, generator::Generator, io, select::Select, Accepter, AccepterExt,
+    ClientProvider, Executor, Fuso, Kind, Provider, Serve, Socket, Stream,
 };
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
@@ -30,7 +30,7 @@ impl<E, H, P, S> Fuso<Client<E, H, P, S>> {
 impl<E, H, P, S, A, G, SP> Bridge<E, H, P, S, SP>
 where
     E: Executor + 'static,
-    P: Provider<Address, Output = BoxedFuture<S>> + Send + Sync + 'static,
+    P: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
     SP: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
     A: Accepter<Stream = S> + Send + Sync + Unpin + 'static,
     S: Stream + Send + Sync + 'static,
@@ -43,6 +43,13 @@ where
         let executor = self.client.executor.clone();
         let server_socket = self.client.socket.clone();
         let client_provider = self.client.client_provider.clone();
+
+        if bridge_socket.eq(&server_socket)
+            || (bridge_socket.is_ip_unspecified()
+                && server_socket.ip().eq(&Some(IpAddr::from([127, 0, 0, 1]))))
+        {
+            return Err(Kind::AddressLoop(bridge_socket).into());
+        }
 
         let bridge = async move {
             let mut accepter = accepter.call(bridge_socket).await?;

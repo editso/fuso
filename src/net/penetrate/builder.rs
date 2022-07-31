@@ -4,7 +4,7 @@ use crate::{
     client::{Client, ClientBuilder, Route},
     guard::Fallback,
     server::{Server, ServerBuilder},
-    Accepter, Executor, Fuso, Provider, WrappedProvider, Socket, Stream, Address,
+    Accepter, Executor, Fuso, Provider, WrappedProvider, Socket, Stream,
 };
 
 use super::{
@@ -131,7 +131,7 @@ impl<E, CF, S> ClientBuilder<E, CF, S> {
 impl<E, CF, S> PenetrateClientBuilder<E, CF, S>
 where
     E: Executor + 'static,
-    CF: Provider<Address, Output = BoxedFuture<S>> + Send + Sync + 'static,
+    CF: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
     S: Stream + Send + 'static,
 {
     pub fn reconnect_delay(mut self, delay: Duration) -> Self {

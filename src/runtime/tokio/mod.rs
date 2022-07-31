@@ -8,7 +8,7 @@ use tokio::net::TcpListener;
 
 use crate::{
     client::{self},
-    kcp::{self, KcpConnector},
+    kcp::{self},
     ready, server, Accepter, Address, ClientProvider, Executor, FusoStream, Kind, NetSocket,
     Observer, Provider, Socket, SocketErr, Task, ToBoxStream, UdpSocket,
 };
@@ -103,13 +103,13 @@ impl Accepter for TokioTcpListener {
     }
 }
 
-impl TokioConnector {
-    pub async fn connect(
-        kcp: Arc<Mutex<Option<kcp::KcpConnector<Arc<tokio::net::UdpSocket>, TokioExecutor>>>>,
-        address: Address,
-    ) -> crate::Result<FusoStream> {
-        Ok(match address {
-            Address::One(socket) => {
+impl Provider<Socket> for TokioConnector {
+    type Output = BoxedFuture<FusoStream>;
+
+    fn call(&self, socket: Socket) -> Self::Output {
+        let kcp = self.0.clone();
+        Box::pin(async move {
+            Ok({
                 if socket.is_tcp() {
                     tokio::net::TcpStream::connect(socket.as_string())
                         .await?
@@ -137,25 +137,8 @@ impl TokioConnector {
                 } else {
                     return Err(SocketErr::NotSupport(socket).into());
                 }
-            }
-            Address::Many(mut sockets) => {
-                let socket = sockets.first().unwrap();
-                log::debug!("connect to {}", socket);
-                tokio::net::TcpStream::connect(socket.as_string())
-                .await?
-                .into_boxed_stream()
-            }
+            })
         })
-    }
-}
-
-impl Provider<Address> for TokioConnector {
-    type Output = BoxedFuture<FusoStream>;
-
-    fn call(&self, address: Address) -> Self::Output {
-        let kcp = self.0.clone();
-
-        Box::pin(async move { Self::connect(kcp, address).await })
     }
 }
 

@@ -380,11 +380,15 @@ where
     C: NetSocket,
 {
     fn peer_addr(&self) -> crate::Result<crate::Address> {
-        self.core.peer_addr()
+        self.core
+            .peer_addr()
+            .map(|addr| addr.with_kind(crate::SocketKind::Kcp))
     }
 
     fn local_addr(&self) -> crate::Result<crate::Address> {
-        self.core.local_addr()
+        self.core
+            .local_addr()
+            .map(|addr| addr.with_kind(crate::SocketKind::Kcp))
     }
 }
 

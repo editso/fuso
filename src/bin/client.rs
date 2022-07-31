@@ -1,4 +1,35 @@
+use std::net::IpAddr;
+
+use clap::Parser;
 use fuso::Socket;
+
+#[derive(Parser)]
+struct FusoArgs {
+    /// 映射成功,实际访问端口
+    #[clap(
+        long,
+        visible_alias = "bind",
+        visible_short_alias = 'b',
+        default_value = "0"
+    )]
+    visit_port: u16,
+    /// 桥接监听地址
+    #[clap(long, default_value = "127.0.0.1")]
+    bridge_listen: IpAddr,
+    /// 桥接监听端口
+    #[clap(long)]
+    bridge_port: Option<u16>,
+    /// 服务端地址
+    server_host: String,
+    /// 服务端端口
+    server_port: u16,
+    #[clap(long, default_value = "127.0.0.1")]
+    /// 转发地址
+    forward_host: String,
+    /// 转发端口
+    #[clap(long, default_value = "80")]
+    forward_port: u16,
+}
 
 #[cfg(feature = "fuso-rt-tokio")]
 #[tokio::main]
@@ -6,6 +37,8 @@ async fn main() -> fuso::Result<()> {
     use std::time::Duration;
 
     use fuso::{TokioAccepter, TokioPenetrateConnector};
+
+    let args = FusoArgs::parse();
 
     env_logger::builder()
         .filter_module("fuso", log::LevelFilter::Debug)
@@ -29,6 +62,8 @@ async fn main() -> fuso::Result<()> {
         .run()
         .await
 }
+
+
 
 #[cfg(feature = "fuso-web")]
 #[tokio::main]

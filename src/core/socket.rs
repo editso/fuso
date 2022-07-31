@@ -5,9 +5,10 @@ use std::{
     str::FromStr,
 };
 
+use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
 
-use crate::{Error, InvalidAddr};
+use crate::{Error, InvalidAddr, Kind};
 
 macro_rules! impl_socket {
     ($name: ident, $is: ident, $typ: ident) => {
@@ -466,6 +467,32 @@ impl Default for Socket {
     }
 }
 
+impl Address {
+    pub fn select(&self, socket: &Socket) -> crate::Result<Socket> {
+        match self {
+            Address::One(socket) => Ok(socket.clone()),
+            Address::Many(addrs) => addrs
+                .into_iter()
+                .filter(|addr| match socket.kind() {
+                    SocketKind::Kcp => addr.is_kcp(),
+                    SocketKind::Udp => addr.is_udp(),
+                    SocketKind::Tcp => addr.is_tcp(),
+                    SocketKind::Quic => addr.is_quic(),
+                    SocketKind::Ufd => {
+                        addr.is_kcp()
+                            || addr.is_ufd()
+                            || addr.is_udp()
+                            || addr.is_tcp()
+                            || addr.is_quic()
+                    }
+                })
+                .choose(&mut rand::thread_rng())
+                .map(Clone::clone)
+                .ok_or_else(|| Error::from(Kind::Improper(socket.clone()))),
+        }
+    }
+}
+
 impl Add for Address {
     type Output = Self;
 
@@ -479,9 +506,7 @@ impl Add for Address {
 
         match rhs {
             Address::One(socket) => address.push(socket),
-            Address::Many(sockets) => {
-                address.extend(sockets)
-            },
+            Address::Many(sockets) => address.extend(sockets),
         }
 
         Self::Many(address)

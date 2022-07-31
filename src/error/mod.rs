@@ -108,6 +108,8 @@ pub enum Kind {
     Encryption(EncryptionErr),
     Mix(MixErr),
     Unsupported(Socket),
+    AddressLoop(Socket),
+    Improper(Socket)
 }
 
 impl Display for SyncErr {
@@ -269,7 +271,9 @@ impl Display for Error {
             Kind::Socket(socket) => format!("{}", socket),
             Kind::Encryption(e) => format!("{}", e),
             Kind::Mix(e) => format!("{:?}", e),
-            Kind::Unsupported(e) => format!("Unsupported {}", e)
+            Kind::Unsupported(e) => format!("Unsupported {}", e),
+            Kind::AddressLoop(e) => format!("address loop {}", e),
+            Kind::Improper(e) => format!("no suitable ones {}", e)
         };
         write!(f, "{}", fmt)
     }
