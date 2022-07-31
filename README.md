@@ -1,4 +1,4 @@
-# Fuso :  扶桑
+# Fuso :  扶桑 (8.7日前发布全新版本)
 A fast, stable, cross-platform and efficient intranet penetration and port forwarding tool
 
 一款 快速🚀 稳定 跨平台 高效的内网穿透，端口转发工具
@@ -12,7 +12,6 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 [![GitHub forks](https://img.shields.io/github/forks/editso/fuso)](https://github.com/editso/fuso)
 [![GitHub license](https://img.shields.io/github/license/editso/fuso)](https://github.com/editso/fuso)
 [![Downloads](https://img.shields.io/github/downloads/editso/fuso/total?label=Release%20Download)](https://github.com/editso/fuso/releases/latest)
-
 
 ### 项目重构计划
 1. 支持`tokio` & `smol` 或`自定义运行时`
