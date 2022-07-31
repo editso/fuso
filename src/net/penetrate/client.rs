@@ -11,7 +11,7 @@ use crate::{
     Kind, Socket, Stream, {ClientProvider, Provider},
 };
 
-use crate::{io, join, time, Address};
+use crate::{io, join, time, Address, Processor};
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
 
@@ -48,7 +48,7 @@ macro_rules! default_socket {
 }
 
 pub struct PenetrateClientProvider<C> {
-    pub transform: (Socket, Socket),
+    pub forward: (Socket, Socket),
     pub connector_provider: Arc<C>,
 }
 
@@ -59,25 +59,25 @@ enum State {
     Error(crate::Error),
 }
 
-pub struct PenetrateClient<CF, C, S> {
+pub struct PenetrateClient<P, C, S> {
     forward: (Address, Socket),
     reader: ReadHalf<S>,
     writer: WriteHalf<S>,
     futures: Vec<BoxedFuture<State>>,
-    client_provider: ClientProvider<CF>,
+    processor: Processor<ClientProvider<P>, S, ()>,
     connector_provider: Arc<C>,
 }
 
-impl<CF, C, S> Provider<(ClientProvider<CF>, S)> for PenetrateClientProvider<C>
+impl<P, C, S> Provider<(S, Processor<ClientProvider<P>, S, ()>)> for PenetrateClientProvider<C>
 where
-    CF: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
+    P: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
     C: Provider<Socket, Output = BoxedFuture<Route<S>>> + Send + Sync + 'static,
     S: Stream + Send + 'static,
 {
-    type Output = BoxedFuture<PenetrateClient<CF, C, S>>;
+    type Output = BoxedFuture<PenetrateClient<P, C, S>>;
 
-    fn call(&self, (client_provider, stream): (ClientProvider<CF>, S)) -> Self::Output {
-        let socket = self.transform.clone();
+    fn call(&self, (stream, processor): (S, Processor<ClientProvider<P>, S, ()>)) -> Self::Output {
+        let socket = self.forward.clone();
 
         let connector_provider = self.connector_provider.clone();
 
@@ -112,8 +112,8 @@ where
 
             match message {
                 Poto::Bind(Bind::Success(mut server_addr, mut visit_addr)) => {
-                    default_socket!(visit_addr, client_provider.default_socket());
-                    default_socket!(server_addr, client_provider.default_socket());
+                    default_socket!(visit_addr, processor.default_socket());
+                    default_socket!(server_addr, processor.default_socket());
 
                     log::info!("the server is bound to {}", server_addr);
                     log::info!("please visit {}", visit_addr);
@@ -121,7 +121,7 @@ where
                     Ok(PenetrateClient::new(
                         (server_addr, route_addr),
                         stream,
-                        client_provider,
+                        processor,
                         connector_provider,
                     ))
                 }
@@ -144,16 +144,16 @@ where
     }
 }
 
-impl<CF, C, S> PenetrateClient<CF, C, S>
+impl<P, C, S> PenetrateClient<P, C, S>
 where
-    CF: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
+    P: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
     C: Provider<Socket, Output = BoxedFuture<Route<S>>> + Send + Sync + 'static,
     S: Stream + Send + 'static,
 {
     pub fn new(
         socket: (Address, Socket),
         conn: S,
-        client_provider: ClientProvider<CF>,
+        processor: Processor<ClientProvider<P>, S, ()>,
         connector_provider: Arc<C>,
     ) -> Self {
         let (reader, writer) = io::split(conn);
@@ -163,7 +163,7 @@ where
 
         Self {
             forward: socket,
-            client_provider,
+            processor,
             connector_provider,
             reader: reader.clone(),
             writer: writer.clone(),
@@ -215,12 +215,13 @@ where
         server_socket: Socket,
         target_socket: Socket,
     ) -> BoxedFuture<State> {
-        let s1_connector = self.client_provider.clone();
+        let s1_connector = self.processor.clone();
         let s2_connector = self.connector_provider.clone();
 
         let server_fut = async_connect!(self.writer, s1_connector, id, server_socket);
         let client_fut = async_connect!(self.writer, s2_connector, id, target_socket);
         let server_writer = self.writer.clone();
+        let processor = self.processor.clone();
 
         let future = async move {
             let mut server_writer = server_writer;
@@ -235,7 +236,9 @@ where
                 Ok(r) => r,
             };
 
-            let (mut s1, s2) = result?;
+            let (s1, s2) = result?;
+
+            let mut s1 = processor.decorate(s1).await?;
 
             let poto = Poto::Map(id, target_socket).bytes();
 

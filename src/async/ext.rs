@@ -1,6 +1,6 @@
-use std::{future::Future, pin::Pin, task::Poll};
+use std::{future::Future, io, pin::Pin, task::Poll};
 
-use crate::AsyncWrite;
+use crate::{AsyncWrite};
 
 #[pin_project::pin_project]
 pub struct Read<'a, T: Unpin> {
@@ -195,6 +195,11 @@ where
         loop {
             match Pin::new(&mut **writer).poll_write(cx, &this.buf[*offset..])? {
                 Poll::Pending => break Poll::Pending,
+                Poll::Ready(0) => {
+                    return Poll::Ready(
+                        Err(io::Error::from(io::ErrorKind::ConnectionReset).into()),
+                    );
+                }
                 Poll::Ready(n) => {
                     *offset += n;
                 }

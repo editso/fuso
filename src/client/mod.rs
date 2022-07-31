@@ -6,32 +6,32 @@ pub use builder::*;
 
 use crate::{
     generator::{Generator, GeneratorEx},
-    time, ClientProvider, Executor, Fuso, Provider, DecorateProvider, WrappedProvider, Serve,
-    Stream, Address, Socket,
+    time, ClientProvider, DecorateProvider, Executor, Fuso, Processor, Provider, Serve, Socket,
+    Stream, WrappedProvider,
 };
 
-pub type BoxedFuture<T> = Pin<Box<dyn Future<Output = crate::Result<T>> + Send + 'static>>;
+type BoxedFuture<T> = Pin<Box<dyn Future<Output = crate::Result<T>> + Send + 'static>>;
 
 pub enum Route<S> {
     Forward(S),
     Provider(WrappedProvider<S, ()>),
 }
 
-pub struct Client<E, H, CF, S> {
+pub struct Client<E, H, P, S> {
     pub(crate) socket: Socket,
     pub(crate) executor: Arc<E>,
     pub(crate) handler: Arc<H>,
-    pub(crate) handshake: Option<DecorateProvider<S>>,
-    pub(crate) client_provider: ClientProvider<CF>,
+    pub(crate) handshake: Option<WrappedProvider<S, (S, Option<DecorateProvider<S>>)>>,
+    pub(crate) client_provider: ClientProvider<P>,
 }
 
-impl<E, H, CF, S, G> Client<E, H, CF, S>
+impl<E, H, P, S, G> Client<E, H, P, S>
 where
     E: Executor + 'static,
-    H: Provider<(ClientProvider<CF>, S), Output = BoxedFuture<G>> + Send + Sync + 'static,
-    CF: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
     S: Stream + Send + 'static,
+    P: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
     G: Generator<Output = Option<BoxedFuture<()>>> + Unpin + Send + 'static,
+    H: Provider<(S, Processor<ClientProvider<P>, S, ()>), Output = BoxedFuture<G>> + Send + Sync + 'static,
 {
     async fn run(self) -> crate::Result<()> {
         let executor = self.executor;
@@ -55,10 +55,10 @@ where
 
             let stream = match handshake.as_ref() {
                 Some(handshake) => handshake.call(stream).await,
-                None => Ok(stream),
+                None => Ok((stream, None)),
             };
 
-            let stream = match stream {
+            let (server, decorator) = match stream {
                 Ok(stream) => stream,
                 Err(e) => {
                     log::error!("handshake failed {}", e);
@@ -66,7 +66,9 @@ where
                 }
             };
 
-            let mut generate = match self.handler.call((provider.clone(), stream)).await {
+            let processor = Processor::new(Arc::new(provider.clone()), None, decorator);
+
+            let mut generate = match self.handler.call((server, processor)).await {
                 Ok(generate) => generate,
                 Err(e) => {
                     log::warn!("{}", e);
@@ -90,11 +92,11 @@ where
     }
 }
 
-impl<E, H, CF, S, G> Fuso<Client<E, H, CF, S>>
+impl<E, H, P, S, G> Fuso<Client<E, H, P, S>>
 where
     E: Executor + 'static,
-    H: Provider<(ClientProvider<CF>, S), Output = BoxedFuture<G>> + Send + Sync + 'static,
-    CF: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
+    H: Provider<(S, Processor<ClientProvider<P>, S, ()>), Output = BoxedFuture<G>> + Send + Sync + 'static,
+    P: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
     S: Stream + Send + 'static,
     G: Generator<Output = Option<BoxedFuture<()>>> + Unpin + Send + 'static,
 {

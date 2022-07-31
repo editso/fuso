@@ -56,6 +56,8 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &mut crate::ReadBuf<'_>,
     ) -> std::task::Poll<crate::Result<usize>> {
+        log::debug!("rsa decrypt {}", buf.len());
+
         if !self.cache.is_empty() {
             let unfilled = buf.initialize_unfilled();
             let len = self.cache.read_to_buffer(unfilled);
@@ -76,6 +78,8 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<crate::Result<usize>> {
+        log::debug!("rsa encrypt {}", buf.len());
+
         if let Some(wbuf) = self.wbuf.take() {
             loop {
                 let pos = self.wpos;
@@ -129,7 +133,7 @@ where
         let mut encrypted_buf = Vec::new();
 
         encrypted_buf.extend(&encrypted_len.to_le_bytes());
-        encrypted_buf.extend_from_slice(&encrypted_data);
+        encrypted_buf.extend(encrypted_data);
 
         let mut pos = 0;
 
@@ -171,34 +175,50 @@ where
         });
 
         loop {
-            let rpos = self.rpos;
+            let mut rpos = self.rpos;
 
             if rpos == rbuf.len() && !self.dinit {
                 let len = unsafe { *(rbuf.as_ptr() as *const u32) } as usize;
                 rbuf = unsafe {
-                    let data_buf = Vec::with_capacity(len);
-                    rbuf.set_len(len);
+                    let mut data_buf = Vec::with_capacity(len);
+                    data_buf.set_len(len);
                     data_buf
                 };
+
+                rpos = 0;
+                self.rpos = 0;
                 self.dinit = true;
             } else if rpos == rbuf.len() && self.dinit {
+                self.rpos = 0;
+                self.dinit = false;
+
                 let ps = PaddingScheme::new_pkcs1v15_encrypt();
                 let rem = buf.remaining();
                 let decrypted = self.rsa_priv.decrypt(ps, &rbuf)?;
+
                 if rem > decrypted.len() {
                     unsafe {
                         let unfilled = buf.initialize_unfilled();
                         std::ptr::copy(decrypted.as_ptr(), unfilled.as_mut_ptr(), decrypted.len());
+                        buf.advance(decrypted.len());
                         return Poll::Ready(Ok(decrypted.len()));
                     }
                 } else {
                     unsafe {
-                        let unfilled = buf.initialize_unfilled();
-                        std::ptr::copy(decrypted.as_ptr(), unfilled.as_mut_ptr(), unfilled.len());
+                        {
+                            let unfilled = buf.initialize_unfilled();
+                            std::ptr::copy(
+                                decrypted.as_ptr(),
+                                unfilled.as_mut_ptr(),
+                                unfilled.len(),
+                            );
+                        }
 
-                        self.cache.push_back(&decrypted[unfilled.len()..]);
+                        buf.advance(rem);
 
-                        return Poll::Ready(Ok(unfilled.len()));
+                        self.cache.push_back(&decrypted[rem..]);
+
+                        return Poll::Ready(Ok(rem));
                     }
                 }
             }

@@ -165,7 +165,7 @@ where
         self.client_builder.build(
             server_socket,
             PenetrateClientProvider {
-                transform: (self.upstream, self.downstream),
+                forward: (self.upstream, self.downstream),
                 connector_provider: Arc::new(connector),
             },
         )

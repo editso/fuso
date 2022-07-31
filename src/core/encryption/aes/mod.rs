@@ -180,6 +180,7 @@ where
                 self.aes_dinit = true;
             } else if self.aes_dinit && rpos == rbuf.len() {
                 self.aes_dinit = false;
+                self.aes_rpos = 0;
                 let rem = buf.remaining();
                 let decrypted = Aes128CbcDec::new_from_slices(&self.key, &self.iv)?
                     .decrypt_padded_mut::<Pkcs7>(&mut rbuf)?;

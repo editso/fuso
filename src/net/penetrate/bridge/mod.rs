@@ -2,7 +2,7 @@ use std::{net::IpAddr, pin::Pin};
 
 use crate::{
     client::Client, generator::Generator, io, select::Select, Accepter, AccepterExt,
-    ClientProvider, Executor, Fuso, Kind, Provider, Serve, Socket, Stream,
+    ClientProvider, Executor, Fuso, Kind, Processor, Provider, Serve, Socket, Stream,
 };
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
@@ -34,8 +34,11 @@ where
     SP: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
     A: Accepter<Stream = S> + Send + Sync + Unpin + 'static,
     S: Stream + Send + Sync + 'static,
-    H: Provider<(ClientProvider<P>, S), Output = BoxedFuture<G>> + Send + Sync + 'static,
     G: Generator<Output = Option<BoxedFuture<()>>> + Unpin + Send + 'static,
+    H: Provider<(S, Processor<ClientProvider<P>, S, ()>), Output = BoxedFuture<G>>
+        + Send
+        + Sync
+        + 'static,
 {
     async fn run_async(self) -> crate::Result<()> {
         let bridge_socket = self.socket;

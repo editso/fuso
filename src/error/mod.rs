@@ -73,6 +73,7 @@ pub enum EncryptionErr {
     Aes(AesErr),
     Rsa(rsa::errors::Error),
     RsaPkcs7(rsa::pkcs1::Error),
+    RsaSpki(rsa::pkcs8::spki::Error),
 }
 
 #[derive(Debug)]
@@ -109,7 +110,7 @@ pub enum Kind {
     Mix(MixErr),
     Unsupported(Socket),
     AddressLoop(Socket),
-    Improper(Socket)
+    Improper(Socket),
 }
 
 impl Display for SyncErr {
@@ -202,6 +203,12 @@ impl From<rsa::pkcs1::Error> for Error {
     }
 }
 
+impl From<rsa::pkcs8::spki::Error> for Error {
+    fn from(e: rsa::pkcs8::spki::Error) -> Self {
+        Kind::Encryption(EncryptionErr::RsaSpki(e)).into()
+    }
+}
+
 impl Display for SocketErr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let fmt = match self {
@@ -239,6 +246,7 @@ impl Display for EncryptionErr {
                 EncryptionErr::Aes(e) => format!("{}", e),
                 EncryptionErr::Rsa(e) => format!("{}", e),
                 EncryptionErr::RsaPkcs7(e) => format!("{}", e),
+                EncryptionErr::RsaSpki(e) => format!("{}", e)
             }
         })
     }
@@ -273,7 +281,7 @@ impl Display for Error {
             Kind::Mix(e) => format!("{:?}", e),
             Kind::Unsupported(e) => format!("Unsupported {}", e),
             Kind::AddressLoop(e) => format!("address loop {}", e),
-            Kind::Improper(e) => format!("no suitable ones {}", e)
+            Kind::Improper(e) => format!("no suitable ones {}", e),
         };
         write!(f, "{}", fmt)
     }

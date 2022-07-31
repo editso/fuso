@@ -1,6 +1,6 @@
-use std::{pin::Pin, sync::Arc};
+use std::{ops::Deref, pin::Pin, sync::Arc};
 
-use crate::{DecorateProvider, Provider, Socket};
+use crate::{ClientProvider, DecorateProvider, Provider, Socket};
 
 type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>> + Send + 'static>>;
 
@@ -32,6 +32,14 @@ impl<P, S, O> Processor<P, S, O> {
             None => Ok(client),
             Some(decorator) => decorator.call(client).await,
         }
+    }
+}
+
+impl<P, S> Deref for Processor<ClientProvider<P>, S, ()> {
+    type Target = Arc<ClientProvider<P>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.provider
     }
 }
 
