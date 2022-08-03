@@ -20,7 +20,7 @@ where
 
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.buf.is_empty()
+        self.len == 0
     }
 
     #[inline]

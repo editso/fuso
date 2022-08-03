@@ -56,7 +56,7 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &mut crate::ReadBuf<'_>,
     ) -> std::task::Poll<crate::Result<usize>> {
-        log::debug!("rsa decrypt {}", buf.len());
+        log::debug!("rsa decrypt buf: {}bytes", buf.len());
 
         if !self.cache.is_empty() {
             let unfilled = buf.initialize_unfilled();
@@ -78,7 +78,7 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<crate::Result<usize>> {
-        log::debug!("rsa encrypt {}", buf.len());
+        log::debug!("rsa encrypt data: {}bytes", buf.len());
 
         if let Some(wbuf) = self.wbuf.take() {
             loop {
@@ -196,7 +196,7 @@ where
                 let rem = buf.remaining();
                 let decrypted = self.rsa_priv.decrypt(ps, &rbuf)?;
 
-                if rem > decrypted.len() {
+                if rem >= decrypted.len() {
                     unsafe {
                         let unfilled = buf.initialize_unfilled();
                         std::ptr::copy(decrypted.as_ptr(), unfilled.as_mut_ptr(), decrypted.len());

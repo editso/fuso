@@ -20,6 +20,7 @@ struct FusoArgs {
     #[clap(long)]
     bridge_port: Option<u16>,
     /// 服务端地址
+    #[clap(long, default_value = "127.0.0.1")]
     server_host: String,
     /// 服务端端口
     #[clap(long, default_value = "6722")]
@@ -45,7 +46,7 @@ struct FusoArgs {
 async fn main() -> fuso::Result<()> {
     use std::time::Duration;
 
-    use fuso::{penetrate::PenetrateHandshake, TokioAccepter, TokioPenetrateConnector};
+    use fuso::{penetrate::PenetrateRsaAndAesHandshake, TokioAccepter, TokioPenetrateConnector};
 
     let args = FusoArgs::parse();
 
@@ -56,7 +57,7 @@ async fn main() -> fuso::Result<()> {
         .init();
 
     let fuso = fuso::builder_client_with_tokio()
-        .using_handshake(PenetrateHandshake::Client)
+        .using_handshake(PenetrateRsaAndAesHandshake::Client)
         .using_penetrate(
             Socket::tcp(args.visit_port),
             Socket::tcp((args.forward_host, args.forward_port)),

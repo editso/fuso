@@ -67,7 +67,7 @@ fn init_logger(log_level: log::LevelFilter) {
 #[cfg(feature = "fuso-rt-tokio")]
 #[tokio::main]
 async fn main() -> fuso::Result<()> {
-    use fuso::{Socket, TokioExecutor, TokioUdpServerProvider, UdpForwardProvider, penetrate::PenetrateHandshake};
+    use fuso::{Socket, TokioExecutor, TokioUdpServerProvider, UdpForwardProvider, penetrate::PenetrateRsaAndAesHandshake};
     use std::time::Duration;
 
     let args = FusoArgs::parse();
@@ -75,7 +75,7 @@ async fn main() -> fuso::Result<()> {
     init_logger(args.log_level);
 
     fuso::builder_server_with_tokio(())
-        .using_handshake(PenetrateHandshake::Server)
+        .using_handshake(PenetrateRsaAndAesHandshake::Server)
         .using_kcp(TokioUdpServerProvider, TokioExecutor)
         .using_penetrate()
         .max_wait_time(Duration::from_secs(args.maximum_wctime))

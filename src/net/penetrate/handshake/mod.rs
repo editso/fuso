@@ -9,20 +9,23 @@ use crate::{
     compress::Lz4Compress,
     encryption::{AESEncryptor, RSAEncryptor},
     ext::{AsyncReadExt, AsyncWriteExt},
-    protocol::AsyncRecvPacket,
+    protocol::{AsyncRecvPacket, Poto, TryToPoto},
     Address, DecorateProvider, FusoStream, Provider, Stream, ToBoxStream,
 };
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
 
-pub enum PenetrateHandshake {
+pub enum PenetrateRsaAndAesHandshake {
     Server,
     Client,
 }
 
-pub struct PenetrateDecorator;
+pub struct PenetrateAesAndLz4Decorator {
+    iv: [u8; 16],
+    key: [u8; 16],
+}
 
-impl PenetrateHandshake {
+impl PenetrateRsaAndAesHandshake {
     pub fn server_handshake<S>(
         mut client: S,
     ) -> BoxedFuture<(FusoStream, Option<DecorateProvider<FusoStream>>)>
@@ -51,10 +54,24 @@ impl PenetrateHandshake {
             client.write_all(&len.to_be_bytes()).await?;
             client.write_all(pem).await?;
 
-            let encryptor =
-                RSAEncryptor::new(client, client_publ_key, priv_key).into_boxed_stream();
+            let mut fuso_stream = RSAEncryptor::new(client, client_publ_key, priv_key);
 
-            Ok((encryptor, Some(DecorateProvider::wrap(PenetrateDecorator))))
+            let mut iv = [0u8; 16];
+            let mut key = [0u8; 16];
+
+            fuso_stream.read_exact(&mut iv).await?;
+
+            fuso_stream.read_exact(&mut key).await?;
+
+            log::info!("iv: {:?}, key: {:?}", iv, key);
+
+            Ok((
+                fuso_stream.into_boxed_stream(),
+                Some(DecorateProvider::wrap(PenetrateAesAndLz4Decorator {
+                    iv,
+                    key,
+                })),
+            ))
         })
     }
 
@@ -90,15 +107,32 @@ impl PenetrateHandshake {
 
             let server_publ_key = rsa::RsaPublicKey::from_public_key_der(&buf)?;
 
-            let encryptor =
+            let mut fuso_stream =
                 RSAEncryptor::new(stream, server_publ_key, priv_key).into_boxed_stream();
 
-            Ok((encryptor, Some(DecorateProvider::wrap(PenetrateDecorator))))
+            let mut iv = [0u8; 16];
+            let mut key = [0u8; 16];
+
+            iv.fill_with(rand::random);
+            key.fill_with(rand::random);
+
+            log::info!("iv: {:?}, key: {:?}", iv, key);
+
+            fuso_stream.write_all(&iv).await?;
+            fuso_stream.write_all(&key).await?;
+
+            Ok((
+                fuso_stream,
+                Some(DecorateProvider::wrap(PenetrateAesAndLz4Decorator {
+                    iv,
+                    key,
+                })),
+            ))
         })
     }
 }
 
-impl<S> Provider<S> for PenetrateHandshake
+impl<S> Provider<S> for PenetrateRsaAndAesHandshake
 where
     S: Stream + Unpin + Send + 'static,
 {
@@ -106,18 +140,24 @@ where
 
     fn call(&self, client: S) -> Self::Output {
         match self {
-            PenetrateHandshake::Server => Self::server_handshake(client),
-            PenetrateHandshake::Client => Self::client_handshake(client),
+            PenetrateRsaAndAesHandshake::Server => Self::server_handshake(client),
+            PenetrateRsaAndAesHandshake::Client => Self::client_handshake(client),
         }
     }
 }
 
-impl<S> Provider<S> for PenetrateDecorator
+impl<S> Provider<S> for PenetrateAesAndLz4Decorator
 where
     S: Stream + Unpin + Send + 'static,
 {
     type Output = BoxedFuture<FusoStream>;
     fn call(&self, stream: S) -> Self::Output {
-        Box::pin(async move { Ok(Lz4Compress::new(stream).into_boxed_stream()) })
+        let iv = self.iv.clone();
+        let key = self.key.clone();
+        Box::pin(async move {
+            let lz4 = Lz4Compress::new(stream);
+            let aes = AESEncryptor::new(lz4, iv, key);
+            Ok(aes.into_boxed_stream())
+        })
     }
 }

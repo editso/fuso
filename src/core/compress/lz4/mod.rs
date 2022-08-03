@@ -121,13 +121,12 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &mut crate::ReadBuf<'_>,
     ) -> std::task::Poll<crate::Result<usize>> {
-        log::debug!("lz4 decode");
+        log::debug!("lz4 decode buf: {}bytes", buf.len());
 
         if !self.lz4_rbuf.is_empty() {
             let unfilled = buf.initialize_unfilled();
             let n = self.lz4_rbuf.read_to_buffer(unfilled);
             buf.advance(n);
-
             return Poll::Ready(Ok(n));
         }
 
@@ -162,7 +161,7 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<crate::Result<usize>> {
-        log::debug!("lz4 encode");
+        log::debug!("lz4 encode data: {}bytes", buf.len());
 
         if self.lz4_encode_insptr.is_null() {
             return Poll::Ready(Err(Lz4Err::EncodeReleased.into()));
@@ -188,8 +187,6 @@ where
             };
             match self.lz4_ebuf.take() {
                 Some(ebuf) => {
-                    
-
                     let n = match Pin::new(&mut self.lz4_stream).poll_write(cx, &ebuf[woffset..])? {
                         Poll::Ready(n) => n,
                         Poll::Pending => {
@@ -205,7 +202,6 @@ where
                     self.lz4_woffset += n;
 
                     if self.lz4_woffset == ebuf.len() && self.lz4_compressed_offset == buf.len() {
-                        
                         self.lz4_woffset = 0;
                         self.lz4_compressed_offset = 0;
                         break Poll::Ready(Ok(buf.len()));
@@ -388,7 +384,7 @@ where
                     };
 
                     let unfilled_len = buf.remaining();
-                    let dring_buf = &self.lz4_dring_buf[dring_offset..];
+                    let dring_buf = &self.lz4_dring_buf[dring_offset..][..decompress_size];
 
                     if unfilled_len < decompress_size {
                         // 提供的缓冲区不够存放当前解压后的数据，临时存放到 lz4_rbuf
@@ -398,8 +394,7 @@ where
                             std::ptr::copy(dring_buf.as_ptr(), unfilled.as_mut_ptr(), unfilled_len)
                         }
 
-                        // 区间小细节 ..decompress_size
-                        let rem = dring_buf[unfilled_len..decompress_size].to_vec();
+                        let rem = dring_buf[unfilled_len..].to_vec();
 
                         log::debug!(
                             "buffer {}bytes, decompressed: {}bytes, rem: {}bytes",
@@ -528,10 +523,10 @@ mod tests {
                     loop {
                         let mut buf = [0u8; 1500];
                         match lz4.read_exact(&mut buf).await {
-                            Ok(e) => {},
+                            Ok(e) => {}
                             Err(_) => {
                                 break;
-                            },
+                            }
                         }
                         if let Err(e) = lz4.write_all(&buf).await {
                             break;
@@ -540,5 +535,4 @@ mod tests {
                 }
             });
     }
-
 }
