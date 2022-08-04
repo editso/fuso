@@ -22,7 +22,7 @@ use std::{
 use async_mutex::Mutex;
 
 use crate::{
-    guard::buffer::Buffer, time, Accepter, Address, Executor, NetSocket, Socket, Task,
+    guard::buffer::Buffer, time, Accepter, Address, Executor, NetSocket, Socket, SocketKind, Task,
     UdpReceiverExt, UdpSocket,
 };
 
@@ -121,8 +121,8 @@ where
         Self {
             conv,
             kcore,
-            local_addr,
-            peer_addr,
+            local_addr: local_addr.with_kind(SocketKind::Kcp),
+            peer_addr: peer_addr.with_kind(SocketKind::Kcp),
             close_callback,
         }
     }

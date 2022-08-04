@@ -1,8 +1,8 @@
 use std::{future::Future, pin::Pin, task::Poll};
 
 use crate::{
-    mixing::MixListener, server::ServerBuilder, Accepter, Address, Executor, FusoStream, Kind,
-    NetSocket, Provider, WrappedProvider, Socket, ToBoxStream, UdpSocket,
+    mixing::MixListener, server::ServerBuilder, Accepter, Executor, FusoStream, Kind,
+    NetSocket, Provider, Socket, SocketKind, ToBoxStream, UdpSocket, WrappedProvider,
 };
 
 use super::KcpListener;
@@ -21,21 +21,17 @@ where
     C: NetSocket,
 {
     fn peer_addr(&self) -> crate::Result<crate::Address> {
-        self.0.core.peer_addr()
+        self.0
+            .core
+            .peer_addr()
+            .map(|addr| addr.with_kind(SocketKind::Kcp))
     }
 
     fn local_addr(&self) -> crate::Result<crate::Address> {
-        self.0.core.local_addr()
-    }
-}
-
-impl NetSocket for std::net::TcpStream {
-    fn peer_addr(&self) -> crate::Result<crate::Address> {
-        Ok(Address::One(Socket::tcp(self.peer_addr()?)))
-    }
-
-    fn local_addr(&self) -> crate::Result<crate::Address> {
-        Ok(Address::One(Socket::tcp(self.local_addr()?)))
+        self.0
+            .core
+            .local_addr()
+            .map(|addr| addr.with_kind(SocketKind::Kcp))
     }
 }
 

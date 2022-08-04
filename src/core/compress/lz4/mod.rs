@@ -62,16 +62,20 @@ where
     T: AsyncRead + AsyncWrite + Unpin,
 {
     pub fn new(lz4_stream: T) -> Self {
-        let mut lz4_ering_buf = Vec::with_capacity(1024 * 8 + 1024);
-        let mut lz4_dring_buf = Vec::with_capacity(1024 * 8 + 1024 + 1024);
+        let mut lz4_ering_buf = Vec::with_capacity(1024 * 2 + 1024);
+        let mut lz4_dring_buf = Vec::with_capacity(1024 * 2 + 1024);
 
         unsafe {
             // 临时使用，未来将改为配置文件的形式
-            lz4_ering_buf.set_len(1024 * 8 + 1024);
-            lz4_dring_buf.set_len(1024 * 8 + 1024 + 1024);
+            lz4_ering_buf.set_len(1024 * 2 + 1024);
+            lz4_dring_buf.set_len(1024 * 2 + 1024);
         }
 
-        log::debug!("use lz4 compression");
+        log::debug!(
+            "use lz4 compression ering: {}, dring: {}",
+            lz4_ering_buf.capacity(),
+            lz4_dring_buf.capacity()
+        );
 
         Self {
             lz4_dinit: false,
@@ -182,9 +186,8 @@ where
     ) -> std::task::Poll<crate::Result<usize>> {
         loop {
             let woffset = self.lz4_woffset;
-            let max_bytes = unsafe {
-                third_party::LZ4_compressBound(self.lz4_compress_max_bytes as i32) as usize
-            };
+            let max_bytes = self.lz4_compress_max_bytes;
+
             match self.lz4_ebuf.take() {
                 Some(ebuf) => {
                     let n = match Pin::new(&mut self.lz4_stream).poll_write(cx, &ebuf[woffset..])? {
@@ -216,7 +219,10 @@ where
                     // 用户提供的数据有可能会超过lz4_compress_max_bytes, 那么这里就需要进行分片压缩
                     // 还挺复杂...
 
-                    let mut ebuf: Vec<u8> = Vec::with_capacity(max_bytes + 4);
+                    let compress_buf_size =
+                        unsafe { third_party::LZ4_compressBound(max_bytes as i32) as usize };
+
+                    let mut ebuf: Vec<u8> = Vec::with_capacity(compress_buf_size + 4);
 
                     let need_compress = &buf[self.lz4_compressed_offset..];
                     let need_compress_len = need_compress.len();
@@ -225,7 +231,7 @@ where
                             need_compress_len
                         } else {
                             let diff = need_compress_len - max_bytes;
-                            need_compress_len - diff - 10
+                            need_compress_len - diff
                         }
                     };
 
@@ -245,7 +251,7 @@ where
                             need_ring_buf.as_ptr(),
                             ebuf.as_mut_ptr().offset(4),
                             compress_len as i32,
-                            max_bytes as i32,
+                            compress_buf_size as i32,
                             0,
                         );
 
@@ -317,27 +323,19 @@ where
                 Some(dbuf) if need_offset == need_size && !self.lz4_dinit => {
                     // 获取到压缩块大小，继续读取....
 
-                    let need_size =
-                        unsafe { *(dbuf.as_ptr() as *const i32).as_ref().unwrap_unchecked() }
-                            as usize;
+                    let need_size = unsafe { *(dbuf.as_ptr() as *const i32) } as usize;
 
-                    if need_size <= 0 {
-                        return Poll::Ready(Err(Lz4Err::Decompress.into()));
-                    }
-
-                    if need_size > max_bytes {
+                    if need_size <= 0 || need_size > max_bytes {
                         return Poll::Ready(Err(Lz4Err::Decompress.into()));
                     }
 
                     let mut dbuf = Vec::with_capacity(max_bytes);
 
                     unsafe {
-                        dbuf.set_len(need_size);
+                        dbuf.set_len(max_bytes);
                     }
 
-                    log::debug!("compressed data size {}", dbuf.len());
-
-                    self.lz4_dneed = dbuf.len();
+                    self.lz4_dneed = need_size;
                     self.lz4_doffset = 0;
                     self.lz4_dinit = true;
                     drop(std::mem::replace(&mut self.lz4_dbuf, Some(dbuf)));
@@ -346,18 +344,15 @@ where
                     let dring_offset = self.lz4_dring_offset;
                     let lz4_decode_ins = self.lz4_decode_insptr;
 
-                    log::debug!("start decompress {}", dbuf.len());
-
                     let decompress_size = unsafe {
+                        let max_bytes = self.lz4_compress_max_bytes;
                         let dring_buf = &mut self.lz4_dring_buf[dring_offset..];
-
-                        log::debug!("dring_buf {}", dring_buf.len());
 
                         third_party::LZ4_decompress_safe_continue(
                             lz4_decode_ins,
                             dbuf.as_ptr(),
                             dring_buf.as_mut_ptr(),
-                            dbuf.len() as i32,
+                            need_size as i32,
                             max_bytes as i32,
                         )
                     };
@@ -375,7 +370,7 @@ where
 
                     self.lz4_dring_offset = {
                         if self.lz4_dring_offset + decompress_size
-                            >= self.lz4_dring_buf.capacity() - self.lz4_compress_max_bytes
+                            >= self.lz4_dring_buf.capacity() - max_bytes
                         {
                             0
                         } else {
@@ -431,7 +426,7 @@ where
                     }
                 }
                 Some(mut dbuf) => {
-                    let mut read_buf = ReadBuf::new(&mut dbuf[need_offset..]);
+                    let mut read_buf = ReadBuf::new(&mut dbuf[need_offset..need_size]);
 
                     let n = match Pin::new(&mut self.lz4_stream).poll_read(cx, &mut read_buf)? {
                         Poll::Ready(n) => n,

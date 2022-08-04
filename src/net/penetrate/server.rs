@@ -508,7 +508,7 @@ where
             Outcome::Route(s1, s2) => Poll::Ready(Ok(Some(Box::pin(async move {
                 log::debug!("start forwarding");
                 if let Err(e) = io::forward(s1, s2).await {
-                    log::warn!("forward error {}", e);
+                    log::trace!("forward error {}", e);
                 };
                 Ok(())
             })))),

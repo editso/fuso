@@ -40,7 +40,6 @@ impl Executor for TokioExecutor {
             detach_fn: None,
             abort_fn: Some(Box::new(move || {
                 task.abort();
-                log::debug!("abort task");
             })),
             _marked: std::marker::PhantomData,
         }
@@ -123,17 +122,7 @@ impl Provider<Socket> for TokioConnector {
                         *kcp = Some(kcp::KcpConnector::new(Arc::new(udp), TokioExecutor));
                     }
 
-                    if kcp.is_some() && socket.is_ufd() {
-                        kcp.as_ref().unwrap().connect().await?.into_boxed_stream()
-                    } else {
-                        tokio::net::TcpStream::connect(socket.as_string())
-                            .await
-                            .map_err(|e| {
-                                log::warn!("connect to {} failed err={}", socket, e);
-                                e
-                            })?
-                            .into_boxed_stream()
-                    }
+                    kcp.as_ref().unwrap().connect().await?.into_boxed_stream()
                 } else {
                     return Err(SocketErr::NotSupport(socket).into());
                 }

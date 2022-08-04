@@ -317,7 +317,7 @@ where
                     return Poll::Ready(Ok(Some(fut)));
                 }
                 Poll::Ready(Err(e)) => {
-                    log::warn!("{:?}", e);
+                    log::trace!("{:?}", e);
                 }
             }
         }

@@ -77,7 +77,7 @@ optional = true
 lto = true
 opt-level = 'z'
 codegen-units = 1
-panic = 'abort'
+# panic = 'abort'
 debug = false
 
 

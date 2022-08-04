@@ -13,8 +13,8 @@ pub struct DecorateProvider<T> {
 }
 
 pub struct ProviderChain<A> {
-    self_provider: DecorateProvider<A>,
-    other_provider: DecorateProvider<A>,
+    left: DecorateProvider<A>,
+    right: DecorateProvider<A>,
 }
 
 pub trait Provider<C> {
@@ -97,8 +97,8 @@ impl<A> ProviderChain<A> {
         F2: Provider<A, Output = BoxedFuture<A>> + Send + Sync + 'static,
     {
         Self {
-            self_provider: DecorateProvider::wrap(provider),
-            other_provider: DecorateProvider::wrap(next),
+            left: DecorateProvider::wrap(provider),
+            right: DecorateProvider::wrap(next),
         }
     }
 }
@@ -131,11 +131,7 @@ where
 
     fn call(&self, cfg: A) -> Self::Output {
         let this = self.clone();
-        Box::pin(async move {
-            this.other_provider
-                .call(this.self_provider.call(cfg).await?)
-                .await
-        })
+        Box::pin(async move { this.right.call(this.left.call(cfg).await?).await })
     }
 }
 
@@ -160,8 +156,8 @@ impl<A> Clone for ProviderChain<A> {
     #[inline]
     fn clone(&self) -> Self {
         Self {
-            self_provider: self.self_provider.clone(),
-            other_provider: self.other_provider.clone(),
+            left: self.left.clone(),
+            right: self.right.clone(),
         }
     }
 }

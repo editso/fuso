@@ -1,16 +1,12 @@
 use std::pin::Pin;
 
-use rsa::{
-    pkcs1::EncodeRsaPublicKey,
-    pkcs8::{DecodePublicKey, EncodePublicKey, LineEnding},
-};
+use rsa::pkcs8::{DecodePublicKey, EncodePublicKey};
 
 use crate::{
     compress::Lz4Compress,
     encryption::{AESEncryptor, RSAEncryptor},
     ext::{AsyncReadExt, AsyncWriteExt},
-    protocol::{AsyncRecvPacket, Poto, TryToPoto},
-    Address, DecorateProvider, FusoStream, Provider, Stream, ToBoxStream,
+    DecorateProvider, FusoStream, Provider, Stream, ToBoxStream,
 };
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;

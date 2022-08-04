@@ -132,7 +132,7 @@ where
                 if r.is_err() {
                     return Err(unsafe {
                         let err = r.unwrap_err_unchecked();
-                        log::warn!("forward error {}", err);
+                        log::trace!("forward error {}", err);
                         err
                     });
                 }
