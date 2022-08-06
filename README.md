@@ -107,7 +107,6 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 | `Rsa`加密       | <font color="green">✔</font>                                                      |
 | `Aes`加密       | <font color="green">✔</font>                                                      |
 
-### 😶 部分功能还待完善敬请期待..
 
 ### External
 
