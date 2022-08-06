@@ -91,7 +91,7 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 
 ```
 
-### 🤔Features
+### Features
 
 | Name            | <font color="green">✔(Achieved)</font> / <font color="red">❌(Unrealized)</font>) |
 | --------------- | --------------------------------------------------------------------------------- |
