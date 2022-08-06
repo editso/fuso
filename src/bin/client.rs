@@ -44,11 +44,7 @@ struct FusoArgs {
     #[cfg(not(debug_assertions))]
     server_host: String,
     /// 服务端端口
-    #[cfg(debug_assertions)]
     #[clap(default_value = "6722")]
-    server_port: u16,
-    /// 服务端端口
-    #[cfg(not(debug_assertions))]
     server_port: u16,
     /// 转发地址
     #[clap(
@@ -62,7 +58,7 @@ struct FusoArgs {
     #[clap(long, default_value = "80", visible_alias = "fp", display_order = 8)]
     forward_port: u16,
     /// 是否启用socks5 udp转发, 默认不启用
-    #[clap(long, default_value = "false", action = ArgAction::SetTrue, display_order=2)]
+    #[clap(long, default_value = "false", visible_alias = "su", action = ArgAction::SetTrue, display_order=2)]
     socks_udp: bool,
     /// socks5账号
     #[clap(long, visible_alias = "s5u", display_order = 3)]
@@ -82,13 +78,14 @@ struct FusoArgs {
     /// 发送心跳延时
     #[clap(long, default_value = "30", display_order = 14)]
     heartbeat_delay: u64,
-    #[clap(long, default_value = "true", display_order = 15)]
     /// 日志级别
     #[cfg(debug_assertions)]
+    #[cfg(feature = "fuso-log")]
     #[clap(long, default_value = "debug", display_order = 10, possible_values = ["info", "warn", "error", "debug", "trace", "off"])]
     log_level: log::LevelFilter,
     /// 日志级别
     #[cfg(not(debug_assertions))]
+    #[cfg(feature = "fuso-log")]
     #[clap(long, default_value = "info", display_order = 10, possible_values = ["info", "warn", "error", "debug", "trace", "off"])]
     log_level: log::LevelFilter,
 }
@@ -102,6 +99,7 @@ async fn main() -> fuso::Result<()> {
 
     let args = FusoArgs::parse();
 
+    #[cfg(feature = "fuso-log")]
     env_logger::builder()
         .filter_module("fuso", args.log_level)
         .default_format()

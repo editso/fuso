@@ -20,7 +20,7 @@ pub enum Selector<O> {
 pub struct PenetrateSelector<A>(Arc<Vec<A>>);
 
 pub struct PenetrateSelectorBuilder<E, P, S, O> {
-    pub(crate) adapters: Vec<WrappedProvider<Fallback<S>, Selector<S>>>,
+    pub(crate) adapters: Vec<WrappedProvider<(Fallback<S>, Arc<super::server::Config>), Selector<S>>>,
     pub(crate) penetrate_builder: PenetrateServerBuilder<E, P, S, O>,
 }
 
@@ -48,22 +48,22 @@ where
     }
 }
 
-impl<S, M> Provider<Fallback<S>> for PenetrateSelector<M>
+impl<S, M> Provider<(Fallback<S>, Arc<super::server::Config>)> for PenetrateSelector<M>
 where
     S: Stream + Send + Unpin + 'static,
-    M: Provider<Fallback<S>, Output = BoxedFuture<Selector<S>>> + Sync + Send + 'static,
+    M: Provider<(Fallback<S>, Arc<super::server::Config>), Output = BoxedFuture<Selector<S>>> + Sync + Send + 'static,
 {
     type Output = BoxedFuture<Peer<Fallback<S>>>;
 
-    fn call(&self, arg: Fallback<S>) -> Self::Output {
+    fn call(&self, (fallback, config): (Fallback<S>, Arc<super::server::Config>)) -> Self::Output {
         let adapters = self.0.clone();
         Box::pin(async move {
-            let mut fallback = arg;
+            let mut fallback = fallback;
 
             for adapter in adapters.iter() {
                 fallback.mark().await?;
 
-                fallback = match adapter.call(fallback).await? {
+                fallback = match adapter.call((fallback, config.clone())).await? {
                     Selector::Unselected(fallback) => fallback,
                     Selector::Checked(peer) => {
                         return Ok(peer);

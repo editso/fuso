@@ -4,7 +4,7 @@ use crate::{
     client::{Client, ClientBuilder, Route},
     guard::Fallback,
     server::{Server, ServerBuilder},
-    Accepter, Executor, Fuso, Provider, Socket, Stream, WrappedProvider,
+    Accepter, Executor, Fuso, Provider, Socket, Stream, WrappedProvider, Platform,
 };
 
 use super::{
@@ -106,20 +106,31 @@ where
         self
     }
 
-    pub fn build<F>(self, converter: F) -> Fuso<Server<E, PenetrateProvider<S>, P, S, O>>
+    pub fn build<F>(self, mock: F) -> Fuso<Server<E, PenetrateProvider<S>, P, S, O>>
     where
-        F: Provider<Fallback<S>, Output = BoxedFuture<Peer<Fallback<S>>>> + Send + Sync + 'static,
+        F: Provider<
+                (Fallback<S>, Arc<super::server::Config>),
+                Output = BoxedFuture<Peer<Fallback<S>>>,
+            > + Send
+            + Sync
+            + 'static,
     {
         self.server_builder.build(PenetrateProvider {
             config: Config {
+                whoami: String::from("anonymous"),
                 is_mixed: self.is_mixed,
-                max_wait_time: self.max_wait_time,
-                heartbeat_timeout: self.heartbeat_timeout,
+                maximum_wait: self.max_wait_time,
+                heartbeat_delay: self.heartbeat_timeout,
                 read_timeout: self.read_timeout,
                 write_timeout: self.write_timeout,
                 fallback_strict_mode: self.fallback_strict_mode,
+                enable_socks: false,
+                enable_socks_udp: false,
+                socks5_password: None,
+                socks5_username: None,
+                platform: Default::default()
             },
-            converter: Arc::new(WrappedProvider::wrap(converter)),
+            mock: Arc::new(WrappedProvider::wrap(mock)),
         })
     }
 }
@@ -155,7 +166,7 @@ where
     S: Stream + Send + 'static,
 {
     pub fn reconnect_delay(mut self, delay: Duration) -> Self {
-        self.reconnect_delay = Some(delay);
+        self.reconnect_delay = Some(delay.min(Duration::from_secs(2)));
         self
     }
 
@@ -164,7 +175,7 @@ where
         self
     }
 
-    pub fn enable_kcp(mut self, enable: bool) -> Self{
+    pub fn enable_kcp(mut self, enable: bool) -> Self {
         self.enable_kcp = enable;
         self
     }
@@ -195,12 +206,12 @@ where
     }
 
     pub fn heartbeat_delay(mut self, delay: Duration) -> Self {
-        self.heartbeat_delay = Some(delay);
+        self.heartbeat_delay = Some(delay.min(Duration::from_secs(30)));
         self
     }
 
     pub fn maximum_wait(mut self, time: Duration) -> Self {
-        self.maximum_wait = Some(time);
+        self.maximum_wait = Some(time.min(Duration::from_secs(10)));
         self
     }
 
@@ -212,11 +223,30 @@ where
     where
         C: Provider<Socket, Output = BoxedFuture<Route<S>>> + Unpin + Send + Sync + 'static,
     {
-        self.client_builder.build(
+        ClientBuilder {
+            executor: self.client_builder.executor,
+            retry_delay: self.reconnect_delay,
+            maximum_retries: self.maximum_retries,
+            handshake: self.client_builder.handshake,
+            client_provider: self.client_builder.client_provider,
+        }
+        .build(
             server_socket,
             PenetrateClientProvider {
                 forward: (self.upstream, self.downstream),
                 connector_provider: Arc::new(connector),
+                config: super::client::Config {
+                    name: self.name,
+                    maximum_wait: self.maximum_wait.unwrap_or(Duration::from_secs(10)),
+                    heartbeat_delay: self.heartbeat_delay.unwrap_or(Duration::from_secs(30)),
+                    enable_kcp: self.enable_kcp,
+                    enable_socks5: self.enable_socks5,
+                    socks_username: self.socks_username,
+                    socks_password: self.socks_password,
+                    enable_socks5_udp: self.enable_socks5_udp,
+                    version: String::from(env!("CARGO_PKG_VERSION")),
+                    platform: Platform::default()
+                },
             },
         )
     }

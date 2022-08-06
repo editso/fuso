@@ -15,11 +15,6 @@ pub struct FusoArgs {
     /// 监听的地址
     #[clap(short, long, default_value = "0.0.0.0")]
     listen: IpAddr,
-    /// 配置文件
-    #[clap(short, long)]
-    config: Option<String>,
-    #[clap(short, long, default_value = "forward")]
-    kind: Kind,
     /// 启用udp转发
     #[clap(long, default_value = "false")]
     enable_ufd: bool,
@@ -28,10 +23,12 @@ pub struct FusoArgs {
     enable_socks: bool,
     /// 日志级别
     #[cfg(debug_assertions)]
+    #[cfg(feature = "fuso-log")]
     #[clap(long, default_value = "debug")]
     log_level: log::LevelFilter,
     /// 日志级别
     #[cfg(not(debug_assertions))]
+    #[cfg(feature = "fuso-log")]
     #[clap(long, default_value = "info")]
     log_level: log::LevelFilter,
     /// 发送心跳延时
@@ -39,6 +36,7 @@ pub struct FusoArgs {
     heartbeat_delay: u64,
 }
 
+#[cfg(feature = "fuso-log")]
 fn init_logger(log_level: log::LevelFilter) {
     let is_info_log = log_level.eq(&log::LevelFilter::Info);
     env_logger::builder()
@@ -59,14 +57,14 @@ async fn main() -> fuso::Result<()> {
     use std::time::Duration;
 
     let args = FusoArgs::parse();
-
+    
+    #[cfg(feature = "fuso-log")]
     init_logger(args.log_level);
 
     fuso::builder_server_with_tokio(())
         .using_handshake(PenetrateRsaAndAesHandshake::Server)
         .using_kcp(TokioUdpServerProvider, TokioExecutor)
         .using_penetrate()
-        .max_wait_time(Duration::from_secs(10))
         .heartbeat_timeout(Duration::from_secs(args.heartbeat_delay))
         .using_adapter()
         .using_direct()

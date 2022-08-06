@@ -4,6 +4,7 @@ use crate::{ready, ReadBuf, SocksErr, Stream};
 
 use super::Socks5Auth;
 
+#[derive(Clone)]
 pub enum S5Authenticate {
     Skip {
         reply: [u8; 2],

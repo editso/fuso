@@ -112,6 +112,8 @@ pub enum Kind {
     Unsupported(Socket),
     AddressLoop(Socket),
     Improper(Socket),
+    Text(String),
+    MaxRetries(usize),
 }
 
 impl Display for SyncErr {
@@ -284,6 +286,8 @@ impl Display for Error {
             Kind::Unsupported(e) => format!("Unsupported {}", e),
             Kind::AddressLoop(e) => format!("address loop {}", e),
             Kind::Improper(e) => format!("no suitable ones {}", e),
+            Kind::Text(txt) => format!("{}", txt),
+            Kind::MaxRetries(retry) => format!("exceeded maximum number of attempts {}", retry),
         };
         write!(f, "{}", fmt)
     }
@@ -294,6 +298,12 @@ impl From<InvalidAddr> for Error {
         Self {
             kind: Kind::InvalidAddr(addr),
         }
+    }
+}
+
+impl From<String> for Error {
+    fn from(s: String) -> Self {
+        Kind::Text(s).into()
     }
 }
 

@@ -16,6 +16,16 @@ use crate::{
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
 
+macro_rules! get_auth {
+    ($config: expr) => {{
+        match (&$config.socks5_password, &$config.socks5_username) {
+            (Some(pwd), Some(username)) => S5Authenticate::standard(username, pwd),
+            (Some(pwd), None) => S5Authenticate::standard(&$config.whoami, pwd),
+            _ => S5Authenticate::default(),
+        }
+    }};
+}
+
 pub struct PenetrateSocksBuilder<E, P, S, O> {
     pub(crate) adapter_builder: PenetrateSelectorBuilder<E, P, S, O>,
 }
@@ -65,20 +75,27 @@ where
     }
 }
 
-impl<S> Provider<Fallback<S>> for SimpleSocksMock
+impl<S> Provider<(Fallback<S>, Arc<super::super::server::Config>)> for SimpleSocksMock
 where
     S: Stream + Send + Sync + 'static,
 {
     type Output = BoxedFuture<Selector<S>>;
 
-    fn call(&self, stream: Fallback<S>) -> Self::Output {
+    fn call(
+        &self,
+        (stream, config): (Fallback<S>, Arc<super::super::server::Config>),
+    ) -> Self::Output {
         Box::pin(async move {
             let mut stream = stream;
 
-            let socket = match stream
-                .socks5_handshake(&mut S5Authenticate::default())
-                .await
-            {
+            if !config.enable_socks {
+                log::debug!("skip socks mock");
+                return Ok(Selector::Unselected(stream));
+            }
+
+            let mut socks_auth = get_auth!(config);
+
+            let socket = match stream.socks5_handshake(&mut socks_auth).await {
                 Err(e) if !e.is_socks_error() => return Err(e),
                 Err(_) => return Ok(Selector::Unselected(stream)),
                 Ok(socket) => socket,
@@ -101,22 +118,29 @@ where
     }
 }
 
-impl<S, U> Provider<Fallback<S>> for SocksMock<U>
+impl<S, U> Provider<(Fallback<S>, Arc<super::super::server::Config>)> for SocksMock<U>
 where
     S: Stream + Send + Sync + 'static,
     U: UdpSocket + Unpin + Send + Sync + 'static,
 {
     type Output = BoxedFuture<Selector<S>>;
 
-    fn call(&self, stream: Fallback<S>) -> Self::Output {
+    fn call(
+        &self,
+        (stream, config): (Fallback<S>, Arc<super::super::server::Config>),
+    ) -> Self::Output {
         let udp_provider = self.udp_provider.clone();
         Box::pin(async move {
             let mut stream = stream;
 
-            let socket = match stream
-                .socks5_handshake(&mut S5Authenticate::default())
-                .await
-            {
+            if !config.enable_socks {
+                log::debug!("skip socks mock");
+                return Ok(Selector::Unselected(stream));
+            }
+
+            let mut socks_auth = get_auth!(config);
+
+            let socket = match stream.socks5_handshake(&mut socks_auth).await {
                 Err(e) if !e.is_socks_error() => return Err(e),
                 Err(_) => return Ok(Selector::Unselected(stream)),
                 Ok(socket) => socket,
@@ -130,16 +154,21 @@ where
                     socket,
                 ))),
                 SocketKind::Udp => Ok({
-                    let stream = stream.into_inner();
-                    let udp_forward = SocksUdpForward {
-                        udp_provider,
-                        stream: std::sync::Mutex::new(Some(stream)),
-                    };
-
-                    Selector::Checked(Peer::Route(
-                        Visitor::Provider(WrappedProvider::wrap(udp_forward)),
-                        Socket::ufd(socket.into_addr()),
-                    ))
+                    if !config.enable_socks_udp {
+                        log::debug!("skip udp forwarding");
+                        socks::finish_udp_forward(&mut stream).await?;
+                        Selector::Checked(Peer::Finished(stream))
+                    } else {
+                        let stream = stream.into_inner();
+                        let udp_forward = SocksUdpForward {
+                            udp_provider,
+                            stream: std::sync::Mutex::new(Some(stream)),
+                        };
+                        Selector::Checked(Peer::Route(
+                            Visitor::Provider(WrappedProvider::wrap(udp_forward)),
+                            Socket::ufd(socket.into_addr()),
+                        ))
+                    }
                 }),
                 _ => unsafe { std::hint::unreachable_unchecked() },
             }

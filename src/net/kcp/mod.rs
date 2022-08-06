@@ -735,6 +735,7 @@ mod tests {
     use super::{KcpConnector, KcpListener};
 
     fn init_logger() {
+        #[cfg(feature = "fuso-log")]
         env_logger::builder()
             .filter_module("fuso", log::LevelFilter::Debug)
             .init();

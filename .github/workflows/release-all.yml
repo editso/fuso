@@ -22,7 +22,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --release --target ${{ matrix.arch }}
+          args: --release --target ${{ matrix.arch }} --features "fuso-log"
 
       - uses: actions/upload-artifact@v2
         with:
@@ -67,7 +67,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --release --target ${{ matrix.arch }}
+          args: --release --target ${{ matrix.arch }} --features "fuso-log"
       - uses: actions/upload-artifact@v2
         with:
           name: ${{ matrix.arch }}
@@ -101,6 +101,7 @@ jobs:
           - i686-unknown-linux-musl
 
     steps:
+      - run: sudo apt -y install musl-tools
       - uses: actions/checkout@v2
         with:
           submodules: true
@@ -111,7 +112,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --release --target ${{ matrix.arch }}
+          args: --release --target ${{ matrix.arch }} --features "fuso-log"
 
       - uses: actions/upload-artifact@v2
         with:

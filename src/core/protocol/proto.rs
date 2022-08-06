@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Addr, Address, Socket};
 
+use super::make_packet;
+
 pub const MAGIC: u32 = 0xFC;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,11 +60,28 @@ pub trait ToBytes {
     fn bytes(self) -> Vec<u8>;
 }
 
+pub trait IntoPacket {
+    fn into_packet(self) -> Packet;
+}
+
 pub trait TryToPoto {
     fn try_poto(self) -> crate::Result<Poto>;
 }
 
-impl ToBytes for Poto {
+impl<T> IntoPacket for T
+where
+    T: Serialize,
+{
+    fn into_packet(self) -> Packet {
+        let data = unsafe { bincode::serialize(&self).unwrap_unchecked() };
+        make_packet(data)
+    }
+}
+
+impl<T> ToBytes for T
+where
+    T: Serialize,
+{
     fn bytes(self) -> Vec<u8> {
         let data = unsafe { bincode::serialize(&self).unwrap_unchecked() };
         super::make_packet(data).encode()

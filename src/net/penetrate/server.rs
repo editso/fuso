@@ -1,6 +1,8 @@
 use std::{collections::HashMap, fmt::Display, pin::Pin, sync::Arc, task::Poll, time::Duration};
 
 use crate::penetrate::accepter::PenetrateAccepter;
+use crate::penetrate::client;
+use crate::protocol::IntoPacket;
 use crate::sync::Mutex;
 use std::future::Future;
 
@@ -18,7 +20,7 @@ use crate::{
 use super::accepter::Pen;
 use super::mock::Mock;
 use super::PenetrateObserver;
-use crate::{join, time, Address, Error, Kind, NetSocket, Processor};
+use crate::{join, time, Address, Error, Kind, NetSocket, Processor, Platform};
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
 
@@ -32,6 +34,41 @@ macro_rules! throw_client_error {
             }
         }
     };
+}
+
+macro_rules! read_client_config {
+    ($client: expr) => {{
+        let config = $client.recv_packet().await;
+
+        if let Err(e) = config.as_ref() {
+            log::warn!("client error {}", e);
+            return Err(unsafe { config.unwrap_err_unchecked() });
+        }
+
+        let config = unsafe { config.unwrap_unchecked() };
+
+        let config = bincode::deserialize::<client::Config>(&config.payload);
+
+        if let Err(e) = config.as_ref() {
+            log::warn!("configuration error {}", e);
+            let err_msg = e.to_string().into_packet();
+            let err_msg = err_msg.encode();
+            if let Err(e) = $client.send_packet(&err_msg).await {
+                log::warn!("client error {}", e);
+            }
+            return Err(e.to_string().into());
+        } else {
+            log::debug!("recv client config ");
+            let ok_msg = "YES".into_packet();
+            let ok_msg = ok_msg.encode();
+            if let Err(e) = $client.send_packet(&ok_msg).await {
+                log::warn!("client error {}", e);
+                return Err(e);
+            }
+        }
+
+        unsafe { config.unwrap_unchecked() }
+    }};
 }
 
 pub enum Outcome<T> {
@@ -69,22 +106,28 @@ pub struct MQueue<T> {
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    pub is_mixed: bool,
-    pub max_wait_time: Duration,
-    pub heartbeat_timeout: Duration,
-    pub read_timeout: Option<Duration>,
-    pub write_timeout: Option<Duration>,
-    pub fallback_strict_mode: bool,
+    pub(super) whoami: String,
+    pub(super) is_mixed: bool,
+    pub(super) maximum_wait: Duration,
+    pub(super) heartbeat_delay: Duration,
+    pub(super) read_timeout: Option<Duration>,
+    pub(super) write_timeout: Option<Duration>,
+    pub(super) fallback_strict_mode: bool,
+    pub(super) enable_socks: bool,
+    pub(super) enable_socks_udp: bool,
+    pub(super) socks5_password: Option<String>,
+    pub(super) socks5_username: Option<String>,
+    pub(super) platform: Platform
 }
 
 pub struct PenetrateProvider<T> {
+    pub(crate) mock: Arc<Mock<T>>,
     pub(crate) config: Config,
-    pub(crate) converter: Arc<Mock<T>>,
 }
 
 pub struct Penetrate<P, S, A, O> {
     mock: Arc<Mock<S>>,
-    config: Config,
+    config: Arc<Config>,
     accepter: A,
     address: Address,
     writer: WriteHalf<S>,
@@ -119,6 +162,20 @@ impl<T> MQueue<T> {
     }
 }
 
+impl Config {
+    fn update(&mut self, config: client::Config) {
+        self.whoami = config.name;
+        self.enable_socks = config.enable_socks5 || config.enable_socks5_udp;
+        self.enable_socks_udp = config.enable_socks5_udp;
+        self.socks5_username = config.socks_username;
+        self.socks5_password = config.socks_password;
+        self.heartbeat_delay = config.heartbeat_delay;
+        self.maximum_wait = config.maximum_wait;
+        self.is_mixed = config.enable_kcp;
+        self.platform = config.platform;
+    }
+}
+
 impl<P, T, A, O> Penetrate<P, T, A, O>
 where
     T: Stream + Sync + Send + 'static,
@@ -143,11 +200,11 @@ where
         };
 
         let recv_fut = Self::poll_handle_recv(mqueue.clone(), reader.clone());
-        let write_fut = Self::poll_heartbeat_future(writer.clone(), config.heartbeat_timeout);
+        let write_fut = Self::poll_heartbeat_future(writer.clone(), config.heartbeat_delay);
 
         Self {
             writer,
-            config,
+            config: Arc::new(config),
             mock: converter,
             accepter,
             mqueue,
@@ -216,10 +273,11 @@ where
     fn async_penetrate_handle(self: &mut Pin<&mut Self>, pen: Pen<T>) -> BoxedFuture<State<T>> {
         let mut writer = self.writer.clone();
         let mock = self.mock.clone();
-        let timeout = self.config.max_wait_time;
+        let timeout = self.config.maximum_wait;
         let mqueue = self.mqueue.clone();
         let fallback_strict_mode = self.config.fallback_strict_mode;
         let processor = self.processor.clone();
+        let config = self.config.clone();
 
         let fut = async move {
             match pen {
@@ -227,7 +285,7 @@ where
                     let mut fallback = Fallback::new(visitor, fallback_strict_mode);
                     let visit_addr = fallback.peer_addr()?;
                     let _ = fallback.mark().await?;
-                    let peer = mock.call(fallback).await?;
+                    let peer = mock.call((fallback, config)).await?;
                     let (accept_tx, accept_ax) = async_channel::bounded(1);
                     let id = mqueue.push(accept_tx).await;
 
@@ -411,8 +469,8 @@ where
     type Output = BoxedFuture<PenetrateGenerator<P, S, A, O>>;
 
     fn call(&self, (mut client, processor): (S, Processor<P, S, O>)) -> Self::Output {
-        let peer_provider = self.converter.clone();
-        let config = self.config.clone();
+        let peer_provider = self.mock.clone();
+        let mut config = self.config.clone();
         Box::pin(async move {
             let poto = client.recv_packet().await?.try_poto()?;
             let penetrate = match poto {
@@ -459,10 +517,15 @@ where
                         e
                     })?;
 
+                    let client_config = read_client_config!(client);
+
+                    config.update(client_config);
+
                     processor.observer().on_pen_start(
                         &client.peer_addr()?,
                         &avisit.local_addr()?,
                         &aclient.local_addr()?,
+                        &config,
                     );
 
                     log::info!(
@@ -521,7 +584,7 @@ impl Display for Config {
         write!(
             f,
             "read_timeout = {:?}, write_timeout = {:?}, max_wait_time={:?}, heartbeat_time={:?}",
-            self.read_timeout, self.write_timeout, self.max_wait_time, self.heartbeat_timeout
+            self.read_timeout, self.write_timeout, self.maximum_wait, self.heartbeat_delay
         )
     }
 }

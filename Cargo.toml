@@ -84,6 +84,10 @@ optional = true
 
 [profile.release]
 lto = true
+debug = false
+rpath = false
+incremental = false
+overflow-checks = false
 opt-level = 'z'
 codegen-units = 1
 panic = 'abort'
@@ -91,7 +95,7 @@ panic = 'abort'
 
 [features]
 # 默认开启tokio异步 & clap参数解析器
-default = ['fuso-rt-tokio', "fuso-kcp","fuso-clap", "fuso-log", "bytes", "fuso-serde", "fuso-socks5", "fuso-crypt-rsa", "fuso-crypt-aes"]
+default = ['fuso-rt-tokio', "fuso-kcp","fuso-clap", "bytes", "fuso-serde", "fuso-socks5", "fuso-crypt-rsa", "fuso-crypt-aes"]
 # 只提供api，不提供web界面
 fuso-api = ["axum", "fuso-rt-tokio"]
 # web界面
@@ -127,7 +131,13 @@ fuso-crypt-aes = ["aes", "cbc"]
 [[bin]]
 name = "fuc"
 path = "src/bin/client.rs"
+required-features = ["fuso-log"]
+
+[[bin]]
+name = "fuc-quite"
+path = "src/bin/client-quite.rs"
 
 [[bin]]
 name = "fus"
 path = "src/bin/server.rs"
+required-features = ["fuso-log"]

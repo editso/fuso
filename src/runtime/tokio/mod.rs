@@ -161,6 +161,8 @@ pub fn builder_client_with_tokio(
         executor: TokioExecutor,
         handshake: None,
         client_provider: ClientProvider::with_tokio(),
+        retry_delay: None,
+        maximum_retries: None,
     }
 }
 

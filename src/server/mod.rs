@@ -57,6 +57,8 @@ where
             observer.on_connect(&client_addr);
 
             self.executor.spawn(async move {
+                let now = std::time::Instant::now();
+
                 let client = match handshake.as_ref() {
                     None => Ok((client, None)),
                     Some(provider) => {
@@ -84,7 +86,7 @@ where
                 };
 
                 if generator.is_err() {
-                    log::warn!("Failed to handle connection {}", unsafe {
+                    log::warn!("failed to handle connection {}", unsafe {
                         generator.unwrap_err_unchecked()
                     });
                     return;
@@ -107,7 +109,7 @@ where
 
                 log::warn!("stop processing");
 
-                observer.on_stop(&client_addr);
+                observer.on_stop(now,&client_addr);
             });
         }
     }

@@ -2,16 +2,24 @@ use std::sync::Arc;
 
 use crate::{Address, Error};
 
+use super::server;
+
 pub trait PenetrateObserver {
-    fn on_pen_start(&self, client: &Address, visit: &Address, server: &Address)
-    where
+    fn on_pen_start(
+        &self,
+        client: &Address,
+        visit: &Address,
+        server: &Address,
+        config: &server::Config,
+    ) where
         Self: Sized,
     {
         log::debug!(
-            "on_pen_start client: {}, visit: {}, server: {}",
+            "on_pen_start client: {}, visit: {}, server: {}, config: {:#?}",
             client,
             visit,
-            server
+            server,
+            config
         );
     }
 

@@ -1,4 +1,4 @@
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use crate::{
     generator::Generator, ClientProvider, DecorateProvider, Executor, Fuso, Processor, Provider,
@@ -11,6 +11,8 @@ type BoxedFuture<T> = Pin<Box<dyn Future<Output = crate::Result<T>> + Send + 'st
 
 pub struct ClientBuilder<E, P, S> {
     pub(crate) executor: E,
+    pub(crate) retry_delay: Option<Duration>,
+    pub(crate) maximum_retries: Option<usize>,
     pub(crate) handshake: Option<WrappedProvider<S, (S, Option<DecorateProvider<S>>)>>,
     pub(crate) client_provider: ClientProvider<P>,
 }
@@ -23,7 +25,10 @@ where
 {
     pub fn using_handshake<H>(mut self, handshake: H) -> Self
     where
-        H: Provider<S, Output = BoxedFuture<(S, Option<DecorateProvider<S>>)>> + Send + Sync + 'static,
+        H: Provider<S, Output = BoxedFuture<(S, Option<DecorateProvider<S>>)>>
+            + Send
+            + Sync
+            + 'static,
     {
         self.handshake = Some(WrappedProvider::wrap(handshake));
         self
@@ -41,6 +46,8 @@ where
 
         Fuso(Client {
             socket: socket.clone(),
+            maximum_retries: self.maximum_retries,
+            retry_delay: self.retry_delay.unwrap_or(Duration::from_secs(5)),
             handler: Arc::new(handler),
             executor: Arc::new(self.executor),
             handshake: self.handshake,

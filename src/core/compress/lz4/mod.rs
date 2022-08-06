@@ -468,6 +468,7 @@ mod tests {
     };
 
     fn init_logger() {
+        #[cfg(feature = "fuso-log")]
         env_logger::Builder::default()
             .filter_module("fuso", log::LevelFilter::Debug)
             .init();

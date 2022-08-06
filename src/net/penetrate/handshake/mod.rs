@@ -23,12 +23,13 @@ pub struct PenetrateAesAndLz4Decorator {
 
 impl PenetrateRsaAndAesHandshake {
     pub fn server_handshake<S>(
-        mut client: S,
+        client: S,
     ) -> BoxedFuture<(FusoStream, Option<DecorateProvider<FusoStream>>)>
     where
         S: Stream + Unpin + Send + 'static,
     {
         Box::pin(async move {
+            let mut client = Lz4Compress::new(client);
             let mut buf = [0u8; 4];
             client.read_exact(&mut buf).await?;
             let len = u32::from_be_bytes(buf) as usize;
@@ -72,12 +73,13 @@ impl PenetrateRsaAndAesHandshake {
     }
 
     pub fn client_handshake<S>(
-        mut stream: S,
+        stream: S,
     ) -> BoxedFuture<(FusoStream, Option<DecorateProvider<FusoStream>>)>
     where
         S: Stream + Unpin + Send + 'static,
     {
         Box::pin(async move {
+            let mut stream = Lz4Compress::new(stream);
             let priv_key = rsa::RsaPrivateKey::new(&mut rand::thread_rng(), 1024)?;
             let publ_key = rsa::RsaPublicKey::from(&priv_key);
 
@@ -103,8 +105,7 @@ impl PenetrateRsaAndAesHandshake {
 
             let server_publ_key = rsa::RsaPublicKey::from_public_key_der(&buf)?;
 
-            let mut fuso_stream =
-                RSAEncryptor::new(stream, server_publ_key, priv_key).into_boxed_stream();
+            let mut fuso_stream = RSAEncryptor::new(stream, server_publ_key, priv_key);
 
             let mut iv = [0u8; 16];
             let mut key = [0u8; 16];
@@ -118,7 +119,7 @@ impl PenetrateRsaAndAesHandshake {
             fuso_stream.write_all(&key).await?;
 
             Ok((
-                fuso_stream,
+                fuso_stream.into_boxed_stream(),
                 Some(DecorateProvider::wrap(PenetrateAesAndLz4Decorator {
                     iv,
                     key,

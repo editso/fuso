@@ -3,7 +3,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{future::Future, task::Poll};
 
+use serde::{Deserialize, Serialize};
+
 use crate::io::{ReadHalf, WriteHalf};
+use crate::protocol::IntoPacket;
 use crate::{
     client::Route,
     generator::Generator,
@@ -11,7 +14,7 @@ use crate::{
     Kind, Socket, Stream, {ClientProvider, Provider},
 };
 
-use crate::{io, join, time, Address, Processor};
+use crate::{io, join, time, Address, Processor, Platform};
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
 
@@ -47,7 +50,31 @@ macro_rules! default_socket {
     }};
 }
 
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Config {
+    /// 服务名
+    pub(super) name: String,
+    /// 创建连接等待时间, 超过视为超时
+    pub(super) maximum_wait: Duration,
+    /// 心跳延时
+    pub(super) heartbeat_delay: Duration,
+    /// 是否启用 kcp
+    pub(super) enable_kcp: bool,
+    /// 是否启用socks5
+    pub(super) enable_socks5: bool,
+    /// socks5用户名
+    pub(super) socks_username: Option<String>,
+    /// socks5密码
+    pub(super) socks_password: Option<String>,
+    /// 是否启用socks5 udp转发
+    pub(super) enable_socks5_udp: bool,
+    pub(super) version: String,
+    pub(super) platform: Platform
+}
+
 pub struct PenetrateClientProvider<C> {
+    pub config: Config,
     pub forward: (Socket, Socket),
     pub connector_provider: Arc<C>,
 }
@@ -60,8 +87,9 @@ enum State {
 }
 
 pub struct PenetrateClient<P, C, S> {
-    forward: (Address, Socket),
     reader: ReadHalf<S>,
+    config: Config,
+    forward: (Address, Socket),
     writer: WriteHalf<S>,
     futures: Vec<BoxedFuture<State>>,
     processor: Processor<ClientProvider<P>, S, ()>,
@@ -78,6 +106,7 @@ where
 
     fn call(&self, (stream, processor): (S, Processor<ClientProvider<P>, S, ()>)) -> Self::Output {
         let socket = self.forward.clone();
+        let config = self.config.clone();
 
         let connector_provider = self.connector_provider.clone();
 
@@ -85,7 +114,7 @@ where
             let mut stream = stream;
             let (visit_addr, route_addr) = socket;
             let bind = Poto::Bind(Bind::Setup(
-                Socket::tcp(0).if_stream_mixed(true),
+                Socket::tcp(0).if_stream_mixed(config.enable_kcp),
                 visit_addr.clone(),
             ))
             .bytes();
@@ -112,6 +141,36 @@ where
 
             match message {
                 Poto::Bind(Bind::Success(mut server_addr, mut visit_addr)) => {
+                    let copy_cfg = config.clone();
+                    let config_packet = config.into_packet();
+                    let config_bytes = config_packet.encode();
+
+                    if let Err(e) = stream.send_packet(&config_bytes).await {
+                        log::warn!("server error {}", e);
+                        return Err(e);
+                    };
+
+                    let configured = stream.recv_packet().await;
+
+                    if let Err(e) = configured.as_ref() {
+                        log::warn!("server error {}", e);
+                        return Err(unsafe { configured.unwrap_err_unchecked() });
+                    }
+
+                    let configured = unsafe { configured.unwrap_unchecked() };
+                    let configured = bincode::deserialize::<String>(&configured.payload);
+                    if let Err(e) = configured.as_ref() {
+                        log::warn!("server configuration error {}", e);
+                        return Err(e.to_string().into());
+                    };
+
+                    let configured = unsafe { configured.unwrap_unchecked() };
+
+                    if configured.ne("YES") {
+                        log::warn!("server configuration error {}", configured);
+                        return Err(configured.into());
+                    };
+
                     default_socket!(visit_addr, processor.default_socket());
                     default_socket!(server_addr, processor.default_socket());
 
@@ -121,6 +180,7 @@ where
                     Ok(PenetrateClient::new(
                         (server_addr, route_addr),
                         stream,
+                        copy_cfg,
                         processor,
                         connector_provider,
                     ))
@@ -153,17 +213,22 @@ where
     pub fn new(
         socket: (Address, Socket),
         conn: S,
+        config: Config,
         processor: Processor<ClientProvider<P>, S, ()>,
         connector_provider: Arc<C>,
     ) -> Self {
         let (reader, writer) = io::split(conn);
 
         let fut1 = Box::pin(Self::register_server_handle(reader.clone()));
-        let fut2 = Box::pin(Self::guard_server_heartbeat(writer.clone()));
+        let fut2 = Box::pin(Self::guard_server_heartbeat(
+            writer.clone(),
+            config.maximum_wait,
+        ));
 
         Self {
             forward: socket,
             processor,
+            config,
             connector_provider,
             reader: reader.clone(),
             writer: writer.clone(),
@@ -171,7 +236,10 @@ where
         }
     }
 
-    async fn guard_server_heartbeat(mut writer: WriteHalf<S>) -> crate::Result<State> {
+    async fn guard_server_heartbeat(
+        mut writer: WriteHalf<S>,
+        timeout: Duration,
+    ) -> crate::Result<State> {
         let ping = Poto::Ping.bytes();
 
         loop {
@@ -180,7 +248,7 @@ where
                 return Ok(State::Error(e));
             }
 
-            time::sleep(Duration::from_secs(10)).await;
+            time::sleep(timeout).await;
         }
     }
 
@@ -217,6 +285,7 @@ where
     ) -> BoxedFuture<State> {
         let s1_connector = self.processor.clone();
         let s2_connector = self.connector_provider.clone();
+        let maximum_wait = self.config.maximum_wait.clone();
 
         let server_fut = async_connect!(self.writer, s1_connector, id, server_socket);
         let client_fut = async_connect!(self.writer, s2_connector, id, target_socket);
@@ -225,11 +294,8 @@ where
 
         let future = async move {
             let mut server_writer = server_writer;
-            let result = time::wait_for(
-                Duration::from_secs(5),
-                join::join_output(server_fut, client_fut),
-            )
-            .await;
+            let result =
+                time::wait_for(maximum_wait, join::join_output(server_fut, client_fut)).await;
 
             let result = match result {
                 Err(e) => Err(e),

@@ -6,8 +6,8 @@ pub use builder::*;
 
 use crate::{
     generator::{Generator, GeneratorEx},
-    time, ClientProvider, DecorateProvider, Executor, Fuso, Processor, Provider, Serve, Socket,
-    Stream, WrappedProvider,
+    time, ClientProvider, DecorateProvider, Executor, Fuso, Kind, Processor, Provider, Serve,
+    Socket, Stream, WrappedProvider,
 };
 
 type BoxedFuture<T> = Pin<Box<dyn Future<Output = crate::Result<T>> + Send + 'static>>;
@@ -21,6 +21,8 @@ pub struct Client<E, H, P, S> {
     pub(crate) socket: Socket,
     pub(crate) executor: Arc<E>,
     pub(crate) handler: Arc<H>,
+    pub(crate) maximum_retries: Option<usize>,
+    pub(crate) retry_delay: Duration,
     pub(crate) handshake: Option<WrappedProvider<S, (S, Option<DecorateProvider<S>>)>>,
     pub(crate) client_provider: ClientProvider<P>,
 }
@@ -31,12 +33,17 @@ where
     S: Stream + Send + 'static,
     P: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
     G: Generator<Output = Option<BoxedFuture<()>>> + Unpin + Send + 'static,
-    H: Provider<(S, Processor<ClientProvider<P>, S, ()>), Output = BoxedFuture<G>> + Send + Sync + 'static,
+    H: Provider<(S, Processor<ClientProvider<P>, S, ()>), Output = BoxedFuture<G>>
+        + Send
+        + Sync
+        + 'static,
 {
     async fn run(self) -> crate::Result<()> {
         let executor = self.executor;
         let provider = self.client_provider.clone();
         let handshake = self.handshake;
+        let mut retries_count = 0;
+        let maximum_retries = self.maximum_retries;
 
         loop {
             let socket = self.socket.clone();
@@ -48,7 +55,18 @@ where
                 }
                 Err(e) => {
                     log::warn!("connect to {} failed err: {}", self.socket, e);
-                    time::sleep(Duration::from_secs(2)).await;
+                    time::sleep(self.retry_delay).await;
+
+                    if let Some(retries) = maximum_retries {
+                        if retries > retries_count {
+                            break Err(Kind::MaxRetries(retries).into());
+                        }
+                    }
+
+                    retries_count += 1;
+
+                    log::debug!("reconnect({}) to {} ", retries_count, self.socket);
+
                     continue;
                 }
             };
@@ -71,7 +89,8 @@ where
             let mut generate = match self.handler.call((server, processor)).await {
                 Ok(generate) => generate,
                 Err(e) => {
-                    log::warn!("{}", e);
+                    log::warn!("processing failed ! err: {}", e);
+                    time::sleep(self.retry_delay).await;
                     continue;
                 }
             };
@@ -83,7 +102,8 @@ where
                         executor.spawn(fut);
                     }
                     Err(e) => {
-                        log::error!("{}", e);
+                        log::error!("encountered an error err: {}", e);
+                        time::sleep(self.retry_delay).await;
                         break;
                     }
                 }
@@ -95,7 +115,10 @@ where
 impl<E, H, P, S, G> Fuso<Client<E, H, P, S>>
 where
     E: Executor + 'static,
-    H: Provider<(S, Processor<ClientProvider<P>, S, ()>), Output = BoxedFuture<G>> + Send + Sync + 'static,
+    H: Provider<(S, Processor<ClientProvider<P>, S, ()>), Output = BoxedFuture<G>>
+        + Send
+        + Sync
+        + 'static,
     P: Provider<Socket, Output = BoxedFuture<S>> + Send + Sync + 'static,
     S: Stream + Send + 'static,
     G: Generator<Output = Option<BoxedFuture<()>>> + Unpin + Send + 'static,
