@@ -10,7 +10,7 @@ use crate::{
     },
     protocol::{make_packet, AsyncRecvPacket, AsyncSendPacket, Poto, ToBytes, TryToPoto},
     select::Select,
-    socks::{self, NoAuthentication, Socks},
+    socks::{self, S5Authenticate, Socks},
     Addr, Kind, Provider, Socket, SocketKind, Stream, UdpReceiverExt, UdpSocket, WrappedProvider,
 };
 
@@ -76,7 +76,7 @@ where
             let mut stream = stream;
 
             let socket = match stream
-                .socks5_handshake(&mut NoAuthentication::default())
+                .socks5_handshake(&mut S5Authenticate::default())
                 .await
             {
                 Err(e) if !e.is_socks_error() => return Err(e),
@@ -111,7 +111,7 @@ where
             let mut stream = stream;
 
             let socket = match stream
-                .socks5_handshake(&mut NoAuthentication::default())
+                .socks5_handshake(&mut S5Authenticate::default())
                 .await
             {
                 Err(e) if !e.is_socks_error() => return Err(e),

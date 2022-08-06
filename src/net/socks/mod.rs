@@ -54,22 +54,6 @@ struct Head {
     nmethod: u8,
 }
 
-#[derive(Clone, Debug, Copy)]
-pub enum Method {
-    // no auth
-    No,
-    /// gssapi
-    GSSAPI,
-    /// username and password
-    User,
-    /// iana
-    IANA(u8),
-    /// private
-    Private,
-    ///
-    NotSupport,
-}
-
 #[pin_project::pin_project]
 pub struct Socks5<'a, S, A> {
     state: State,
@@ -107,22 +91,6 @@ pub trait Socks5Auth<S> {
         stream: Pin<&mut S>,
         methods: &[u8],
     ) -> Poll<crate::Result<()>>;
-}
-
-impl TryFrom<u8> for Method {
-    type Error = crate::Error;
-
-    fn try_from(method: u8) -> Result<Self, Self::Error> {
-        Ok(match method {
-            0x00 => Self::No,
-            0x01 => Self::GSSAPI,
-            0x02 => Self::User,
-            0x80 => Self::Private,
-            0xFF => Self::NotSupport,
-            m if m >= 0x03 && m <= 0x0A => Self::IANA(m),
-            _ => return Err(SocksErr::Method(method).into()),
-        })
-    }
 }
 
 impl<'a> TryFrom<&'a [u8]> for Head {
@@ -223,9 +191,15 @@ where
 
         loop {
             match state {
+                // +----+----------+----------+
+                // |VER | NMETHODS | METHODS  |
+                // +----+----------+----------+
+                // | 1  |    1     | 1 to 255 |
+                // +----+----------+----------+
                 State::Handshake if read_buf.is_empty() => {
                     read_buf.resize(2, 0);
                 }
+
                 State::Handshake if *read_offset == 2 => {
                     let head = Head::try_from(&read_buf[..*read_offset])?;
 
@@ -239,6 +213,17 @@ where
                         State::Authentication(head.nmethod as usize),
                     ));
                 }
+                // +----+--------+
+                // |VER | METHOD |
+                // +----+--------+
+                // | 1  |   1    |
+                // +----+--------+                
+                //   o  X'00' NO AUTHENTICATION REQUIRED
+                //   o  X'01' GSSAPI
+                //   o  X'02' USERNAME/PASSWORD
+                //   o  X'03' to X'7F' IANA ASSIGNED
+                //   o  X'80' to X'FE' RESERVED FOR PRIVATE METHODS
+                //   o  X'FF' NO ACCEPTABLE METHODS
                 State::Authentication(methods) if *methods == *read_offset => {
                     ready!(Pin::new(&mut **auth).poll_auth(
                         cx,
@@ -390,7 +375,7 @@ where
     let frag = data[2];
     let atype = data[3];
 
-    log::debug!(
+    log::trace!(
         "rsv={}, frag={}, atype={} data={}bytes",
         rsv,
         frag,
@@ -415,7 +400,7 @@ where
 
     s1.write_all(&data).await?;
 
-    log::debug!("send forward data success");
+    log::trace!("send forward data success");
 
     Ok(addr)
 }
@@ -457,10 +442,10 @@ where
     buf.extend(data);
 
     match udp.send_to(to, &buf).await {
-        Err(e) => Err(e),
-        Ok(n) => {
-            log::debug!("forward {}bytes", n);
-            Ok(())
+        Ok(_) => Ok(()),
+        Err(e) => {
+            log::warn!("udp forward fail {} {}", to, e);
+            Err(e)
         }
     }
 }

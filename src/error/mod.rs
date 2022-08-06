@@ -33,6 +33,7 @@ pub enum PacketErr {
 #[derive(Debug)]
 pub enum SocksErr {
     Protocol,
+    Authenticate,
     InvalidAddress,
     BindNotSupport,
     Head { ver: u8, nmethod: u8 },
@@ -159,6 +160,7 @@ impl Display for SocksErr {
         write!(f, "{}", {
             match self {
                 SocksErr::Protocol => format!("invalid socks5 protocol"),
+                SocksErr::Authenticate => format!("socks5 authentication failed"),
                 SocksErr::InvalidAddress => format!("invalid address"),
                 SocksErr::BindNotSupport => format!("bind not support"),
                 SocksErr::Head { ver, nmethod } => {
@@ -246,7 +248,7 @@ impl Display for EncryptionErr {
                 EncryptionErr::Aes(e) => format!("{}", e),
                 EncryptionErr::Rsa(e) => format!("{}", e),
                 EncryptionErr::RsaPkcs7(e) => format!("{}", e),
-                EncryptionErr::RsaSpki(e) => format!("{}", e)
+                EncryptionErr::RsaSpki(e) => format!("{}", e),
             }
         })
     }
