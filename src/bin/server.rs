@@ -37,15 +37,6 @@ pub struct FusoArgs {
     /// 发送心跳延时
     #[clap(long, default_value = "30")]
     heartbeat_delay: u64,
-    /// 最大等待读取时间
-    #[clap(long, default_value = "5")]
-    maximum_rtime: u64,
-    /// 最大等待写入时间
-    #[clap(long, default_value = "5")]
-    maximum_wtime: u64,
-    /// 最大等待建立连接时间
-    #[clap(long, default_value = "10")]
-    maximum_wctime: u64,
 }
 
 fn init_logger(log_level: log::LevelFilter) {
@@ -54,20 +45,17 @@ fn init_logger(log_level: log::LevelFilter) {
         .filter_module("fuso", log_level)
         .default_format()
         .format_timestamp_millis()
-        .format_target({
-            if is_info_log {
-                false
-            } else {
-                cfg!(debug_assert)
-            }
-        })
+        .format_target(!is_info_log)
         .init();
 }
 
 #[cfg(feature = "fuso-rt-tokio")]
 #[tokio::main]
 async fn main() -> fuso::Result<()> {
-    use fuso::{Socket, TokioExecutor, TokioUdpServerProvider, UdpForwardProvider, penetrate::PenetrateRsaAndAesHandshake};
+    use fuso::{
+        penetrate::PenetrateRsaAndAesHandshake, Socket, TokioExecutor, TokioUdpServerProvider,
+        UdpForwardProvider,
+    };
     use std::time::Duration;
 
     let args = FusoArgs::parse();
@@ -78,7 +66,7 @@ async fn main() -> fuso::Result<()> {
         .using_handshake(PenetrateRsaAndAesHandshake::Server)
         .using_kcp(TokioUdpServerProvider, TokioExecutor)
         .using_penetrate()
-        .max_wait_time(Duration::from_secs(args.maximum_wctime))
+        .max_wait_time(Duration::from_secs(10))
         .heartbeat_timeout(Duration::from_secs(args.heartbeat_delay))
         .using_adapter()
         .using_direct()

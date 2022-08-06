@@ -6,11 +6,11 @@ use crate::{
     io,
     penetrate::{
         server::{Peer, Visitor},
-        Selector, PenetrateSelectorBuilder,
+        PenetrateSelectorBuilder, Selector,
     },
     protocol::{make_packet, AsyncRecvPacket, AsyncSendPacket, Poto, ToBytes, TryToPoto},
-    socks::{self, S5Authenticate, Socks},
     select::Select,
+    socks::{self, S5Authenticate, Socks},
     Addr, Kind, Provider, Socket, SocketKind, Stream, UdpReceiverExt, UdpSocket, WrappedProvider,
 };
 
@@ -20,27 +20,27 @@ pub struct PenetrateSocksBuilder<E, P, S, O> {
     pub(crate) adapter_builder: PenetrateSelectorBuilder<E, P, S, O>,
 }
 
+pub struct SimpleSocksMock;
+
 pub struct SocksMock<U> {
     pub(crate) udp_provider: Arc<WrappedProvider<(), (SocketAddr, U)>>,
 }
 
-pub struct SimpleSocksConverter;
-
-pub struct SocksUdpForwardConverter<U>(pub(crate) WrappedProvider<Addr, (SocketAddr, U)>);
+pub struct SocksUdpForwardMock<U>(pub(crate) WrappedProvider<Addr, (SocketAddr, U)>);
 
 pub struct SocksUdpForward<S, U> {
+    stream: std::sync::Mutex<Option<S>>,
     udp_provider: Arc<WrappedProvider<(), (SocketAddr, U)>>,
-    guard: std::sync::Mutex<Option<S>>,
 }
 
 impl<E, P, S, O> PenetrateSocksBuilder<E, P, S, O>
 where
     S: Stream + Send + Sync + 'static,
 {
-    pub fn no_udp_forward(mut self) -> PenetrateSelectorBuilder<E, P, S, O> {
+    pub fn simple(mut self) -> PenetrateSelectorBuilder<E, P, S, O> {
         self.adapter_builder
             .adapters
-            .insert(0, WrappedProvider::wrap(SimpleSocksConverter));
+            .insert(0, WrappedProvider::wrap(SimpleSocksMock));
 
         self.adapter_builder
     }
@@ -65,7 +65,7 @@ where
     }
 }
 
-impl<S> Provider<Fallback<S>> for SimpleSocksConverter
+impl<S> Provider<Fallback<S>> for SimpleSocksMock
 where
     S: Stream + Send + Sync + 'static,
 {
@@ -87,7 +87,10 @@ where
             stream.consume_back_data();
 
             match socket.kind() {
-                SocketKind::Tcp => Ok(Selector::Checked(Peer::Route(Visitor::Route(stream), socket))),
+                SocketKind::Tcp => Ok(Selector::Checked(Peer::Route(
+                    Visitor::Route(stream),
+                    socket,
+                ))),
                 SocketKind::Udp => Ok({
                     socks::finish_udp_forward(&mut stream).await?;
                     Selector::Checked(Peer::Finished(stream))
@@ -122,12 +125,15 @@ where
             stream.consume_back_data();
 
             match socket.kind() {
-                SocketKind::Tcp => Ok(Selector::Checked(Peer::Route(Visitor::Route(stream), socket))),
+                SocketKind::Tcp => Ok(Selector::Checked(Peer::Route(
+                    Visitor::Route(stream),
+                    socket,
+                ))),
                 SocketKind::Udp => Ok({
                     let stream = stream.into_inner();
                     let udp_forward = SocksUdpForward {
                         udp_provider,
-                        guard: std::sync::Mutex::new(Some(stream)),
+                        stream: std::sync::Mutex::new(Some(stream)),
                     };
 
                     Selector::Checked(Peer::Route(
@@ -150,7 +156,7 @@ where
 
     fn call(&self, s2: Fallback<S>) -> Self::Output {
         let s2 = s2.into_inner();
-        let s1 = match self.guard.lock() {
+        let s1 = match self.stream.lock() {
             Err(_) => return Box::pin(async move { Err(Kind::Once.into()) }),
             Ok(mut lock) => match lock.take() {
                 None => return Box::pin(async move { Err(Kind::Once.into()) }),
@@ -238,7 +244,7 @@ where
     }
 }
 
-impl<S, U> Provider<S> for SocksUdpForwardConverter<U>
+impl<S, U> Provider<S> for SocksUdpForwardMock<U>
 where
     S: Stream + Send + 'static,
     U: UdpSocket + Send + Unpin + Sync + 'static,

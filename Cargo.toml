@@ -1,8 +1,17 @@
 [package]
 name = "fuso"
-version = "0.1.0"
+version = "1.0.5-beta"
 edition = "2021"
 build = "build.rs"
+authors = ["editso <https://github.com/editso>"]
+description = "An intranet penetration proxy tool"
+license = "GPL-3.0"
+keywords = ["proxy", "penetrate", "socks5", "async", "small", "networking"]
+categories = ["proxy", "network-programming"]
+repository = "https://github.com/editso/fuso"
+homepage = "https://github.com/editso/fuso"
+
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [build-dependencies]
@@ -77,8 +86,7 @@ optional = true
 lto = true
 opt-level = 'z'
 codegen-units = 1
-# panic = 'abort'
-debug = false
+panic = 'abort'
 
 
 [features]

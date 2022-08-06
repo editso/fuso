@@ -9,7 +9,7 @@ use tokio::net::TcpStream;
 use crate::{
     client::Route,
     kcp::KcpConnector,
-    penetrate::SocksUdpForwardConverter,
+    penetrate::SocksUdpForwardMock,
     udp::{Datagram, VirtualUdpSocket},
     Addr, Address, FusoStream, InnerAddr, InvalidAddr, NetSocket, Provider, Socket, SocketErr,
     SocketKind, ToBoxStream, TokioExecutor, WrappedProvider,
@@ -91,7 +91,7 @@ impl Provider<Socket> for TokioPenetrateConnector {
                     let provider = WrappedProvider::wrap(UdpForwardClientProvider(udp));
 
                     Ok(Route::Provider(WrappedProvider::wrap(
-                        SocksUdpForwardConverter(provider),
+                        SocksUdpForwardMock(provider),
                     )))
                 }
                 _ => Err(SocketErr::NotSupport(socket).into()),

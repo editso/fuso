@@ -59,7 +59,7 @@ impl PenetrateRsaAndAesHandshake {
 
             fuso_stream.read_exact(&mut key).await?;
 
-            log::info!("iv: {:?}, key: {:?}", iv, key);
+            log::trace!("iv: {:?}, key: {:?}", iv, key);
 
             Ok((
                 fuso_stream.into_boxed_stream(),
@@ -112,7 +112,7 @@ impl PenetrateRsaAndAesHandshake {
             iv.fill_with(rand::random);
             key.fill_with(rand::random);
 
-            log::info!("iv: {:?}, key: {:?}", iv, key);
+            log::trace!("iv: {:?}, key: {:?}", iv, key);
 
             fuso_stream.write_all(&iv).await?;
             fuso_stream.write_all(&key).await?;

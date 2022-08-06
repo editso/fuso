@@ -4,12 +4,13 @@ use crate::{
     client::{Client, ClientBuilder, Route},
     guard::Fallback,
     server::{Server, ServerBuilder},
-    Accepter, Executor, Fuso, Provider, WrappedProvider, Socket, Stream,
+    Accepter, Executor, Fuso, Provider, Socket, Stream, WrappedProvider,
 };
 
 use super::{
     client::PenetrateClientProvider,
-    server::{Config, Peer, PenetrateProvider}, PenetrateObserver,
+    server::{Config, Peer, PenetrateProvider},
+    PenetrateObserver,
 };
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
@@ -25,6 +26,8 @@ pub struct PenetrateServerBuilder<E, P, S, O> {
 }
 
 pub struct PenetrateClientBuilder<E, CF, S> {
+    /// 服务名
+    name: String,
     /// 上游地址，也就是服务端地址
     upstream: Socket,
     /// 下游地址， 也就是本地需要映射的地址
@@ -37,6 +40,17 @@ pub struct PenetrateClientBuilder<E, CF, S> {
     maximum_retries: Option<usize>,
     /// 心跳延时
     heartbeat_delay: Option<Duration>,
+    /// 是否启用 kcp
+    enable_kcp: bool,
+    /// 是否启用socks5
+    enable_socks5: bool,
+    /// socks5用户名
+    socks_username: Option<String>,
+    /// socks5密码
+    socks_password: Option<String>,
+    /// 是否启用socks5 udp转发
+    enable_socks5_udp: bool,
+    /// builder ...
     client_builder: ClientBuilder<E, CF, S>,
 }
 
@@ -60,7 +74,7 @@ where
     A: Accepter<Stream = S> + Unpin + Send + 'static,
     S: Stream + Send + Sync + 'static,
     P: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
-    O: PenetrateObserver + Send + Sync + 'static
+    O: PenetrateObserver + Send + Sync + 'static,
 {
     pub fn read_timeout(mut self, time: Option<Duration>) -> Self {
         self.read_timeout = time;
@@ -117,6 +131,7 @@ impl<E, CF, S> ClientBuilder<E, CF, S> {
         downstream: U,
     ) -> PenetrateClientBuilder<E, CF, S> {
         PenetrateClientBuilder {
+            name: String::from("anonymous"),
             upstream: upstream.into(),
             downstream: downstream.into(),
             client_builder: self,
@@ -124,6 +139,11 @@ impl<E, CF, S> ClientBuilder<E, CF, S> {
             maximum_retries: None,
             reconnect_delay: None,
             heartbeat_delay: None,
+            enable_kcp: false,
+            enable_socks5: false,
+            socks_username: None,
+            socks_password: None,
+            enable_socks5_udp: false,
         }
     }
 }
@@ -136,6 +156,36 @@ where
 {
     pub fn reconnect_delay(mut self, delay: Duration) -> Self {
         self.reconnect_delay = Some(delay);
+        self
+    }
+
+    pub fn set_name(mut self, name: String) -> Self {
+        self.name = name;
+        self
+    }
+
+    pub fn enable_kcp(mut self, enable: bool) -> Self{
+        self.enable_kcp = enable;
+        self
+    }
+
+    pub fn enable_socks5(mut self, enable: bool) -> Self {
+        self.enable_socks5 = enable;
+        self
+    }
+
+    pub fn enable_socks5_udp(mut self, enable: bool) -> Self {
+        self.enable_socks5_udp = enable;
+        self
+    }
+
+    pub fn set_socks5_username(mut self, username: Option<String>) -> Self {
+        self.socks_username = username;
+        self
+    }
+
+    pub fn set_socks5_password(mut self, password: Option<String>) -> Self {
+        self.socks_password = password;
         self
     }
 

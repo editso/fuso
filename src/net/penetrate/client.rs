@@ -84,7 +84,7 @@ where
         Box::pin(async move {
             let mut stream = stream;
             let (visit_addr, route_addr) = socket;
-            let bind = Poto::Bind(Bind::Map(
+            let bind = Poto::Bind(Bind::Setup(
                 Socket::tcp(0).if_stream_mixed(true),
                 visit_addr.clone(),
             ))

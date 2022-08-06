@@ -83,14 +83,14 @@ pub struct PenetrateProvider<T> {
 }
 
 pub struct Penetrate<P, S, A, O> {
+    mock: Arc<Mock<S>>,
+    config: Config,
+    accepter: A,
     address: Address,
     writer: WriteHalf<S>,
     processor: Processor<P, S, O>,
-    config: Config,
     futures: Vec<BoxedFuture<State<S>>>,
-    accepter: A,
     mqueue: MQueue<async_channel::Sender<S>>,
-    converter: Arc<Mock<S>>,
     client_addr: Address,
 }
 
@@ -148,7 +148,7 @@ where
         Self {
             writer,
             config,
-            converter,
+            mock: converter,
             accepter,
             mqueue,
             client_addr,
@@ -215,7 +215,7 @@ where
 
     fn async_penetrate_handle(self: &mut Pin<&mut Self>, pen: Pen<T>) -> BoxedFuture<State<T>> {
         let mut writer = self.writer.clone();
-        let provider = self.converter.clone();
+        let mock = self.mock.clone();
         let timeout = self.config.max_wait_time;
         let mqueue = self.mqueue.clone();
         let fallback_strict_mode = self.config.fallback_strict_mode;
@@ -227,7 +227,7 @@ where
                     let mut fallback = Fallback::new(visitor, fallback_strict_mode);
                     let visit_addr = fallback.peer_addr()?;
                     let _ = fallback.mark().await?;
-                    let peer = provider.call(fallback).await?;
+                    let peer = mock.call(fallback).await?;
                     let (accept_tx, accept_ax) = async_channel::bounded(1);
                     let id = mqueue.push(accept_tx).await;
 
@@ -416,7 +416,7 @@ where
         Box::pin(async move {
             let poto = client.recv_packet().await?.try_poto()?;
             let penetrate = match poto {
-                Poto::Bind(Bind::Map(client_addr, visit_addr)) => {
+                Poto::Bind(Bind::Setup(client_addr, visit_addr)) => {
                     log::debug!("try to bind the server to {}", visit_addr);
                     let visit_fut = processor.bind(visit_addr);
                     let client_fut = processor.bind(client_addr);

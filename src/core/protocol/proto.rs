@@ -3,7 +3,7 @@ use std::fmt::Display;
 use bytes::{BufMut, BytesMut};
 use serde::{Deserialize, Serialize};
 
-use crate::{Addr, Socket, Address};
+use crate::{Addr, Address, Socket};
 
 pub const MAGIC: u32 = 0xFC;
 
@@ -22,7 +22,7 @@ pub enum Connect {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Bind {
-    Map(Socket, Socket),
+    Setup(Socket, Socket),
     Success(Address, Address),
     Failed(String),
 }

@@ -6,7 +6,7 @@ use std::pin::Pin;
 
 use self::socks::PenetrateSocksBuilder;
 
-pub use socks::SocksUdpForwardConverter;
+pub use socks::SocksUdpForwardMock;
 
 use super::{server::Peer, PenetrateSelectorBuilder};
 use crate::{guard::Fallback, Accepter, Executor, Provider, Socket, Stream, WrappedProvider};

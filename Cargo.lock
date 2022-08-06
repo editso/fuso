@@ -450,7 +450,7 @@ dependencies = [
 
 [[package]]
 name = "fuso"
-version = "0.1.0"
+version = "1.0.5-beta"
 dependencies = [
  "aes",
  "async-channel",

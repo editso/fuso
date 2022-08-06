@@ -48,10 +48,10 @@ where
     }
 }
 
-impl<S, A> Provider<Fallback<S>> for PenetrateSelector<A>
+impl<S, M> Provider<Fallback<S>> for PenetrateSelector<M>
 where
     S: Stream + Send + Unpin + 'static,
-    A: Provider<Fallback<S>, Output = BoxedFuture<Selector<S>>> + Sync + Send + 'static,
+    M: Provider<Fallback<S>, Output = BoxedFuture<Selector<S>>> + Sync + Send + 'static,
 {
     type Output = BoxedFuture<Peer<Fallback<S>>>;
 
