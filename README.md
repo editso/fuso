@@ -1,4 +1,4 @@
-# Fuso :  扶桑 (8.7日前发布全新版本)
+# Fuso :  扶桑
 A fast, stable, cross-platform and efficient intranet penetration and port forwarding tool
 
 一款 快速🚀 稳定 跨平台 高效的内网穿透，端口转发工具
