@@ -5,7 +5,7 @@ use std::{
     str::FromStr,
 };
 
-use rand::seq::IteratorRandom;
+use rand::seq::{IteratorRandom};
 use serde::{Deserialize, Serialize};
 
 use crate::{Error, InvalidAddr, Kind};
@@ -471,9 +471,8 @@ impl Address {
     pub fn select(&self, socket: &Socket) -> crate::Result<Socket> {
         match self {
             Address::One(socket) => Ok(socket.clone()),
-            Address::Many(addrs) => addrs
-                .into_iter()
-                .filter(|addr| match socket.kind() {
+            Address::Many(addrs) => {
+                let addrs = addrs.into_iter().filter(|addr| match socket.kind() {
                     SocketKind::Kcp => addr.is_kcp(),
                     SocketKind::Udp => addr.is_udp(),
                     SocketKind::Tcp => addr.is_tcp(),
@@ -485,10 +484,16 @@ impl Address {
                             || addr.is_tcp()
                             || addr.is_quic()
                     }
-                })
-                .choose(&mut rand::thread_rng())
-                .map(Clone::clone)
-                .ok_or_else(|| Error::from(Kind::Improper(socket.clone()))),
+                });
+
+                addrs
+                    .clone()
+                    .filter(|addr| addr.is_kcp())
+                    .choose(&mut rand::thread_rng())
+                    .or_else(|| addrs.choose(&mut rand::thread_rng()))
+                    .map(Clone::clone)
+                    .ok_or_else(|| Error::from(Kind::Improper(socket.clone())))
+            }
         }
     }
 }

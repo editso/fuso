@@ -36,6 +36,7 @@ pub enum SocksErr {
     Authenticate,
     InvalidAddress,
     BindNotSupport,
+    Socks5Frg,
     Head { ver: u8, nmethod: u8 },
     Method(u8),
     BadLength { expect: usize, current: usize },
@@ -165,6 +166,7 @@ impl Display for SocksErr {
                 SocksErr::Authenticate => format!("socks5 authentication failed"),
                 SocksErr::InvalidAddress => format!("invalid address"),
                 SocksErr::BindNotSupport => format!("bind not support"),
+                SocksErr::Socks5Frg => format!("fragment not support"),
                 SocksErr::Head { ver, nmethod } => {
                     format!("invalid socks5 head ver={}, nmethod={}", ver, nmethod)
                 }

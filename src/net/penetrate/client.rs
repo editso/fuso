@@ -114,7 +114,7 @@ where
             let mut stream = stream;
             let (visit_addr, route_addr) = socket;
             let bind = Poto::Bind(Bind::Setup(
-                Socket::tcp(0).if_stream_mixed(config.enable_kcp),
+                Socket::tcp(0).if_stream_mixed(config.enable_kcp || config.enable_socks5_udp),
                 visit_addr.clone(),
             ))
             .bytes();

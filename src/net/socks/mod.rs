@@ -217,7 +217,7 @@ where
                 // |VER | METHOD |
                 // +----+--------+
                 // | 1  |   1    |
-                // +----+--------+                
+                // +----+--------+
                 //   o  X'00' NO AUTHENTICATION REQUIRED
                 //   o  X'01' GSSAPI
                 //   o  X'02' USERNAME/PASSWORD
@@ -382,6 +382,11 @@ where
         atype,
         data.len()
     );
+
+    if frag != 0 {
+        log::warn!("frag is not supported !");
+        return Err(SocksErr::Socks5Frg.into());
+    }
 
     let (size, data) = match atype {
         0x03 => (data[4] as usize, &data[5..]),
