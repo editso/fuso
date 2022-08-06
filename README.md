@@ -87,7 +87,7 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 # 在不可以出网的机器上需要穿透80服务, 并且服务端监听8081端口
 # 此时fuc的服务端地址就不应该是服务器地址, 因为并不能出网, 所以需要连接到开启桥接服务的地址
 # 运行:
-> fuc 127.0.0.1 80 -b 8081 --fl 10.10.10.5 --fp 9004
+> fuc 127.0.0.1 80 -b 8081 --fh 10.10.10.5 --fp 9004
 
 ```
 
