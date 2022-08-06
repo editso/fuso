@@ -6,21 +6,21 @@ use crate::{
     io,
     penetrate::{
         server::{Peer, Visitor},
-        Adapter, PenetrateAdapterBuilder,
+        Selector, PenetrateSelectorBuilder,
     },
     protocol::{make_packet, AsyncRecvPacket, AsyncSendPacket, Poto, ToBytes, TryToPoto},
-    select::Select,
     socks::{self, S5Authenticate, Socks},
+    select::Select,
     Addr, Kind, Provider, Socket, SocketKind, Stream, UdpReceiverExt, UdpSocket, WrappedProvider,
 };
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
 
 pub struct PenetrateSocksBuilder<E, P, S, O> {
-    pub(crate) adapter_builder: PenetrateAdapterBuilder<E, P, S, O>,
+    pub(crate) adapter_builder: PenetrateSelectorBuilder<E, P, S, O>,
 }
 
-pub struct SocksConverter<U> {
+pub struct SocksMock<U> {
     pub(crate) udp_provider: Arc<WrappedProvider<(), (SocketAddr, U)>>,
 }
 
@@ -37,7 +37,7 @@ impl<E, P, S, O> PenetrateSocksBuilder<E, P, S, O>
 where
     S: Stream + Send + Sync + 'static,
 {
-    pub fn no_udp_forward(mut self) -> PenetrateAdapterBuilder<E, P, S, O> {
+    pub fn no_udp_forward(mut self) -> PenetrateSelectorBuilder<E, P, S, O> {
         self.adapter_builder
             .adapters
             .insert(0, WrappedProvider::wrap(SimpleSocksConverter));
@@ -48,7 +48,7 @@ where
     pub fn using_udp_forward<UF, U>(
         mut self,
         udp_forward: UF,
-    ) -> PenetrateAdapterBuilder<E, P, S, O>
+    ) -> PenetrateSelectorBuilder<E, P, S, O>
     where
         UF: Provider<(), Output = BoxedFuture<(SocketAddr, U)>> + Send + Sync + 'static,
         U: UdpSocket + Unpin + Send + Sync + 'static,
@@ -57,7 +57,7 @@ where
 
         self.adapter_builder.adapters.insert(
             0,
-            WrappedProvider::wrap(SocksConverter {
+            WrappedProvider::wrap(SocksMock {
                 udp_provider: Arc::new(WrappedProvider::wrap(udp_forward)),
             }),
         );
@@ -69,7 +69,7 @@ impl<S> Provider<Fallback<S>> for SimpleSocksConverter
 where
     S: Stream + Send + Sync + 'static,
 {
-    type Output = BoxedFuture<Adapter<S>>;
+    type Output = BoxedFuture<Selector<S>>;
 
     fn call(&self, stream: Fallback<S>) -> Self::Output {
         Box::pin(async move {
@@ -80,17 +80,17 @@ where
                 .await
             {
                 Err(e) if !e.is_socks_error() => return Err(e),
-                Err(_) => return Ok(Adapter::Reject(stream)),
+                Err(_) => return Ok(Selector::Unselected(stream)),
                 Ok(socket) => socket,
             };
 
             stream.consume_back_data();
 
             match socket.kind() {
-                SocketKind::Tcp => Ok(Adapter::Accept(Peer::Route(Visitor::Route(stream), socket))),
+                SocketKind::Tcp => Ok(Selector::Checked(Peer::Route(Visitor::Route(stream), socket))),
                 SocketKind::Udp => Ok({
                     socks::finish_udp_forward(&mut stream).await?;
-                    Adapter::Accept(Peer::Finished(stream))
+                    Selector::Checked(Peer::Finished(stream))
                 }),
                 _ => unsafe { std::hint::unreachable_unchecked() },
             }
@@ -98,12 +98,12 @@ where
     }
 }
 
-impl<S, U> Provider<Fallback<S>> for SocksConverter<U>
+impl<S, U> Provider<Fallback<S>> for SocksMock<U>
 where
     S: Stream + Send + Sync + 'static,
     U: UdpSocket + Unpin + Send + Sync + 'static,
 {
-    type Output = BoxedFuture<Adapter<S>>;
+    type Output = BoxedFuture<Selector<S>>;
 
     fn call(&self, stream: Fallback<S>) -> Self::Output {
         let udp_provider = self.udp_provider.clone();
@@ -115,14 +115,14 @@ where
                 .await
             {
                 Err(e) if !e.is_socks_error() => return Err(e),
-                Err(_) => return Ok(Adapter::Reject(stream)),
+                Err(_) => return Ok(Selector::Unselected(stream)),
                 Ok(socket) => socket,
             };
 
             stream.consume_back_data();
 
             match socket.kind() {
-                SocketKind::Tcp => Ok(Adapter::Accept(Peer::Route(Visitor::Route(stream), socket))),
+                SocketKind::Tcp => Ok(Selector::Checked(Peer::Route(Visitor::Route(stream), socket))),
                 SocketKind::Udp => Ok({
                     let stream = stream.into_inner();
                     let udp_forward = SocksUdpForward {
@@ -130,7 +130,7 @@ where
                         guard: std::sync::Mutex::new(Some(stream)),
                     };
 
-                    Adapter::Accept(Peer::Route(
+                    Selector::Checked(Peer::Route(
                         Visitor::Provider(WrappedProvider::wrap(udp_forward)),
                         Socket::ufd(socket.into_addr()),
                     ))

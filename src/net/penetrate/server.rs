@@ -16,7 +16,7 @@ use crate::{
 };
 
 use super::accepter::Pen;
-use super::converter::Converter;
+use super::mock::Mock;
 use super::PenetrateObserver;
 use crate::{join, time, Address, Error, Kind, NetSocket, Processor};
 
@@ -79,7 +79,7 @@ pub struct Config {
 
 pub struct PenetrateProvider<T> {
     pub(crate) config: Config,
-    pub(crate) converter: Arc<Converter<T>>,
+    pub(crate) converter: Arc<Mock<T>>,
 }
 
 pub struct Penetrate<P, S, A, O> {
@@ -90,7 +90,7 @@ pub struct Penetrate<P, S, A, O> {
     futures: Vec<BoxedFuture<State<S>>>,
     accepter: A,
     mqueue: MQueue<async_channel::Sender<S>>,
-    converter: Arc<Converter<S>>,
+    converter: Arc<Mock<S>>,
     client_addr: Address,
 }
 
@@ -128,7 +128,7 @@ where
 {
     pub fn new(
         config: Config,
-        converter: Arc<Converter<T>>,
+        converter: Arc<Mock<T>>,
         processor: Processor<P, T, O>,
         address: Address,
         client: T,

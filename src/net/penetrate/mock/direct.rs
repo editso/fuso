@@ -4,24 +4,24 @@ use crate::{
     guard::Fallback,
     penetrate::{
         server::{Peer, Visitor},
-        Adapter,
+        Selector,
     },
     Provider, Socket, Stream,
 };
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
 
-pub struct DirectConverter;
+pub struct DirectMock;
 
-impl<S> Provider<Fallback<S>> for DirectConverter
+impl<S> Provider<Fallback<S>> for DirectMock
 where
     S: Stream + Send + 'static,
 {
-    type Output = BoxedFuture<Adapter<S>>;
+    type Output = BoxedFuture<Selector<S>>;
 
     fn call(&self, stream: Fallback<S>) -> Self::Output {
         Box::pin(async move {
-            Ok(Adapter::Accept(Peer::Route(
+            Ok(Selector::Checked(Peer::Route(
                 Visitor::Route(stream),
                 Socket::default(),
             )))
