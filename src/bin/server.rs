@@ -21,6 +21,9 @@ pub struct FusoArgs {
     /// 启用socks5
     #[clap(long, default_value = "false")]
     enable_socks: bool,
+    /// webhook
+    #[clap(long)]
+    observer: Option<String>,
     /// 日志级别
     #[cfg(debug_assertions)]
     #[cfg(feature = "fuso-log")]
@@ -51,17 +54,17 @@ fn init_logger(log_level: log::LevelFilter) {
 #[tokio::main]
 async fn main() -> fuso::Result<()> {
     use fuso::{
-        penetrate::PenetrateRsaAndAesHandshake, Socket, TokioExecutor, TokioUdpServerProvider,
-        UdpForwardProvider,
+        observer::Executable, penetrate::PenetrateRsaAndAesHandshake, Socket, TokioExecutor,
+        TokioUdpServerProvider, UdpForwardProvider,
     };
     use std::time::Duration;
 
     let args = FusoArgs::parse();
-    
+
     #[cfg(feature = "fuso-log")]
     init_logger(args.log_level);
 
-    fuso::builder_server_with_tokio(())
+    fuso::builder_server_with_tokio(Executable::new(args.observer, TokioExecutor))
         .using_handshake(PenetrateRsaAndAesHandshake::Server)
         .using_kcp(TokioUdpServerProvider, TokioExecutor)
         .using_penetrate()

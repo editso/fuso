@@ -1,5 +1,7 @@
 use std::{collections::HashMap, fmt::Display, pin::Pin, sync::Arc, task::Poll, time::Duration};
 
+use serde::Serialize;
+
 use crate::penetrate::accepter::PenetrateAccepter;
 use crate::penetrate::client;
 use crate::protocol::IntoPacket;
@@ -20,7 +22,7 @@ use crate::{
 use super::accepter::Pen;
 use super::mock::Mock;
 use super::PenetrateObserver;
-use crate::{join, time, Address, Error, Kind, NetSocket, Processor, Platform};
+use crate::{join, time, Address, Error, Kind, NetSocket, Platform, Processor};
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
 
@@ -104,7 +106,7 @@ pub struct MQueue<T> {
     wait_list: Arc<async_mutex::Mutex<HashMap<u32, T>>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Config {
     pub(super) whoami: String,
     pub(super) is_mixed: bool,
@@ -117,7 +119,7 @@ pub struct Config {
     pub(super) enable_socks_udp: bool,
     pub(super) socks5_password: Option<String>,
     pub(super) socks5_username: Option<String>,
-    pub(super) platform: Platform
+    pub(super) platform: Platform,
 }
 
 pub struct PenetrateProvider<T> {
@@ -439,7 +441,11 @@ where
                     }
                     Poll::Ready(Ok(State::Error(e))) => {
                         log::warn!("client error {}, err: {}", self.client_addr, e);
-                        self.processor.observer().on_pen_error(&self.address, &e);
+                        let cfg = (*self.config).clone();
+                        self.processor
+                            .observer()
+                            .on_pen_error(&self.address, &cfg, &e);
+                        
                         return Poll::Ready(Err(e));
                     }
                     Poll::Ready(Ok(State::Close(mut s))) => {
@@ -487,7 +493,7 @@ where
 
                     processor
                         .observer()
-                        .on_pen_error(&client.peer_addr()?, &err);
+                        .on_pen_error(&client.peer_addr()?, &config,&err);
 
                     return Err(err);
                 }
@@ -501,7 +507,7 @@ where
 
                     if let Err(e) = client.send_packet(&message).await {
                         log::warn!("failed to send failure message to client err={}", e);
-                        processor.observer().on_pen_error(&client.peer_addr()?, &e);
+                        processor.observer().on_pen_error(&client.peer_addr()?, &config,&e);
                     }
 
                     Err(e)

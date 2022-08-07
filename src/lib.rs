@@ -3,6 +3,7 @@ mod core;
 mod error;
 mod net;
 mod runtime;
+pub mod observer;
 
 pub mod client;
 pub mod server;

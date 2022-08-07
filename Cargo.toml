@@ -82,6 +82,10 @@ optional = true
 version = "0.8.5"
 optional = true
 
+[dependencies.serde_json]
+version = "1.0.83"
+optional = true
+
 [profile.release]
 lto = true
 debug = false
@@ -95,7 +99,7 @@ panic = 'abort'
 
 [features]
 # 默认开启tokio异步 & clap参数解析器
-default = ['fuso-rt-tokio', "fuso-kcp","fuso-clap", "bytes", "fuso-serde", "fuso-socks5", "fuso-crypt-rsa", "fuso-crypt-aes"]
+default = ['fuso-rt-tokio', "fuso-json", "fuso-kcp","fuso-clap", "bytes", "fuso-serde", "fuso-socks5", "fuso-crypt-rsa", "fuso-crypt-aes"]
 # 只提供api，不提供web界面
 fuso-api = ["axum", "fuso-rt-tokio"]
 # web界面
@@ -126,7 +130,8 @@ fuso-socks5 = []
 fuso-crypt-rsa = ["rsa", "rand"]
 # aes加密
 fuso-crypt-aes = ["aes", "cbc"]
-
+# json
+fuso-json = ["serde_json"]
 
 [[bin]]
 name = "fuc"
@@ -136,6 +141,7 @@ required-features = ["fuso-log"]
 [[bin]]
 name = "fuc-quite"
 path = "src/bin/client-quite.rs"
+
 
 [[bin]]
 name = "fus"

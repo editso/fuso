@@ -25,6 +25,14 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 3. 将你下载或构建好的`fus`程序[部署](#服务端部署)到服务器
 4. 将你下载或构建好的`fuc`程序[部署](#客户端部署)到你需要穿透的电脑上
 
+
+### 钩子(`Hook`)
+将相关事件通过钩子进行传递，以便获取到状态信息  
+使用:  
+服务端运行时指定--observer参数, 格式: fus --observer "prog:[arguments]" ...args  
+如: `bash` fus --observer "/bin/bash:[xxxx.sh]"  
+[Telegram脚本](/scripts/telegram.sh)
+
 #### 服务端部署
 
 1. 采用参数传递的形式来部署无需任何配置文件, 并且配置简单大多情况下可使用默认配置
@@ -33,6 +41,7 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
    fus [options]  
    -l, --listen <LISTEN> 监听的地址 [default: 0.0.0.0]  
    -p, --port <PORT> 监听的端口 [default: 6722]  
+   --observer "prog:[arguments]"
    --heartbeat-delay <HEARTBEAT_DELAY> 发送心跳延时 [default: 30]  
    --log-level <LOG_LEVEL> 日志级别 [default: info]  
    -h, --help Print help information
