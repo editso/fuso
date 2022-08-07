@@ -14,6 +14,13 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 [![GitHub license](https://img.shields.io/github/license/editso/fuso)](https://github.com/editso/fuso)
 [![Downloads](https://img.shields.io/github/downloads/editso/fuso/total?label=Release%20Download)](https://github.com/editso/fuso/releases/latest)
 
+### 待完善的功能
+1. webhook
+2. web管理面板
+3. 正向代理
+4. 流转发
+
+
 ### ✨Demo
 
 ![Demo](demo/demo.gif)
