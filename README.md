@@ -19,6 +19,7 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 2. web管理面板
 3. 正向代理
 4. 流转发
+5. 文档待修正
 
 
 ### ✨Demo
