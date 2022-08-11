@@ -99,7 +99,7 @@ panic = 'abort'
 
 [features]
 # 默认开启tokio异步 & clap参数解析器
-default = ['fuso-rt-tokio', "fuso-json", "fuso-kcp","fuso-clap", "bytes", "fuso-serde", "fuso-socks5", "fuso-crypt-rsa", "fuso-crypt-aes"]
+default = ['fuso-rt-tokio', "fuso-json", "fuso-kcp","fuso-clap", "bytes", "fuso-serde", "fuso-socks5", "fuso-crypt-rsa", "fuso-crypt-aes", "fus-log"]
 # 只提供api，不提供web界面
 fuso-api = ["axum", "fuso-rt-tokio"]
 # web界面
@@ -116,8 +116,6 @@ fuso-rt-smol = ['smol', "futures"]
 fuso-rt-tokio = ['tokio']
 # 自定义运行时
 fuso-rt-custom = ["futures"]
-# 日志输出
-fuso-log = ['env_logger']
 # kcp
 fuso-kcp = []
 # quic
@@ -132,18 +130,16 @@ fuso-crypt-rsa = ["rsa", "rand"]
 fuso-crypt-aes = ["aes", "cbc"]
 # json
 fuso-json = ["serde_json"]
+# 日志输出
+fus-log = ['env_logger']
+fuc-log = ["env_logger"]
+
 
 [[bin]]
 name = "fuc"
-path = "src/bin/client.rs"
-required-features = ["fuso-log"]
-
-[[bin]]
-name = "fuc-quite"
-path = "src/bin/client-quite.rs"
+path = "src/bin/client/fuso_main.rs"
 
 
 [[bin]]
 name = "fus"
-path = "src/bin/server.rs"
-required-features = ["fuso-log"]
+path = "src/bin/server/fuso_main.rs"

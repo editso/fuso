@@ -1,7 +1,10 @@
 use std::net::IpAddr;
+use std::time::Duration;
 
 use clap::ArgAction;
 use clap::Parser;
+use fuso::FusoPenetrateConnector;
+use fuso::penetrate::PenetrateRsaAndAesHandshake;
 use fuso::Socket;
 
 #[derive(Parser)]
@@ -78,18 +81,29 @@ struct FusoArgs {
     /// 发送心跳延时
     #[clap(long, default_value = "30", display_order = 14)]
     heartbeat_delay: u64,
+    /// 日志级别
+    #[cfg(feature = "fuc-log")]
+    #[cfg(debug_assertions)]
+    #[clap(long, default_value = "debug", display_order = 10, possible_values = ["info", "warn", "error", "debug", "trace", "off"])]
+    /// 日志级别
+    log_level: log::LevelFilter,
+    #[cfg(not(debug_assertions))]
+    #[cfg(feature = "fuc-log")]
+    #[clap(long, default_value = "info", display_order = 10, possible_values = ["info", "warn", "error", "debug", "trace", "off"])]
+    log_level: log::LevelFilter,
 }
 
-#[cfg(feature = "fuso-rt-tokio")]
-#[tokio::main]
-async fn main() -> fuso::Result<()> {
-    use std::time::Duration;
-
-    use fuso::{penetrate::PenetrateRsaAndAesHandshake, TokioAccepter, TokioPenetrateConnector};
-
+pub async fn fuso_main() -> fuso::Result<()> {
     let args = FusoArgs::parse();
 
-    let fuso = fuso::builder_client_with_tokio()
+    #[cfg(feature = "fuc-log")]
+    env_logger::builder()
+        .filter_module("fuso", args.log_level)
+        .default_format()
+        .format_module_path(false)
+        .init();
+
+    let fuso = fuso::builder_client()
         .using_handshake(PenetrateRsaAndAesHandshake::Client)
         .using_penetrate(
             Socket::tcp(args.visit_bind_port),
@@ -106,52 +120,15 @@ async fn main() -> fuso::Result<()> {
         .set_socks5_username(args.socks_username)
         .build(
             Socket::tcp((args.server_host, args.server_port)),
-            TokioPenetrateConnector::new().await?,
+            FusoPenetrateConnector::new().await?,
         );
 
     let fuso = match args.bridge_port {
         None => fuso.run(),
         Some(port) => fuso
-            .using_bridge(Socket::tcp((args.bridge_listen, port)), TokioAccepter)
+            .using_bridge(Socket::tcp((args.bridge_listen, port)), fuso::FusoAccepter)
             .run(),
     };
 
     fuso.await
-}
-
-#[cfg(feature = "fuso-web")]
-#[tokio::main]
-async fn main() {}
-
-#[cfg(feature = "fuso-api")]
-#[tokio::main]
-async fn main() {}
-
-#[cfg(feature = "fuso-rt-smol")]
-fn main() -> fuso::Result<()> {
-    env_logger::builder()
-        .filter_level(log::LevelFilter::Debug)
-        .default_format()
-        .format_module_path(false)
-        .init();
-
-    smol::block_on(async move {
-        use fuso::SmolPenetrateConnector;
-
-        fuso::builder_client_with_smol()
-            .build(
-                Socket::Tcp(8888.into()),
-                PenetrateClientFactory {
-                    connector_factory: Arc::new(SmolPenetrateConnector),
-                    socket: {
-                        (
-                            Socket::Tcp(([0, 0, 0, 0], 9999).into()),
-                            Socket::Tcp(([127, 0, 0, 1], 22).into()),
-                        )
-                    },
-                },
-            )
-            .run()
-            .await
-    })
 }

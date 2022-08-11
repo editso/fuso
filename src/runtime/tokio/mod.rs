@@ -1,7 +1,7 @@
 mod penetrate;
 pub use penetrate::connector::*;
 
-use std::{net::SocketAddr, pin::Pin, sync::Arc, task::Poll};
+use std::{future::Future, net::SocketAddr, pin::Pin, sync::Arc, task::Poll};
 
 use async_mutex::Mutex;
 use tokio::net::TcpListener;
@@ -16,19 +16,19 @@ use crate::{
 type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>> + Send + 'static>>;
 
 #[derive(Clone, Copy)]
-pub struct TokioExecutor;
-pub struct TokioTcpListener(tokio::net::TcpListener);
-pub struct TokioAccepter;
-pub struct TokioConnector(
-    Arc<Mutex<Option<kcp::KcpConnector<Arc<tokio::net::UdpSocket>, TokioExecutor>>>>,
+pub struct FusoExecutor;
+pub struct FusoTcpListener(tokio::net::TcpListener);
+pub struct FusoAccepter;
+pub struct FusoConnector(
+    Arc<Mutex<Option<kcp::KcpConnector<Arc<tokio::net::UdpSocket>, FusoExecutor>>>>,
 );
 
-pub struct TokioUdpSocket;
+pub struct FusoUdpSocket;
 
-pub struct TokioUdpServerProvider;
+pub struct FusoUdpServerProvider;
 pub struct UdpForwardProvider;
 
-impl Executor for TokioExecutor {
+impl Executor for FusoExecutor {
     fn spawn<F, O>(&self, fut: F) -> Task<O>
     where
         F: std::future::Future<Output = O> + Send + 'static,
@@ -46,8 +46,8 @@ impl Executor for TokioExecutor {
     }
 }
 
-impl Provider<Socket> for TokioAccepter {
-    type Output = BoxedFuture<TokioTcpListener>;
+impl Provider<Socket> for FusoAccepter {
+    type Output = BoxedFuture<FusoTcpListener>;
 
     fn call(&self, socket: Socket) -> Self::Output {
         if socket.is_tcp() || socket.is_mixed() {
@@ -55,7 +55,7 @@ impl Provider<Socket> for TokioAccepter {
                 Ok({
                     TcpListener::bind(socket.as_string())
                         .await
-                        .map(|tcp| TokioTcpListener(tcp))?
+                        .map(|tcp| FusoTcpListener(tcp))?
                 })
             })
         } else {
@@ -74,7 +74,7 @@ impl NetSocket for tokio::net::TcpStream {
     }
 }
 
-impl NetSocket for TokioTcpListener {
+impl NetSocket for FusoTcpListener {
     fn local_addr(&self) -> crate::Result<crate::Address> {
         Ok(Address::One(Socket::tcp(self.0.local_addr()?)))
     }
@@ -84,7 +84,7 @@ impl NetSocket for TokioTcpListener {
     }
 }
 
-impl Accepter for TokioTcpListener {
+impl Accepter for FusoTcpListener {
     type Stream = FusoStream;
     fn poll_accept(
         self: std::pin::Pin<&mut Self>,
@@ -102,7 +102,7 @@ impl Accepter for TokioTcpListener {
     }
 }
 
-impl Provider<Socket> for TokioConnector {
+impl Provider<Socket> for FusoConnector {
     type Output = BoxedFuture<FusoStream>;
 
     fn call(&self, socket: Socket) -> Self::Output {
@@ -119,7 +119,7 @@ impl Provider<Socket> for TokioConnector {
                     if kcp.is_none() {
                         let udp = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
                         udp.connect(socket.as_string()).await?;
-                        *kcp = Some(kcp::KcpConnector::new(Arc::new(udp), TokioExecutor));
+                        *kcp = Some(kcp::KcpConnector::new(Arc::new(udp), FusoExecutor));
                     }
 
                     kcp.as_ref().unwrap().connect().await?.into_boxed_stream()
@@ -131,38 +131,12 @@ impl Provider<Socket> for TokioConnector {
     }
 }
 
-impl ClientProvider<TokioConnector> {
+impl ClientProvider<FusoConnector> {
     pub fn with_tokio() -> Self {
         ClientProvider {
             server_address: Default::default(),
-            connect_provider: Arc::new(TokioConnector(Default::default())),
+            connect_provider: Arc::new(FusoConnector(Default::default())),
         }
-    }
-}
-
-pub fn builder_server_with_tokio<O>(
-    observer: O,
-) -> server::ServerBuilder<TokioExecutor, TokioAccepter, FusoStream, O>
-where
-    O: Observer + Send + Sync + 'static,
-{
-    server::ServerBuilder {
-        is_mixed: false,
-        executor: TokioExecutor,
-        handshake: None,
-        observer: Some(Arc::new(observer)),
-        server_provider: Arc::new(TokioAccepter),
-    }
-}
-
-pub fn builder_client_with_tokio(
-) -> client::ClientBuilder<TokioExecutor, TokioConnector, FusoStream> {
-    client::ClientBuilder {
-        executor: TokioExecutor,
-        handshake: None,
-        client_provider: ClientProvider::with_tokio(),
-        retry_delay: None,
-        maximum_retries: None,
     }
 }
 
@@ -242,7 +216,7 @@ impl Provider<()> for UdpForwardProvider {
     }
 }
 
-impl Provider<Socket> for TokioUdpServerProvider {
+impl Provider<Socket> for FusoUdpServerProvider {
     type Output = BoxedFuture<Arc<tokio::net::UdpSocket>>;
 
     fn call(&self, socket: Socket) -> Self::Output {
@@ -262,5 +236,41 @@ impl Provider<Socket> for TokioUdpServerProvider {
                 }
             })
         })
+    }
+}
+
+pub fn block_on<F>(fut: F) -> crate::Result<()>
+where
+    F: Future<Output = crate::Result<()>> + Send,
+{
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(fut)
+}
+
+pub fn builder_server<O>(
+    observer: O,
+) -> server::ServerBuilder<FusoExecutor, FusoAccepter, FusoStream, O>
+where
+    O: Observer + Send + Sync + 'static,
+{
+    server::ServerBuilder {
+        is_mixed: false,
+        executor: FusoExecutor,
+        handshake: None,
+        observer: Some(Arc::new(observer)),
+        server_provider: Arc::new(FusoAccepter),
+    }
+}
+
+pub fn builder_client() -> client::ClientBuilder<FusoExecutor, FusoConnector, FusoStream>
+{
+    client::ClientBuilder {
+        executor: FusoExecutor,
+        handshake: None,
+        client_provider: ClientProvider::with_tokio(),
+        retry_delay: None,
+        maximum_retries: None,
     }
 }

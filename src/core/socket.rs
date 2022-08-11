@@ -5,7 +5,7 @@ use std::{
     str::FromStr,
 };
 
-use rand::seq::{IteratorRandom};
+use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
 
 use crate::{Error, InvalidAddr, Kind};
@@ -34,16 +34,16 @@ pub enum Address {
     Many(Vec<Socket>),
 }
 
-#[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Hash)]
 pub enum InnerAddr {
     Socket(SocketAddr),
     Domain(String, u16),
 }
 
-#[derive(Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Serialize, Hash)]
 pub struct Addr(InnerAddr);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Hash)]
 pub enum SocketKind {
     Kcp,
     Udp,
@@ -53,7 +53,7 @@ pub enum SocketKind {
     Ufd,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Hash)]
 pub struct Socket {
     kind: SocketKind,
     target: Addr,

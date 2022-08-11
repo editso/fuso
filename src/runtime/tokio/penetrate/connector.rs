@@ -12,30 +12,30 @@ use crate::{
     penetrate::SocksUdpForwardMock,
     udp::{Datagram, VirtualUdpSocket},
     Addr, Address, FusoStream, InnerAddr, InvalidAddr, NetSocket, Provider, Socket, SocketErr,
-    SocketKind, ToBoxStream, TokioExecutor, WrappedProvider,
+    SocketKind, ToBoxStream, FusoExecutor, WrappedProvider,
 };
 
 type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>> + Send + 'static>>;
 
 pub struct TokioTcpConnector;
 
-pub struct TokioTcpAndKcpConnector {
-    kconnector: Arc<KcpConnector<Arc<tokio::net::UdpSocket>, TokioExecutor>>,
+pub struct FusoTcpAndKcpConnector {
+    kconnector: Arc<KcpConnector<Arc<tokio::net::UdpSocket>, FusoExecutor>>,
 }
 
-pub struct TokioPenetrateConnector {
-    udp: Arc<Datagram<Arc<tokio::net::UdpSocket>, TokioExecutor>>,
+pub struct FusoPenetrateConnector {
+    udp: Arc<Datagram<Arc<tokio::net::UdpSocket>, FusoExecutor>>,
 }
 
-pub struct UdpForwardClientProvider(Arc<Datagram<Arc<tokio::net::UdpSocket>, TokioExecutor>>);
+pub struct UdpForwardClientProvider(Arc<Datagram<Arc<tokio::net::UdpSocket>, FusoExecutor>>);
 
-impl TokioPenetrateConnector {
+impl FusoPenetrateConnector {
     pub async fn new() -> crate::Result<Self> {
         Ok(Self {
             udp: Arc::new({
                 Datagram::new(
                     Arc::new(tokio::net::UdpSocket::bind("0.0.0.0:0").await?),
-                    TokioExecutor,
+                    FusoExecutor,
                 )?
             }),
         })
@@ -56,7 +56,7 @@ impl Provider<Socket> for TokioTcpConnector {
     }
 }
 
-impl Provider<Socket> for TokioTcpAndKcpConnector {
+impl Provider<Socket> for FusoTcpAndKcpConnector {
     type Output = BoxedFuture<FusoStream>;
 
     fn call(&self, socket: Socket) -> Self::Output {
@@ -75,7 +75,7 @@ impl Provider<Socket> for TokioTcpAndKcpConnector {
     }
 }
 
-impl Provider<Socket> for TokioPenetrateConnector {
+impl Provider<Socket> for FusoPenetrateConnector {
     type Output = BoxedFuture<Route<FusoStream>>;
 
     fn call(&self, socket: Socket) -> Self::Output {

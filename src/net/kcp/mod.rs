@@ -729,7 +729,7 @@ mod tests {
 
     use crate::{
         ext::{AsyncReadExt, AsyncWriteExt},
-        io, AccepterExt, TokioExecutor,
+        io, AccepterExt, FusoExecutor,
     };
 
     use super::{KcpConnector, KcpListener};
@@ -751,7 +751,7 @@ mod tests {
                 let udp = tokio::net::UdpSocket::bind("0.0.0.0:7777").await.unwrap();
                 let udp = Arc::new(udp);
 
-                let mut kcp = KcpListener::bind(udp, TokioExecutor).unwrap();
+                let mut kcp = KcpListener::bind(udp, FusoExecutor).unwrap();
 
                 loop {
                     match kcp.accept().await {
@@ -798,7 +798,7 @@ mod tests {
                 let udp = tokio::net::UdpSocket::bind("0.0.0.0:0").await.unwrap();
                 udp.connect("127.0.0.1:7777").await.unwrap();
 
-                let kcp = KcpConnector::new(Arc::new(udp), TokioExecutor);
+                let kcp = KcpConnector::new(Arc::new(udp), FusoExecutor);
 
                 let mut kcp = kcp.connect().await.unwrap();
 
