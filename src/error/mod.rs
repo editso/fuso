@@ -264,7 +264,7 @@ impl Display for Error {
             Kind::Channel => format!("Channel"),
             Kind::AlreadyUsed => format!("AlreadyUsed"),
             Kind::IO(io) => format!("{}", io),
-            Kind::Timeout(timeout) => format!("{}", timeout),
+            Kind::Timeout(timeout) => format!("{:?}", timeout),
             Kind::Memory => format!(""),
             Kind::Mark => format!("mark"),
             Kind::Sync(e) => format!("{}", e),

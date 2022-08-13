@@ -145,7 +145,7 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
         let addr = ready!(Pin::new(&**this.receiver).poll_recv_from(cx, this.buf))?;
-        Poll::Ready(Ok((this.buf.filled().len(), addr)))
+        Poll::Ready(Ok((this.buf.position(), addr)))
     }
 }
 
@@ -180,7 +180,7 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
         ready!(Pin::new(&**this.receiver).poll_recv(cx, this.buf))?;
-        Poll::Ready(Ok(this.buf.filled().len()))
+        Poll::Ready(Ok(this.buf.position()))
     }
 }
 

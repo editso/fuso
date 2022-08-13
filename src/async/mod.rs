@@ -194,6 +194,12 @@ impl<'a> ReadBuf<'a> {
         Self { buf, offset: 0 }
     }
 
+    #[cfg(any(feature = "fuso-rt-smol", feature = "fuso-rt-custom"))]
+    pub fn len(&self) -> usize{
+        self.buf.len()
+    }
+
+    #[cfg(feature = "fuso-rt-tokio")]
     pub fn len(&self) -> usize {
         self.buf.capacity()
     }

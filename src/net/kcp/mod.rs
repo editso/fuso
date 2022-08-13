@@ -742,6 +742,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "fuso-rt-tokio")]
     pub fn test_kcp_server() {
         init_logger();
 
@@ -789,6 +790,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "fuso-rt-tokio")]
     pub fn test_kcp_client() {
         init_logger();
 

@@ -48,7 +48,7 @@ fn init_logger(log_level: log::LevelFilter) {
 fn main() -> fuso::Result<()> {
     use fuso::{
         observer::Executable, penetrate::PenetrateRsaAndAesHandshake, FusoExecutor,
-        FusoUdpServerProvider, Socket, UdpForwardProvider,
+        FusoUdpServerProvider, Socket, FusoUdpForwardProvider,
     };
     use std::time::Duration;
 
@@ -66,7 +66,7 @@ fn main() -> fuso::Result<()> {
             .using_adapter()
             .using_direct()
             .using_socks()
-            .using_udp_forward(UdpForwardProvider)
+            .using_udp_forward(FusoUdpForwardProvider)
             .build()
             .bind(Socket::tcp((args.listen, args.port)))
             .run()

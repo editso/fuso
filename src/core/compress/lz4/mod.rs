@@ -453,6 +453,7 @@ where
 
 #[cfg(test)]
 #[allow(unused)]
+#[cfg(feature = "fuso-rt-tokio")]
 mod tests {
 
     use std::time::Duration;
@@ -475,6 +476,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "fuso-rt-tokio")]
     fn test_lz4_client() {
         init_logger();
 
@@ -505,6 +507,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "fuso-rt-tokio")]
     fn test_lz4_server() {
         init_logger();
 

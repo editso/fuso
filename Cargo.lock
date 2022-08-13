@@ -464,6 +464,8 @@ dependencies = [
  "env_logger",
  "futures",
  "log",
+ "num_cpus",
+ "once_cell",
  "pin-project",
  "rand",
  "rsa",

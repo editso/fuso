@@ -86,6 +86,15 @@ optional = true
 version = "1.0.83"
 optional = true
 
+[dependencies.once_cell]
+version = "1.13.0"
+optional = true
+
+[dependencies.num_cpus]
+version = "1.13.1"
+optional = true
+
+
 [profile.release]
 lto = true
 debug = false
@@ -99,7 +108,7 @@ panic = 'abort'
 
 [features]
 # 默认开启tokio异步 & clap参数解析器
-default = ['fuso-rt-tokio', "fuso-json", "fuso-kcp","fuso-clap", "bytes", "fuso-serde", "fuso-socks5", "fuso-crypt-rsa", "fuso-crypt-aes", "fus-log"]
+default = ['fuso-rt-smol', "fuso-json", "fuso-kcp","fuso-clap", "bytes", "fuso-serde", "fuso-socks5", "fuso-crypt-rsa", "fuso-crypt-aes", "fus-log"]
 # 只提供api，不提供web界面
 fuso-api = ["axum", "fuso-rt-tokio"]
 # web界面
@@ -111,7 +120,7 @@ fuso-serde = ["serde", "bincode"]
 # 使用clap进行参数解析
 fuso-clap = ["clap"]
 # 运行时
-fuso-rt-smol = ['smol', "futures"]
+fuso-rt-smol = ['smol', "futures", "num_cpus", "once_cell"]
 # tokio运行时
 fuso-rt-tokio = ['tokio']
 # 自定义运行时
