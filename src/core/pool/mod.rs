@@ -1,3 +1,5 @@
+#[allow(unused)]
+
 mod stream;
 use stream::*;
 

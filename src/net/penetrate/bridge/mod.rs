@@ -1,4 +1,4 @@
-use std::{net::IpAddr, pin::Pin, sync::Arc};
+use std::{net::IpAddr, pin::Pin, sync::Arc, time::Duration};
 
 use crate::{
     client::Client,
@@ -7,7 +7,7 @@ use crate::{
     protocol::{AsyncRecvPacket, AsyncSendPacket, Bind, Poto, ToBytes, TryToPoto},
     select::Select,
     server::Handshake,
-    Accepter, AccepterExt, Address, ClientProvider, DecorateProvider, Executor, Fuso, Kind,
+    time, Accepter, AccepterExt, Address, ClientProvider, DecorateProvider, Executor, Fuso, Kind,
     Processor, Provider, Serve, Socket, Stream, WrappedProvider,
 };
 
@@ -73,7 +73,8 @@ where
 
         let (upstream, client_addr, proxy_accepter, upstream_decorate) = match poto {
             Poto::Bind(Bind::Setup(client_addr, visitor_addr)) => {
-                let upstream = client_provider.call(upstream.clone()).await?;
+                let upstream_addr = upstream;
+                let upstream = client_provider.call(upstream_addr.clone()).await?;
 
                 let (mut upstream, decorate) = match handshake {
                     Some(handshake) => handshake.call(upstream).await?,
@@ -88,14 +89,31 @@ where
                 let poto = upstream.recv_packet().await?.try_poto()?;
 
                 match poto {
-                    Poto::Bind(Bind::Success(client_accepter, visitor_accepter)) => {
+                    Poto::Bind(Bind::Success(mut client_accepter, visitor_accepter)) => {
                         let proxy_accepter = accepter.call(client_addr).await?;
                         let poto = Poto::Bind(Bind::Success(
                             proxy_accepter.local_addr()?,
                             visitor_accepter,
                         ))
                         .bytes();
+
                         client.send_packet(&poto).await?;
+
+                        if client_accepter.is_ip_unspecified() {
+                            client_accepter.from_set_host(upstream_addr.addr());
+                        }
+
+                        if client_accepter.is_ip_unspecified() {
+                            client_accepter.set_ip([127, 0, 0, 1]);
+                        }
+
+                        log::info!(
+                            "bridge from {} to {} -> {}",
+                            client.peer_addr()?,
+                            proxy_accepter.local_addr()?,
+                            client_accepter
+                        );
+
                         (upstream, client_accepter, proxy_accepter, decorate)
                     }
                     _ => {
@@ -110,9 +128,9 @@ where
             }
         };
 
-        let forward = io::forward(client, upstream);
+        let f1 = io::forward(client, upstream);
 
-        let accepter = async move {
+        let f2 = async move {
             let mut proxy_accepter = proxy_accepter;
             let client_decorate = client_decorate;
             let upstream_decorate = upstream_decorate;
@@ -136,15 +154,35 @@ where
                 let client_decorate = client_decorate.clone();
                 let upstream_decorate = upstream_decorate.clone();
 
-                executor.spawn(async move {
+                let forward_fn = move || async move {
                     let stream = client_decorate.call(stream).await?;
+
                     let upstream = upstream_decorate.call(upstream.await?).await?;
+
+                    log::debug!(
+                        "bridge {} -> {}",
+                        stream.peer_addr()?,
+                        upstream.peer_addr()?
+                    );
+
                     io::forward(stream, upstream).await
+                };
+
+                executor.spawn(async move {
+                    let result = match time::wait_for(Duration::from_secs(10), forward_fn()).await {
+                        Ok(Err(e)) => Err(e),
+                        Err(e) => Err(e),
+                        _ => Ok(()),
+                    };
+
+                    if let Err(e) = result {
+                        log::warn!("failed to bridge {}", e);
+                    }
                 });
             }
         };
 
-        Select::select(forward, accepter).await
+        Select::select(f1, f2).await
     }
 
     async fn run_async(self) -> crate::Result<()> {
