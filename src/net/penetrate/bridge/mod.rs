@@ -176,7 +176,7 @@ where
                     };
 
                     if let Err(e) = result {
-                        log::warn!("failed to bridge {}", e);
+                        log::debug!("failed to bridge {}", e);
                     }
                 });
             }
