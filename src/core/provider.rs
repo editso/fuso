@@ -135,6 +135,20 @@ where
     }
 }
 
+impl<O, P> Provider<O> for Option<P>
+where
+    P: Provider<O, Output = BoxedFuture<O>>,
+    O: Send + 'static
+{
+    type Output = BoxedFuture<O>;
+    fn call(&self, t: O) -> Self::Output {
+        match self {
+            None => Box::pin(async move { Ok(t) }),
+            Some(provider) => provider.call(t),
+        }
+    }
+}
+
 impl<A, O> Clone for WrappedProvider<A, O> {
     #[inline]
     fn clone(&self) -> Self {

@@ -127,7 +127,11 @@ pub async fn fuso_main() -> fuso::Result<()> {
     let fuso = match args.bridge_port {
         None => fuso.run(),
         Some(port) => fuso
-            .using_bridge(Socket::tcp((args.bridge_listen, port)), fuso::FusoAccepter)
+            .using_bridge(
+                Socket::tcp((args.bridge_listen, port)),
+                fuso::FusoAccepter,
+                PenetrateRsaAndAesHandshake::Server,
+            )
             .run(),
     };
 
