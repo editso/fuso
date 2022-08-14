@@ -68,7 +68,7 @@ impl<T> Fallback<T> {
     }
 
     pub fn back_data(&mut self) -> Option<Vec<u8>> {
-        self.backed_buf.take().map(|mut buf| {
+        self.backed_buf.take().map_or(None, |mut buf| {
             let mut backed = Vec::with_capacity(buf.len());
             unsafe {
                 backed.set_len(buf.len());
@@ -76,7 +76,11 @@ impl<T> Fallback<T> {
 
             let _ = buf.read_to_buffer(&mut backed);
 
-            backed
+            if backed.is_empty() {
+                None
+            } else {
+                Some(backed)
+            }
         })
     }
 }
@@ -200,13 +204,13 @@ where
         if let Some(mut marked) = this.marked_buf.take() {
             let backed_buf = if let Some(mut backed) = this.backed_buf.take() {
                 let mut buf = Vec::with_capacity(marked.len());
-                unsafe{
+                unsafe {
                     buf.set_len(marked.len());
                 }
                 marked.read_to_buffer(&mut buf);
                 backed.push_all(buf);
                 backed
-            }else{
+            } else {
                 marked
             };
             drop(std::mem::replace(&mut this.backed_buf, Some(backed_buf)));

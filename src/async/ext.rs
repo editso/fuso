@@ -1,6 +1,6 @@
 use std::{future::Future, io, pin::Pin, task::Poll};
 
-use crate::{AsyncWrite};
+use crate::AsyncWrite;
 
 #[pin_project::pin_project]
 pub struct Read<'a, T: Unpin> {
@@ -193,6 +193,10 @@ where
         let offset = this.offset;
 
         loop {
+            if this.buf.is_empty() {
+                return Poll::Ready(Ok(()));
+            }
+
             match Pin::new(&mut **writer).poll_write(cx, &this.buf[*offset..])? {
                 Poll::Pending => break Poll::Pending,
                 Poll::Ready(0) => {

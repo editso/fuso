@@ -99,10 +99,9 @@ jobs:
         arch:
           - x86_64-unknown-linux-musl
           - i686-unknown-linux-musl
-          - mips-unknown-linux-gnu
 
     steps:
-      - run: sudo apt -y install musl-tools gcc-mips-linux-gnu
+      - run: sudo apt -y install musl-tools
       - uses: actions/checkout@v2
         with:
           submodules: true
@@ -113,7 +112,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --release --target ${{ matrix.arch }} --features "fuso-log"
+          args: --release --target ${{ matrix.arch }} --features "fuc-log"
 
       - uses: actions/upload-artifact@v2
         with:

@@ -108,7 +108,7 @@ panic = 'abort'
 
 [features]
 # 默认开启tokio异步 & clap参数解析器
-default = ['fuso-rt-smol', "fuso-json", "fuso-kcp","fuso-clap", "bytes", "fuso-serde", "fuso-socks5", "fuso-crypt-rsa", "fuso-crypt-aes", "fus-log"]
+default = ['fuso-rt-tokio', "fuso-json", "fuso-kcp","fuso-clap", "bytes", "fuso-serde", "fuso-socks5", "fuso-crypt-rsa", "fuso-crypt-aes", "fus-log"]
 # 只提供api，不提供web界面
 fuso-api = ["axum", "fuso-rt-tokio"]
 # web界面
