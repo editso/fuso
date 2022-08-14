@@ -530,6 +530,10 @@ where
         Box::pin(fut)
     }
 
+    pub fn core(&self) -> &C {
+        &self.core
+    }
+
     pub async fn connect(&self) -> crate::Result<KcpStream<C>> {
         let conv = {
             let sessions = self.sessions.lock().await;
@@ -724,6 +728,7 @@ where
 }
 
 #[cfg(test)]
+#[cfg(feature = "fuso-rt-tokio")]
 mod tests {
     use std::sync::Arc;
 

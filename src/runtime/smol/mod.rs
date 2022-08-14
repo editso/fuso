@@ -1,35 +1,27 @@
 mod penetrate;
+mod udp;
 
 use std::{pin::Pin, sync::Arc, task::Poll};
 
 use futures::Future;
-use smol::{lock::Mutex, net::AsyncToSocketAddrs};
 use std::net::SocketAddr;
+pub use udp::*;
 
 pub use penetrate::*;
 
 use crate::{
     client, kcp, server, Accepter, Address, ClientProvider, Executor, FusoStream, NetSocket,
-    Observer, Provider, Socket, SocketErr, Task, ToBoxStream, UdpSocket,
+    Observer, Provider, Socket, SocketErr, Task, ToBoxStream,
 };
 
 type BoxedFuture<T> = Pin<Box<dyn Future<Output = crate::Result<T>> + Send + 'static>>;
-type UFuture<T> = Pin<Box<dyn Future<Output = crate::Result<T>> + 'static>>;
 
 #[derive(Clone)]
 pub struct FusoExecutor;
 pub struct FusoAccepter;
-pub struct FusoConnector(Arc<Mutex<Option<kcp::KcpConnector<Arc<SmolUdpSocket>, FusoExecutor>>>>);
+pub struct FusoConnector(Arc<kcp::KcpConnector<Arc<SmolUdpSocket>, FusoExecutor>>);
 pub struct FusoUdpServerProvider;
 pub struct FusoUdpForwardProvider;
-
-pub struct SmolUdpSocket {
-    smol_udp: smol::net::UdpSocket,
-    recv_fut: std::sync::Mutex<Option<UFuture<usize>>>,
-    recv_from_fut: std::sync::Mutex<Option<UFuture<(usize, std::net::SocketAddr)>>>,
-    send_fut: std::sync::Mutex<Option<UFuture<usize>>>,
-    send_to_fut: std::sync::Mutex<Option<UFuture<usize>>>,
-}
 
 unsafe impl Sync for SmolUdpSocket {}
 unsafe impl Send for SmolUdpSocket {}
@@ -169,217 +161,40 @@ impl Provider<Socket> for FusoConnector {
     fn call(&self, socket: Socket) -> Self::Output {
         let kcp = self.0.clone();
         Box::pin(async move {
-            Ok({
-                if socket.is_tcp() {
-                    smol::net::TcpStream::connect(socket.as_string())
-                        .await?
-                        .into_boxed_stream()
-                } else if socket.is_kcp() {
-                    let mut kcp = kcp.lock().await;
-
-                    if kcp.is_none() {
-                        let udp = SmolUdpSocket::bind("0.0.0.0:0").await?;
-                        udp.connect(socket.as_string()).await?;
-                        *kcp = Some(kcp::KcpConnector::new(Arc::new(udp), FusoExecutor));
-                    }
-
-                    kcp.as_ref().unwrap().connect().await?.into_boxed_stream()
-                } else {
-                    return Err(SocketErr::NotSupport(socket).into());
-                }
-            })
+            if socket.is_tcp() {
+                smol::net::TcpStream::connect(socket.as_string())
+                    .await
+                    .map(ToBoxStream::into_boxed_stream)
+                    .map_err(Into::into)
+            } else if socket.is_kcp() {
+                kcp.core().connect(socket.as_string()).await?;
+                kcp.connect()
+                    .await
+                    .map(ToBoxStream::into_boxed_stream)
+                    .map_err(Into::into)
+            } else {
+                Err(SocketErr::NotSupport(socket).into())
+            }
         })
-    }
-}
-
-impl NetSocket for SmolUdpSocket {
-    fn local_addr(&self) -> crate::Result<Address> {
-        Ok(Address::One(Socket::udp(self.smol_udp.local_addr()?)))
-    }
-
-    fn peer_addr(&self) -> crate::Result<Address> {
-        Ok(Address::One(Socket::udp(self.smol_udp.peer_addr()?)))
-    }
-}
-
-impl SmolUdpSocket {
-    pub async fn bind<A: AsyncToSocketAddrs>(addr: A) -> crate::Result<Self> {
-        Ok(Self {
-            smol_udp: smol::net::UdpSocket::bind(addr).await?,
-            recv_fut: Default::default(),
-            recv_from_fut: Default::default(),
-            send_fut: Default::default(),
-            send_to_fut: Default::default(),
-        })
-    }
-
-    pub async fn connect<A: AsyncToSocketAddrs>(&self, addr: A) -> crate::Result<()> {
-        self.smol_udp.connect(addr).await.map_err(Into::into)
-    }
-}
-
-impl UdpSocket for SmolUdpSocket
-where
-    Self: Unpin,
-{
-    fn poll_recv(
-        self: Pin<&Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut crate::ReadBuf<'_>,
-    ) -> Poll<crate::Result<()>> {
-        let mut fut = match self.recv_fut.lock()?.take() {
-            Some(fut) => fut,
-            None => {
-                let smol_udp = self.smol_udp.clone();
-                let unfilled = buf.initialize_unfilled();
-                let unfilled_len = unfilled.len();
-                let unfilled_ptr = unfilled.as_mut_ptr();
-                Box::pin(async move {
-                    let buf = unsafe {
-                        std::ptr::slice_from_raw_parts_mut(unfilled_ptr, unfilled_len)
-                            .as_mut()
-                            .unwrap_unchecked()
-                    };
-
-                    Ok(smol_udp.recv(buf).await?)
-                })
-            }
-        };
-
-        match Pin::new(&mut fut).poll(cx)? {
-            Poll::Ready(n) => {
-                buf.advance(n);
-                Poll::Ready(Ok(()))
-            }
-            Poll::Pending => {
-                let mut locked = self.recv_fut.lock()?;
-                drop(std::mem::replace(&mut *locked, Some(fut)));
-                Poll::Pending
-            }
-        }
-    }
-
-    fn poll_recv_from(
-        self: Pin<&Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut crate::ReadBuf<'_>,
-    ) -> Poll<crate::Result<SocketAddr>> {
-        let mut fut = match self.recv_from_fut.lock()?.take() {
-            Some(fut) => fut,
-            None => {
-                let smol_udp = self.smol_udp.clone();
-                let unfilled_buf = buf.initialize_unfilled();
-                let unfilled_len = unfilled_buf.len();
-                let unfilled_ptr = unfilled_buf.as_mut_ptr();
-                Box::pin(async move {
-                    let buf = unsafe {
-                        std::ptr::slice_from_raw_parts_mut(unfilled_ptr, unfilled_len)
-                            .as_mut()
-                            .unwrap_unchecked()
-                    };
-                    smol_udp.recv_from(buf).await.map_err(Into::into)
-                })
-            }
-        };
-
-        match Pin::new(&mut fut).poll(cx) {
-            Poll::Ready(Ok((n, addr))) => {
-                buf.advance(n);
-                Poll::Ready(Ok(addr))
-            }
-            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
-            Poll::Pending => {
-                let mut locked = self.recv_from_fut.lock()?;
-                drop(std::mem::replace(&mut *locked, Some(fut)));
-                Poll::Pending
-            }
-        }
-    }
-
-    fn poll_send(
-        self: Pin<&Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> Poll<crate::Result<usize>> {
-        let mut fut = match self.send_fut.lock()?.take() {
-            Some(fut) => fut,
-            None => {
-                let smol_udp = self.smol_udp.clone();
-                let buf_ptr = buf.as_ptr();
-                let buf_len = buf.len();
-                Box::pin(async move {
-                    let buf = unsafe {
-                        std::ptr::slice_from_raw_parts(buf_ptr, buf_len)
-                            .as_ref()
-                            .unwrap_unchecked()
-                    };
-                    smol_udp.send(buf).await.map_err(Into::into)
-                })
-            }
-        };
-
-        match Pin::new(&mut fut).poll(cx) {
-            Poll::Ready(ready) => Poll::Ready(ready),
-            Poll::Pending => {
-                let mut locked = self.send_fut.lock()?;
-                drop(std::mem::replace(&mut *locked, Some(fut)));
-                Poll::Pending
-            }
-        }
-    }
-
-    fn poll_send_to(
-        self: Pin<&Self>,
-        cx: &mut std::task::Context<'_>,
-        addr: &SocketAddr,
-        buf: &[u8],
-    ) -> Poll<crate::Result<usize>> {
-        let mut fut = match self.send_to_fut.lock()?.take() {
-            Some(fut) => fut,
-            None => {
-                let smol_udp = self.smol_udp.clone();
-                let addr = addr as *const SocketAddr;
-                let buf_ptr = buf.as_ptr();
-                let buf_len = buf.len();
-                Box::pin(async move {
-                    let (buf, addr) = unsafe {
-                        (
-                            std::ptr::slice_from_raw_parts(buf_ptr, buf_len)
-                                .as_ref()
-                                .unwrap_unchecked(),
-                            addr.as_ref().unwrap_unchecked(),
-                        )
-                    };
-                    smol_udp.send_to(buf, addr).await.map_err(Into::into)
-                })
-            }
-        };
-
-        match Pin::new(&mut fut).poll(cx) {
-            Poll::Ready(ready) => Poll::Ready(ready),
-            Poll::Pending => {
-                let mut locked = self.send_to_fut.lock()?;
-                drop(std::mem::replace(&mut *locked, Some(fut)));
-                Poll::Pending
-            }
-        }
     }
 }
 
 impl Provider<Socket> for FusoUdpServerProvider {
     type Output = BoxedFuture<Arc<SmolUdpSocket>>;
     fn call(&self, socket: Socket) -> Self::Output {
-        Box::pin(async move { Ok(Arc::new(SmolUdpSocket::bind(socket.as_string()).await?)) })
+        Box::pin(async move {
+            SmolUdpSocket::bind(socket.as_string())
+                .await
+                .map(|(_, udp_server)| Arc::new(udp_server))
+                .map_err(Into::into)
+        })
     }
 }
 
 impl Provider<()> for FusoUdpForwardProvider {
     type Output = BoxedFuture<(SocketAddr, SmolUdpSocket)>;
     fn call(&self, _: ()) -> Self::Output {
-        Box::pin(async move {
-            let smol_udp = SmolUdpSocket::bind("0.0.0.0:0").await?;
-            Ok((smol_udp.smol_udp.local_addr()?, smol_udp))
-        })
+        Box::pin(async move { SmolUdpSocket::bind("0.0.0.0:0").await.map_err(Into::into) })
     }
 }
 
@@ -406,15 +221,22 @@ where
     }
 }
 
-pub fn builder_client() -> client::ClientBuilder<FusoExecutor, FusoConnector, FusoStream> {
-    client::ClientBuilder {
+pub async fn builder_client(
+) -> crate::Result<client::ClientBuilder<FusoExecutor, FusoConnector, FusoStream>> {
+    Ok(client::ClientBuilder {
         executor: FusoExecutor,
         handshake: None,
         retry_delay: None,
         maximum_retries: None,
         client_provider: ClientProvider {
             server_address: Default::default(),
-            connect_provider: Arc::new(FusoConnector(Default::default())),
+            connect_provider: Arc::new({
+                let (_, udp_server) = SmolUdpSocket::bind("0.0.0.0:0").await?;
+                FusoConnector(Arc::new(kcp::KcpConnector::new(
+                    Arc::new(udp_server),
+                    FusoExecutor,
+                )))
+            }),
         },
-    }
+    })
 }

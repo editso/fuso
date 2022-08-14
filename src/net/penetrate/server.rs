@@ -120,6 +120,7 @@ pub struct Config {
     pub(super) socks5_password: Option<String>,
     pub(super) socks5_username: Option<String>,
     pub(super) platform: Platform,
+    pub(super) real_ip: bool
 }
 
 pub struct PenetrateProvider<T> {
@@ -296,7 +297,7 @@ where
                         Peer::Unknown(visitor) => return Ok(State::Close(visitor.into_inner())),
                         Peer::Route(visitor, dst) => (visitor, dst),
                     };
-
+                    
                     let route = Poto::Map(id, dst).bytes();
 
                     throw_client_error!(writer.send_packet(&route).await);

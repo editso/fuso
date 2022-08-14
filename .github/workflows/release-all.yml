@@ -99,9 +99,10 @@ jobs:
         arch:
           - x86_64-unknown-linux-musl
           - i686-unknown-linux-musl
+          - mips-unknown-linux-gnu
 
     steps:
-      - run: sudo apt -y install musl-tools
+      - run: sudo apt -y install musl-tools gcc-mips-linux-gnu
       - uses: actions/checkout@v2
         with:
           submodules: true

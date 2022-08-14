@@ -11,8 +11,8 @@ use crate::{
     kcp::KcpConnector,
     penetrate::SocksUdpForwardMock,
     udp::{Datagram, VirtualUdpSocket},
-    Addr, Address, FusoStream, InnerAddr, InvalidAddr, NetSocket, Provider, Socket, SocketErr,
-    SocketKind, ToBoxStream, FusoExecutor, WrappedProvider,
+    Addr, FusoExecutor, FusoStream, InvalidAddr, Provider, Socket, SocketErr, SocketKind,
+    ToBoxStream, WrappedProvider,
 };
 
 type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>> + Send + 'static>>;
@@ -31,13 +31,14 @@ pub struct UdpForwardClientProvider(Arc<Datagram<Arc<tokio::net::UdpSocket>, Fus
 
 impl FusoPenetrateConnector {
     pub async fn new() -> crate::Result<Self> {
+        let udp_server = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
+        let listen_addr = udp_server.local_addr()?;
         Ok(Self {
-            udp: Arc::new({
-                Datagram::new(
-                    Arc::new(tokio::net::UdpSocket::bind("0.0.0.0:0").await?),
-                    FusoExecutor,
-                )?
-            }),
+            udp: Arc::new(Datagram::new(
+                Arc::new(udp_server),
+                listen_addr,
+                FusoExecutor,
+            )?),
         })
     }
 }
@@ -47,11 +48,10 @@ impl Provider<Socket> for TokioTcpConnector {
 
     fn call(&self, socket: Socket) -> Self::Output {
         Box::pin(async move {
-            Ok({
-                tokio::net::TcpStream::connect(socket.as_string())
-                    .await?
-                    .into_boxed_stream()
-            })
+            tokio::net::TcpStream::connect(socket.as_string())
+                .await
+                .map(ToBoxStream::into_boxed_stream)
+                .map_err(Into::into)
         })
     }
 }
@@ -62,15 +62,18 @@ impl Provider<Socket> for FusoTcpAndKcpConnector {
     fn call(&self, socket: Socket) -> Self::Output {
         let kconnector = self.kconnector.clone();
         Box::pin(async move {
-            Ok({
-                if socket.is_tcp() {
-                    tokio::net::TcpStream::connect(socket.as_string())
-                        .await?
-                        .into_boxed_stream()
-                } else {
-                    kconnector.connect().await?.into_boxed_stream()
-                }
-            })
+            if socket.is_tcp() {
+                tokio::net::TcpStream::connect(socket.as_string())
+                    .await
+                    .map(ToBoxStream::into_boxed_stream)
+                    .map_err(Into::into)
+            } else {
+                kconnector
+                    .connect()
+                    .await
+                    .map(ToBoxStream::into_boxed_stream)
+                    .map_err(Into::into)
+            }
         })
     }
 }
@@ -90,9 +93,9 @@ impl Provider<Socket> for FusoPenetrateConnector {
                 SocketKind::Ufd => {
                     let provider = WrappedProvider::wrap(UdpForwardClientProvider(udp));
 
-                    Ok(Route::Provider(WrappedProvider::wrap(
-                        SocksUdpForwardMock(provider),
-                    )))
+                    Ok(Route::Provider(WrappedProvider::wrap(SocksUdpForwardMock(
+                        provider,
+                    ))))
                 }
                 _ => Err(SocketErr::NotSupport(socket).into()),
             }
@@ -115,15 +118,7 @@ impl Provider<Addr> for UdpForwardClientProvider {
                 .next()
                 .ok_or(InvalidAddr::Domain(addr.as_string()))?;
 
-            let udp = udp.connect(addr).await?;
-            match udp.local_addr()? {
-                Address::One(socket) => match socket.into_addr().into_inner() {
-                    InnerAddr::Socket(addr) => return Ok((addr, udp)),
-                    _ => {}
-                },
-                _ => {}
-            }
-            unsafe { std::hint::unreachable_unchecked() }
+            udp.connect(addr).await
         })
     }
 }

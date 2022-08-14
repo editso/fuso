@@ -17,6 +17,7 @@ macro_rules! impl_socket {
                 Self {
                     target: addr.into(),
                     kind: SocketKind::$typ,
+                    origin: None,
                     is_mixed: false,
                 }
             }
@@ -56,6 +57,7 @@ pub enum SocketKind {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Hash)]
 pub struct Socket {
     kind: SocketKind,
+    origin: Option<Addr>,
     target: Addr,
     is_mixed: bool,
 }
@@ -362,6 +364,10 @@ impl Socket {
         self.kind
     }
 
+    pub fn set_origin(&mut self, origin: Option<Addr>) {
+        self.origin = origin;
+    }
+
     pub fn with_kind(mut self, kind: SocketKind) -> Self {
         self.kind = kind;
         self
@@ -385,6 +391,13 @@ impl Socket {
 }
 
 impl Address {
+    pub fn first_addr(&self) -> Option<Addr> {
+        match self {
+            Address::One(socket) => Some(socket.addr().clone()),
+            Address::Many(addrs) => addrs.first().map(|socket| socket.addr().clone()),
+        }
+    }
+
     pub fn if_stream_mixed(self, mixed: bool) -> Self {
         match self {
             Address::One(socket) => Address::One(socket.if_stream_mixed(mixed)),
@@ -461,6 +474,7 @@ impl Default for Socket {
     fn default() -> Self {
         Self {
             target: 0.into(),
+            origin: None,
             kind: SocketKind::Tcp,
             is_mixed: false,
         }

@@ -1,9 +1,8 @@
 mod penetrate;
-pub use penetrate::connector::*;
+pub use penetrate::*;
 
 use std::{future::Future, net::SocketAddr, pin::Pin, sync::Arc, task::Poll};
 
-use async_mutex::Mutex;
 use tokio::net::TcpListener;
 
 use crate::{
@@ -19,14 +18,12 @@ type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>>
 pub struct FusoExecutor;
 pub struct FusoTcpListener(tokio::net::TcpListener);
 pub struct FusoAccepter;
-pub struct FusoConnector(
-    Arc<Mutex<Option<kcp::KcpConnector<Arc<tokio::net::UdpSocket>, FusoExecutor>>>>,
-);
+pub struct FusoConnector(Arc<kcp::KcpConnector<Arc<tokio::net::UdpSocket>, FusoExecutor>>);
 
 pub struct FusoUdpSocket;
 
 pub struct FusoUdpServerProvider;
-pub struct UdpForwardProvider;
+pub struct FusoUdpForwardProvider;
 
 impl Executor for FusoExecutor {
     fn spawn<F, O>(&self, fut: F) -> Task<O>
@@ -114,15 +111,8 @@ impl Provider<Socket> for FusoConnector {
                         .await?
                         .into_boxed_stream()
                 } else if socket.is_kcp() {
-                    let mut kcp = kcp.lock().await;
-
-                    if kcp.is_none() {
-                        let udp = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
-                        udp.connect(socket.as_string()).await?;
-                        *kcp = Some(kcp::KcpConnector::new(Arc::new(udp), FusoExecutor));
-                    }
-
-                    kcp.as_ref().unwrap().connect().await?.into_boxed_stream()
+                    kcp.core().connect(socket.as_string()).await?;
+                    kcp.connect().await?.into_boxed_stream()
                 } else {
                     return Err(SocketErr::NotSupport(socket).into());
                 }
@@ -132,11 +122,17 @@ impl Provider<Socket> for FusoConnector {
 }
 
 impl ClientProvider<FusoConnector> {
-    pub fn with_tokio() -> Self {
-        ClientProvider {
+    pub async fn with_tokio() -> crate::Result<Self> {
+        Ok(ClientProvider {
             server_address: Default::default(),
-            connect_provider: Arc::new(FusoConnector(Default::default())),
-        }
+            connect_provider: Arc::new({
+                let udp = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
+                FusoConnector(Arc::new(kcp::KcpConnector::new(
+                    Arc::new(udp),
+                    FusoExecutor,
+                )))
+            }),
+        })
     }
 }
 
@@ -201,7 +197,7 @@ impl UdpSocket for tokio::net::UdpSocket {
     }
 }
 
-impl Provider<()> for UdpForwardProvider {
+impl Provider<()> for FusoUdpForwardProvider {
     type Output = BoxedFuture<(SocketAddr, tokio::net::UdpSocket)>;
 
     fn call(&self, _: ()) -> Self::Output {
@@ -221,20 +217,14 @@ impl Provider<Socket> for FusoUdpServerProvider {
 
     fn call(&self, socket: Socket) -> Self::Output {
         Box::pin(async move {
-            Ok({
-                if socket.is_mixed() || socket.is_kcp() || socket.is_udp() {
-                    Arc::new({
-                        tokio::net::UdpSocket::bind(socket.as_string())
-                            .await
-                            .map_err(|e| {
-                                log::warn!("udp bind failed addr={}, err={}", socket.addr(), e);
-                                e
-                            })?
-                    })
-                } else {
-                    unimplemented!()
-                }
-            })
+            Ok(Arc::new({
+                tokio::net::UdpSocket::bind(socket.as_string())
+                    .await
+                    .map_err(|e| {
+                        log::warn!("udp bind failed addr={}, err={}", socket.addr(), e);
+                        e
+                    })?
+            }))
         })
     }
 }
@@ -264,13 +254,13 @@ where
     }
 }
 
-pub fn builder_client() -> client::ClientBuilder<FusoExecutor, FusoConnector, FusoStream>
-{
-    client::ClientBuilder {
+pub async fn builder_client(
+) -> crate::Result<client::ClientBuilder<FusoExecutor, FusoConnector, FusoStream>> {
+    Ok(client::ClientBuilder {
         executor: FusoExecutor,
         handshake: None,
-        client_provider: ClientProvider::with_tokio(),
+        client_provider: ClientProvider::with_tokio().await?,
         retry_delay: None,
         maximum_retries: None,
-    }
+    })
 }

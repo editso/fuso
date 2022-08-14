@@ -27,14 +27,15 @@ struct Session {
 pub struct Datagram<U, E> {
     executor: E,
     udp_socket: U,
+    listen_addr: SocketAddr,
     udp_sessions: USessions,
     udp_receiver: Option<Task<crate::Result<()>>>,
 }
 
 pub struct VirtualUdpSocket<U> {
     ucore: UCore,
-    peer_addr: SocketAddr,
     udp_socket: U,
+    peer_addr: SocketAddr,
     close_callback: CloseCallback,
 }
 
@@ -71,7 +72,7 @@ where
     U: UdpSocket + Sync + Unpin + Clone + Send + 'static,
     E: Executor + Clone + Send + 'static,
 {
-    pub fn new(udp: U, executor: E) -> crate::Result<Self> {
+    pub fn new(udp: U, listen_addr: SocketAddr, executor: E) -> crate::Result<Self> {
         let sessions: USessions = Default::default();
 
         let task = {
@@ -108,13 +109,17 @@ where
 
         Ok(Self {
             executor,
+            listen_addr,
             udp_socket: udp,
             udp_sessions: sessions,
             udp_receiver: Some(task),
         })
     }
 
-    pub async fn connect(&self, addr: SocketAddr) -> crate::Result<VirtualUdpSocket<U>> {
+    pub async fn connect(
+        &self,
+        addr: SocketAddr,
+    ) -> crate::Result<(SocketAddr, VirtualUdpSocket<U>)> {
         let ucore: UCore = Default::default();
         let executor = self.executor.clone();
         let sessions = self.udp_sessions.clone();
@@ -127,18 +132,21 @@ where
 
         self.udp_sessions.lock().await.insert(id, ucore.clone());
 
-        Ok(VirtualUdpSocket {
-            ucore,
-            peer_addr: addr,
-            udp_socket: self.udp_socket.clone(),
-            close_callback: Some(Box::new(move || {
-                executor.spawn(async move {
-                    if let Some(session) = sessions.lock().await.remove(&id) {
-                        drop(session)
-                    };
-                });
-            })),
-        })
+        Ok((
+            self.listen_addr.clone(),
+            VirtualUdpSocket {
+                ucore,
+                peer_addr: addr,
+                udp_socket: self.udp_socket.clone(),
+                close_callback: Some(Box::new(move || {
+                    executor.spawn(async move {
+                        if let Some(session) = sessions.lock().await.remove(&id) {
+                            drop(session)
+                        };
+                    });
+                })),
+            },
+        ))
     }
 }
 

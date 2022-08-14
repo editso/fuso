@@ -126,6 +126,7 @@ where
                 fallback_strict_mode: self.fallback_strict_mode,
                 enable_socks: false,
                 enable_socks_udp: false,
+                real_ip: false,
                 socks5_password: None,
                 socks5_username: None,
                 platform: Default::default()

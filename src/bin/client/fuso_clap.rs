@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use clap::ArgAction;
 use clap::Parser;
-use fuso::FusoPenetrateConnector;
 use fuso::penetrate::PenetrateRsaAndAesHandshake;
+use fuso::FusoPenetrateConnector;
 use fuso::Socket;
 
 #[derive(Parser)]
@@ -104,6 +104,7 @@ pub async fn fuso_main() -> fuso::Result<()> {
         .init();
 
     let fuso = fuso::builder_client()
+        .await?
         .using_handshake(PenetrateRsaAndAesHandshake::Client)
         .using_penetrate(
             Socket::tcp(args.visit_bind_port),

@@ -6,7 +6,7 @@ use crate::{
         server::{Peer, Visitor},
         Selector,
     },
-    Provider, Socket, Stream,
+    NetSocket, Provider, Socket, Stream,
 };
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
@@ -19,8 +19,18 @@ where
 {
     type Output = BoxedFuture<Selector<S>>;
 
-    fn call(&self, (stream, _): (Fallback<S>, Arc<super::super::server::Config>)) -> Self::Output {
+    fn call(
+        &self,
+        (stream, config): (Fallback<S>, Arc<super::super::server::Config>),
+    ) -> Self::Output {
         Box::pin(async move {
+            let mut socket = Socket::default();
+
+            if config.real_ip {
+                let addr = stream.peer_addr()?;
+                socket.set_origin(addr.first_addr());
+            }
+
             Ok(Selector::Checked(Peer::Route(
                 Visitor::Route(stream),
                 Socket::default(),

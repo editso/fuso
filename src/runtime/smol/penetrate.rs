@@ -6,8 +6,8 @@ use crate::{
     client::Route,
     penetrate::SocksUdpForwardMock,
     udp::{Datagram, VirtualUdpSocket},
-    Addr, Address, FusoExecutor, FusoStream, InnerAddr, InvalidAddr, Provider, Socket,
-    SocketErr, SocketKind, ToBoxStream, WrappedProvider, SmolUdpSocket, NetSocket,
+    Addr, FusoExecutor, FusoStream, InvalidAddr, Provider, SmolUdpSocket, Socket, SocketErr,
+    SocketKind, ToBoxStream, WrappedProvider,
 };
 
 type BoxedFuture<T> = Pin<Box<dyn Future<Output = crate::Result<T>> + Send + 'static>>;
@@ -20,11 +20,9 @@ pub struct FusoUdpForwardProvider(Arc<Datagram<Arc<SmolUdpSocket>, FusoExecutor>
 
 impl FusoPenetrateConnector {
     pub async fn new() -> crate::Result<Self> {
+        let (addr, udp_server) = SmolUdpSocket::bind("0.0.0.0:0").await?;
         Ok(Self {
-            udp_server: Arc::new(Datagram::new(
-                Arc::new(SmolUdpSocket::bind("0.0.0.0:0").await?),
-                FusoExecutor,
-            )?),
+            udp_server: Arc::new(Datagram::new(Arc::new(udp_server), addr, FusoExecutor)?),
         })
     }
 }
@@ -63,15 +61,7 @@ impl Provider<Addr> for FusoUdpForwardProvider {
                 .next()
                 .ok_or(InvalidAddr::Domain(addr.as_string()))?;
 
-            let udp = udp_server.connect(addr).await?;
-            match udp.local_addr()? {
-                Address::One(socket) => match socket.into_addr().into_inner() {
-                    InnerAddr::Socket(addr) => return Ok((addr, udp)),
-                    _ => {}
-                },
-                _ => {}
-            }
-            unsafe { std::hint::unreachable_unchecked() }
+            udp_server.connect(addr).await.map_err(Into::into)
         })
     }
 }
