@@ -22,7 +22,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --release --target ${{ matrix.arch }} --features "fuso-log"
+          args: --release --target ${{ matrix.arch }} --features "fuc-log"
 
       - uses: actions/upload-artifact@v2
         with:
@@ -67,7 +67,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --release --target ${{ matrix.arch }} --features "fuso-log"
+          args: --release --target ${{ matrix.arch }} --features "fuc-log"
       - uses: actions/upload-artifact@v2
         with:
           name: ${{ matrix.arch }}
