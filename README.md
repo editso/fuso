@@ -37,6 +37,53 @@ A fast, stable, cross-platform and efficient intranet penetration and port forwa
 
 5. 此时访问`127.0.0.1:60974`即可, 注意: 你的`80`端口必须有服务在运行
 
+### 使用说明
+```
+1. 端口转发
+fuc --forward-host xxx.xxx.xxx.xxx --forward-port
+   --forward-host: 转发到的地址
+   --forward-port: 转发到的端口
+   如: 转发流量到内网 10.10.10.4:3389
+   > fuc --forward-host 10.10.10.4 --forward-port 33389
+
+2. socks5:
+fuc --socks --su --s5p xxx --s5u xxx
+   --su: 可选的, 开启udp转发, 
+   --s5p: 可选的, 认证密码, 默认不进行密码认证
+   --s5u 可选的, 认证账号, 默认账号 anonymous
+   --socks: 可选的, 开启socks5代理, 未指定--su的情况下不会转发udp
+   如: 开启udp转发与密码认证
+   > fuc --socks --su --s5p 123 --s5u socks
+   此时, 已开启udp转发,连接密码为 "123",账号为 "socks"
+
+3. 指定穿透成功时访问的端口
+   fuc -b xxxx
+   -b | --visit-bind-port: 可选的, 默认随机分配
+   如: 访问外网端口 8888 转发到内网 80
+   > fuc --forward-port 80 -b 8888
+   
+4. 桥接模式 注意: 目前不能转发udp
+   fuc --bridge-listen xxxx --bridge-port xxx 
+   --bridge-listen | --bl: 监听地址, 默认 127.0.0.1
+   --bridge-port | --bp: 监听端口, 默认不启用桥接
+   如: 开始桥接模式,并监听在9999端口, 本机ip地址为: 10.10.10.2
+   > fuc --bridge-listen 0.0.0.0 --bridge-port 9999 # 开启桥接
+   > fuc 10.10.10.2 9999 # 建立连接
+
+   级联: 
+   > fuc --bridge-listen 0.0.0.0 --bridge-port 9999 # 第一级, IP: 10.10.10.2
+    > fuc --bridge-listen 0.0.0.0 --bridge-port 9991  10.10.10.2 9999 # 第二级, IP: 10.10.10.3
+     > fuc 10.10.10.3 9991 # 最终 
+
+5. 将连接信息通知到 Telegram 或其他
+   fus --observer "program:[arguments]"
+   --observer: 建立连接或断开连接时的钩子
+   如: 使用bash脚本将连接信息通知到tg
+   > fus --observer "/bin/bash:[telegram.sh]"
+
+
+```
+
 
 ### Demo
 ![Demo](demo/demo.gif)
