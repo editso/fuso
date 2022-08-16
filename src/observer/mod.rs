@@ -80,13 +80,16 @@ impl<E> Observer for Executable<E>
 where
     E: Executor,
 {
-    fn on_error(&self, address: &crate::Address)
+    fn on_error(&self, error: &crate::Error, address: &crate::Address)
     where
         Self: Sized,
     {
         self.executor.spawn(self.do_exec(vec![json!({
             "on": "error",
-            "data": address
+            "data": {
+                "error": error.to_string(),
+                "address": address,
+            }
         })]));
     }
 

@@ -3,12 +3,14 @@ mod builder;
 pub use builder::*;
 
 use crate::{
-    generator::GeneratorEx, DecorateProvider, Observer, Processor, Serve, Socket, WrappedProvider,
+    generator::GeneratorEx, Controller, DecorateProvider, Observer, Processor, Serve, Socket,
+    WrappedProvider,
 };
 use std::{pin::Pin, sync::Arc};
 
 use crate::{generator::Generator, Accepter, AccepterExt, Executor, Fuso, Provider, Stream};
 
+pub type Environ = Arc<dyn crate::core::Environ + Send + Sync + 'static>;
 pub type Handshake<S> = WrappedProvider<S, (S, Option<DecorateProvider<S>>)>;
 
 type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>> + Send + 'static>>;
@@ -20,13 +22,17 @@ pub struct Server<E, H, P, S, O> {
     pub(crate) provider: Arc<P>,
     pub(crate) observer: Option<Arc<O>>,
     pub(crate) handshake: Option<Arc<Handshake<S>>>,
+    pub(crate) controller: Option<Arc<dyn Controller + Send + Sync + 'static>>,
 }
 
 impl<E, H, A, G, P, S, O> Server<E, H, P, S, O>
 where
     E: Executor + Send + Clone + 'static,
     A: Accepter<Stream = S> + Unpin + Send + 'static,
-    H: Provider<(S, Processor<P, S, O>), Output = BoxedFuture<G>> + Send + Sync + 'static,
+    H: Provider<(S, Processor<P, S, O>), Output = BoxedFuture<(G, Environ)>>
+        + Send
+        + Sync
+        + 'static,
     G: Generator<Output = Option<BoxedFuture<()>>> + Unpin + Send + 'static,
     S: Stream + Send + 'static,
     O: Observer + Send + Sync + 'static,
@@ -34,6 +40,7 @@ where
 {
     pub async fn run(self) -> crate::Result<()> {
         let mut accepter = self.provider.call(self.bind.clone()).await?;
+        let controller = self.controller.clone();
 
         log::info!("the server listens on {}", accepter.local_addr()?);
 
@@ -55,6 +62,8 @@ where
             };
 
             observer.on_connect(&client_addr);
+
+            let controller = controller.clone();
 
             self.executor.spawn(async move {
                 let now = std::time::Instant::now();
@@ -92,24 +101,37 @@ where
                     return;
                 }
 
-                let mut generator = unsafe { generator.unwrap_unchecked() };
+                let (generator, env) = unsafe { generator.unwrap_unchecked() };
 
-                loop {
-                    match generator.next().await {
-                        Ok(None) => break,
-                        Err(e) => {
-                            log::warn!("An error occurred {}", e);
-                            break;
-                        }
-                        Ok(Some(fut)) => {
-                            executor.spawn(fut);
+                let run_fut = async move {
+                    let mut generator = generator;
+                    loop {
+                        match generator.next().await {
+                            Ok(None) => {
+                                log::warn!("stop processing");
+                                observer.on_stop(now, &client_addr);
+                                break Ok(());
+                            }
+                            Err(e) => {
+                                log::warn!("An error occurred {}", e);
+                                observer.on_error(&e, &client_addr);
+                                break Err(e);
+                            }
+                            Ok(Some(fut)) => {
+                                executor.spawn(fut);
+                            }
                         }
                     }
+                };
+
+                let err = match controller {
+                    None => run_fut.await,
+                    Some(controller) => controller.register(env, Box::pin(run_fut)),
+                };
+
+                if let Err(e) = err {
+                    log::error!("{}", e);
                 }
-
-                log::warn!("stop processing");
-
-                observer.on_stop(now,&client_addr);
             });
         }
     }
@@ -119,11 +141,14 @@ impl<E, H, A, G, P, S, O> Fuso<Server<E, H, P, S, O>>
 where
     E: Executor + Send + Clone + 'static,
     A: Accepter<Stream = S> + Unpin + Send + 'static,
-    H: Provider<(S, Processor<P, S, O>), Output = BoxedFuture<G>> + Send + Sync + 'static,
     O: Observer + Sync + Send + 'static,
     G: Generator<Output = Option<BoxedFuture<()>>> + Unpin + Send + 'static,
     P: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
     S: Stream + Send + 'static,
+    H: Provider<(S, Processor<P, S, O>), Output = BoxedFuture<(G, Environ)>>
+        + Send
+        + Sync
+        + 'static,
 {
     pub fn bind<T: Into<Socket>>(self, bind: T) -> Self {
         Fuso(Server {
@@ -133,6 +158,7 @@ where
             handshake: self.0.handshake,
             handler: self.0.handler,
             observer: self.0.observer,
+            controller: self.0.controller,
         })
     }
 

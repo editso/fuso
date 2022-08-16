@@ -5,6 +5,7 @@ use serde::Serialize;
 use crate::penetrate::accepter::PenetrateAccepter;
 use crate::penetrate::client;
 use crate::protocol::IntoPacket;
+use crate::server::Environ;
 use crate::sync::Mutex;
 use std::future::Future;
 
@@ -120,12 +121,20 @@ pub struct Config {
     pub(super) socks5_password: Option<String>,
     pub(super) socks5_username: Option<String>,
     pub(super) platform: Platform,
-    pub(super) real_ip: bool
+    pub(super) real_ip: bool,
 }
 
 pub struct PenetrateProvider<T> {
     pub(crate) mock: Arc<Mock<T>>,
     pub(crate) config: Config,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PenetrateEnviron {
+    conn: Address,
+    client: Address,
+    config: Config,
+    visitor: Address,
 }
 
 pub struct Penetrate<P, S, A, O> {
@@ -297,7 +306,7 @@ where
                         Peer::Unknown(visitor) => return Ok(State::Close(visitor.into_inner())),
                         Peer::Route(visitor, dst) => (visitor, dst),
                     };
-                    
+
                     let route = Poto::Map(id, dst).bytes();
 
                     throw_client_error!(writer.send_packet(&route).await);
@@ -327,7 +336,7 @@ where
                                 &visit_addr,
                                 &dst.peer_addr()?,
                             );
-                            
+
                             Ok::<_, crate::Error>(State::Route(src.into_inner(), dst))
                         }
                         Visitor::Provider(provider) => {
@@ -446,7 +455,7 @@ where
                         self.processor
                             .observer()
                             .on_pen_error(&self.address, &cfg, &e);
-                        
+
                         return Poll::Ready(Err(e));
                     }
                     Poll::Ready(Ok(State::Close(mut s))) => {
@@ -473,7 +482,7 @@ where
     P: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
     O: PenetrateObserver + Send + Sync + 'static,
 {
-    type Output = BoxedFuture<PenetrateGenerator<P, S, A, O>>;
+    type Output = BoxedFuture<(PenetrateGenerator<P, S, A, O>, Environ)>;
 
     fn call(&self, (mut client, processor): (S, Processor<P, S, O>)) -> Self::Output {
         let peer_provider = self.mock.clone();
@@ -494,7 +503,7 @@ where
 
                     processor
                         .observer()
-                        .on_pen_error(&client.peer_addr()?, &config,&err);
+                        .on_pen_error(&client.peer_addr()?, &config, &err);
 
                     return Err(err);
                 }
@@ -508,7 +517,9 @@ where
 
                     if let Err(e) = client.send_packet(&message).await {
                         log::warn!("failed to send failure message to client err={}", e);
-                        processor.observer().on_pen_error(&client.peer_addr()?, &config,&e);
+                        processor
+                            .observer()
+                            .on_pen_error(&client.peer_addr()?, &config, &e);
                     }
 
                     Err(e)
@@ -543,14 +554,23 @@ where
 
                     log::info!("please visit {} for port mapping", avisit.local_addr()?);
 
-                    Ok(PenetrateGenerator(Penetrate::new(
+                    let environ: Environ = Arc::new(PenetrateEnviron {
+                        conn: client.peer_addr()?,
+                        config: config.clone(),
+                        client: aclient.local_addr()?,
+                        visitor: avisit.local_addr()?,
+                    });
+
+                    let generator = PenetrateGenerator(Penetrate::new(
                         config,
                         peer_provider,
                         processor,
                         client.peer_addr()?,
                         client,
                         PenetrateAccepter::new(avisit, aclient),
-                    )))
+                    ));
+
+                    Ok((generator, environ))
                 }
             }
         })
@@ -583,6 +603,16 @@ where
                 Ok(())
             })))),
         }
+    }
+}
+
+impl crate::Environ for PenetrateEnviron {
+    fn conn(&self) -> Address {
+        self.conn.clone()
+    }
+
+    fn info(&self) -> crate::Result<serde_json::Value> {
+        Ok(serde_json::to_value(self).unwrap())
     }
 }
 
