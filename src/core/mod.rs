@@ -1,3 +1,5 @@
+mod controller;
+pub use controller::*;
 
 mod provider;
 pub use provider::*;

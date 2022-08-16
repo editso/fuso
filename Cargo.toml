@@ -108,7 +108,7 @@ panic = 'abort'
 
 [features]
 # 默认开启tokio异步 & clap参数解析器
-default = ['fuso-rt-tokio', "fuso-json", "fuso-kcp","fuso-clap", "bytes", "fuso-serde", "fuso-socks5", "fuso-crypt-rsa", "fuso-crypt-aes", "fus-log"]
+default = ['fuso-rt-tokio', "fuso-api", "fuso-json", "fuso-kcp","fuso-clap", "bytes", "fuso-serde", "fuso-socks5", "fuso-crypt-rsa", "fuso-crypt-aes"]
 # 只提供api，不提供web界面
 fuso-api = ["axum", "fuso-rt-tokio"]
 # web界面
@@ -139,8 +139,7 @@ fuso-crypt-rsa = ["rsa", "rand"]
 fuso-crypt-aes = ["aes", "cbc"]
 # json
 fuso-json = ["serde_json"]
-# 日志输出
-fus-log = ['env_logger']
+# 客户端日志输出
 fuc-log = ["env_logger"]
 
 

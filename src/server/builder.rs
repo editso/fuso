@@ -1,6 +1,9 @@
 use std::{pin::Pin, sync::Arc};
 
-use crate::{generator::Generator, Fuso, Provider, Socket, Stream, WrappedProvider, DecorateProvider};
+use crate::{
+    generator::Generator, DecorateProvider, Environ, Fuso, Provider, Socket, Stream,
+    WrappedProvider,
+};
 
 use super::{Handshake, Processor, Server};
 
@@ -20,7 +23,10 @@ where
 {
     pub fn using_handshake<F>(mut self, handshake: F) -> Self
     where
-        F: Provider<S, Output = BoxedFuture<(S, Option<DecorateProvider<S>>)>> + Send + Sync + 'static,
+        F: Provider<S, Output = BoxedFuture<(S, Option<DecorateProvider<S>>)>>
+            + Send
+            + Sync
+            + 'static,
     {
         self.handshake = Some(WrappedProvider::wrap(handshake));
         self
@@ -28,8 +34,13 @@ where
 
     pub fn build<H, G>(self, handler: H) -> Fuso<Server<E, H, P, S, O>>
     where
-        H: Provider<(S, Processor<P, S, O>), Output = BoxedFuture<G>> + Send + Sync + 'static,
         G: Generator<Output = Option<BoxedFuture<()>>> + Send + 'static,
+        H: Provider<
+                (S, Processor<P, S, O>),
+                Output = BoxedFuture<(G, Arc<dyn Environ + Send + Sync + 'static>)>,
+            > + Send
+            + Sync
+            + 'static,
     {
         Fuso(Server {
             handler: Arc::new(handler),
@@ -38,6 +49,7 @@ where
             provider: self.server_provider,
             observer: self.observer,
             handshake: self.handshake.map(Arc::new),
+            controller: None,
         })
     }
 }

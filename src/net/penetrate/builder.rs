@@ -4,7 +4,7 @@ use crate::{
     client::{Client, ClientBuilder, Route},
     guard::Fallback,
     server::{Server, ServerBuilder},
-    Accepter, Executor, Fuso, Provider, Socket, Stream, WrappedProvider, Platform,
+    Accepter, Executor, Fuso, Platform, Provider, Socket, Stream, WrappedProvider,
 };
 
 use super::{
@@ -116,6 +116,7 @@ where
             + 'static,
     {
         self.server_builder.build(PenetrateProvider {
+            mock: Arc::new(WrappedProvider::wrap(mock)),
             config: Config {
                 whoami: String::from("anonymous"),
                 is_mixed: self.is_mixed,
@@ -129,9 +130,8 @@ where
                 real_ip: false,
                 socks5_password: None,
                 socks5_username: None,
-                platform: Default::default()
+                platform: Default::default(),
             },
-            mock: Arc::new(WrappedProvider::wrap(mock)),
         })
     }
 }
@@ -246,7 +246,7 @@ where
                     socks_password: self.socks_password,
                     enable_socks5_udp: self.enable_socks5_udp,
                     version: String::from(env!("CARGO_PKG_VERSION")),
-                    platform: Platform::default()
+                    platform: Platform::default(),
                 },
             },
         )
