@@ -44,7 +44,7 @@ fuc --forward-host xxx.xxx.xxx.xxx --forward-port
    --forward-host: 转发到的地址
    --forward-port: 转发到的端口
    如: 转发流量到内网 10.10.10.4:3389
-   > fuc --forward-host 10.10.10.4 --forward-port 33389
+   > fuc --forward-host 10.10.10.4 --forward-port 3389
 
 2. socks5:
 fuc --socks --su --s5p xxx --s5u xxx
