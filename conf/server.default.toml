@@ -1,0 +1,11 @@
+[global]
+bind = "0.0.0.0"
+port = 6722
+feature = 'Penetrate'
+log_level = "info"
+handshake = {type = "Token", params = "my token"}
+
+[penetrate]
+features = ["Socks", "Proxy"]
+webhook = { type = "Telegram", params = { token = "xxxxxxx" } }
+

@@ -1,3 +1,7 @@
+#![cfg(feature = "fus-log")]
+
+mod fuso_toml;
+
 use std::net::IpAddr;
 
 use clap::Parser;
@@ -19,14 +23,9 @@ pub struct FusoArgs {
     /// webhook
     #[clap(long)]
     observer: Option<String>,
+    #[clap(long, short)]
+    config: Option<String>,
     /// 日志级别
-    #[cfg(debug_assertions)]
-    #[cfg(feature = "fus-log")]
-    #[clap(long, default_value = "debug")]
-    log_level: log::LevelFilter,
-    /// 日志级别
-    #[cfg(feature = "fus-log")]
-    #[cfg(not(debug_assertions))]
     #[clap(long, default_value = "info")]
     log_level: log::LevelFilter,
     /// 发送心跳延时
@@ -34,7 +33,6 @@ pub struct FusoArgs {
     heartbeat_delay: u64,
 }
 
-#[cfg(feature = "fus-log")]
 fn init_logger(log_level: log::LevelFilter) {
     let is_info_log = log_level.eq(&log::LevelFilter::Info);
     env_logger::builder()
@@ -46,16 +44,20 @@ fn init_logger(log_level: log::LevelFilter) {
 }
 
 fn main() -> fuso::Result<()> {
+    use std::time::Duration;
+
     use fuso::{
         observer::Executable, penetrate::PenetrateRsaAndAesHandshake, FusoExecutor,
-        FusoUdpServerProvider, Socket, FusoUdpForwardProvider,
+        FusoUdpForwardProvider, FusoUdpServerProvider, Socket,
     };
-    use std::time::Duration;
 
     let args = FusoArgs::parse();
 
-    #[cfg(feature = "fus-log")]
     init_logger(args.log_level);
+
+    let config = fuso_toml::parse(args.config)?;
+
+    // println!("{:#?}", config);
 
     fuso::block_on(async move {
         fuso::builder_server(Executable::new(args.observer, FusoExecutor))
