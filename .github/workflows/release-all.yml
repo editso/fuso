@@ -99,26 +99,25 @@ jobs:
         arch:
           - x86_64-unknown-linux-musl
           - i686-unknown-linux-musl
-
+          - mips-unknown-linux-musl
+          - mips-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+          - aarch64-unknown-linux-musl
+          - aarch64-linux-android
+          - i686-linux-android
+          - x86_64-linux-android
     steps:
-      - run: sudo apt -y install musl-tools
       - uses: actions/checkout@v2
-        with:
-          submodules: true
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
-          target: ${{ matrix.arch }}
-      - uses: actions-rs/cargo@v1
-        with:
-          command: build
-          args: --release --target ${{ matrix.arch }} --features "fuc-log"
-
+      - run: cargo install cross --git https://github.com/cross-rs/cross
+      - run: cross build --release --target ${{ matrix.arch }} --features 'fuc-log'
       - uses: actions/upload-artifact@v2
         with:
           name: ${{ matrix.arch }}
           path: target/${{ matrix.arch }}/release/fu*
-        
+      
       - run: zip -j ${{ matrix.arch }} ./target/${{ matrix.arch }}/release/fu*
     
       - name: Release Drafter
@@ -137,4 +136,3 @@ jobs:
           asset_path: ${{ matrix.arch }}.zip
           asset_name: ${{ matrix.arch }}.zip
           asset_content_type: application/zip
-    
