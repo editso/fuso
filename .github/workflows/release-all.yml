@@ -109,7 +109,7 @@ jobs:
         with:
           toolchain: stable
       - run: cargo install cross --git https://github.com/cross-rs/cross
-      - run: cross build --target --release ${{ matrix.arch }} --features 'fuc-log'
+      - run: cross build --release --target ${{ matrix.arch }} --features 'fuc-log'
       - uses: actions/upload-artifact@v2
         with:
           name: ${{ matrix.arch }}
