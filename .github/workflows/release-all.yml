@@ -103,6 +103,9 @@ jobs:
           - mips-unknown-linux-gnu
           - aarch64-unknown-linux-gnu
           - aarch64-unknown-linux-musl
+          - aarch64-linux-android
+          - i686-linux-android
+          - x86_64-linux-android
     steps:
       - uses: actions/checkout@v2
       - uses: actions-rs/toolchain@v1
@@ -114,7 +117,7 @@ jobs:
         with:
           name: ${{ matrix.arch }}
           path: target/${{ matrix.arch }}/release/fu*
-        
+      
       - run: zip -j ${{ matrix.arch }} ./target/${{ matrix.arch }}/release/fu*
     
       - name: Release Drafter
