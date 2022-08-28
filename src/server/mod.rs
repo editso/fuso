@@ -3,7 +3,7 @@ mod builder;
 pub use builder::*;
 
 use crate::{
-    generator::GeneratorEx, Controller, DecorateProvider, Observer, Processor, Serve, Socket,
+    generator::GeneratorEx, Controller, DecorateProvider, Webhook, Processor, Serve, Socket,
     WrappedProvider,
 };
 use std::{pin::Pin, sync::Arc};
@@ -35,7 +35,7 @@ where
         + 'static,
     G: Generator<Output = Option<BoxedFuture<()>>> + Unpin + Send + 'static,
     S: Stream + Send + 'static,
-    O: Observer + Send + Sync + 'static,
+    O: Webhook + Send + Sync + 'static,
     P: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
 {
     pub async fn run(self) -> crate::Result<()> {
@@ -141,7 +141,7 @@ impl<E, H, A, G, P, S, O> Fuso<Server<E, H, P, S, O>>
 where
     E: Executor + Send + Clone + 'static,
     A: Accepter<Stream = S> + Unpin + Send + 'static,
-    O: Observer + Sync + Send + 'static,
+    O: Webhook + Sync + Send + 'static,
     G: Generator<Output = Option<BoxedFuture<()>>> + Unpin + Send + 'static,
     P: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
     S: Stream + Send + 'static,

@@ -2,11 +2,11 @@ mod accepter;
 mod selector;
 mod builder;
 mod handshake;
-mod observer;
+mod webhook;
 mod bridge;
 
 pub use handshake::*;
-pub use observer::*;
+pub use webhook::*;
 
 mod mock;
 

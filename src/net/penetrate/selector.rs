@@ -7,7 +7,7 @@ use crate::{
 
 use super::{
     server::{Peer, PenetrateProvider},
-    PenetrateServerBuilder, PenetrateObserver,
+    PenetrateServerBuilder, PenetrateWebhook,
 };
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
@@ -25,7 +25,7 @@ pub struct PenetrateSelectorBuilder<E, P, S, O> {
 }
 
 impl<E, P, S, O> PenetrateServerBuilder<E, P, S, O> {
-    pub fn using_adapter(self) -> PenetrateSelectorBuilder<E, P, S, O> {
+    pub fn using_selector(self) -> PenetrateSelectorBuilder<E, P, S, O> {
         PenetrateSelectorBuilder {
             adapters: Default::default(),
             penetrate_builder: self,
@@ -39,7 +39,7 @@ where
     A: Accepter<Stream = S> + Unpin + Send + 'static,
     S: Stream + Send + Sync + 'static,
     P: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
-    O: PenetrateObserver + Send + Sync + 'static
+    O: PenetrateWebhook + Send + Sync + 'static
 {
     pub fn build(self) -> Fuso<Server<E, PenetrateProvider<S>, P, S, O>> {
         self.penetrate_builder

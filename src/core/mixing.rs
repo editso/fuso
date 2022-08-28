@@ -113,7 +113,7 @@ where
         ServerBuilder {
             executor: self.executor,
             handshake: self.handshake,
-            observer: self.observer,
+            webhook: self.webhook,
             is_mixed: true,
             server_provider: Arc::new(MixListener {
                 left: self.server_provider,

@@ -22,7 +22,7 @@ use crate::{
 
 use super::accepter::Pen;
 use super::mock::Mock;
-use super::PenetrateObserver;
+use super::PenetrateWebhook;
 use crate::{join, time, Address, Error, Kind, NetSocket, Platform, Processor};
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
@@ -192,7 +192,7 @@ impl<P, T, A, O> Penetrate<P, T, A, O>
 where
     T: Stream + Sync + Send + 'static,
     A: Accepter<Stream = Pen<T>> + Unpin + Send + 'static,
-    O: PenetrateObserver + Sync + Send + 'static,
+    O: PenetrateWebhook + Sync + Send + 'static,
     P: Sync + Send + 'static,
 {
     pub fn new(
@@ -407,7 +407,7 @@ impl<P, T, A, O> Accepter for Penetrate<P, T, A, O>
 where
     T: Stream + Send + Sync + 'static,
     A: Accepter<Stream = Pen<T>> + Unpin + Send + 'static,
-    O: PenetrateObserver + Sync + Send + 'static,
+    O: PenetrateWebhook + Sync + Send + 'static,
     P: Send + Sync + 'static,
 {
     type Stream = Outcome<T>;
@@ -480,7 +480,7 @@ where
     A: Accepter<Stream = S> + Send + Unpin + 'static,
     S: Stream + Sync + Send + 'static,
     P: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
-    O: PenetrateObserver + Send + Sync + 'static,
+    O: PenetrateWebhook + Send + Sync + 'static,
 {
     type Output = BoxedFuture<(PenetrateGenerator<P, S, A, O>, Environ)>;
 
@@ -581,7 +581,7 @@ impl<P, T, A, O> Generator for PenetrateGenerator<P, T, A, O>
 where
     A: Accepter<Stream = T> + Send + Unpin + 'static,
     T: Stream + Send + Sync + 'static,
-    O: PenetrateObserver + Sync + Send + 'static,
+    O: PenetrateWebhook + Sync + Send + 'static,
     P: Send + Sync + 'static,
 {
     type Output = Option<BoxedFuture<()>>;

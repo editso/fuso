@@ -10,7 +10,7 @@ use crate::{
 use super::{
     client::PenetrateClientProvider,
     server::{Config, Peer, PenetrateProvider},
-    PenetrateObserver,
+    PenetrateWebhook,
 };
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
@@ -74,7 +74,7 @@ where
     A: Accepter<Stream = S> + Unpin + Send + 'static,
     S: Stream + Send + Sync + 'static,
     P: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
-    O: PenetrateObserver + Send + Sync + 'static,
+    O: PenetrateWebhook + Send + Sync + 'static,
 {
     pub fn read_timeout(mut self, time: Option<Duration>) -> Self {
         self.read_timeout = time;

@@ -2,6 +2,7 @@
 
 use std::{collections::HashMap, net::IpAddr};
 
+use fuso::webhook;
 use serde::{Deserialize, Serialize};
 
 #[inline]
@@ -30,15 +31,14 @@ fn default_log_level() -> log::LevelFilter {
 }
 
 fn default_penetrate_futures() -> Vec<PenetrateFuture> {
-    vec![PenetrateFuture::Socks, PenetrateFuture::Proxy]
+    vec![
+        PenetrateFuture::Socks { udp_forward: true },
+        PenetrateFuture::Proxy,
+    ]
 }
 
 fn default_web_context() -> String {
     String::from("/")
-}
-
-fn default_webhook_field() -> String {
-    String::from("text")
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -58,27 +58,30 @@ pub enum HandshakePolicy {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Global {
     #[serde(default = "default_bind")]
-    bind: IpAddr,
+    pub bind: IpAddr,
     #[serde(default = "default_port")]
-    port: u16,
+    pub port: u16,
     #[serde(default = "Default::default")]
-    feature: Feature,
+    pub feature: Feature,
     #[serde(default = "Default::default")]
-    handshake: HandshakePolicy,
+    pub handshake: HandshakePolicy,
     #[serde(default = "default_log_level")]
-    log_level: log::LevelFilter,
+    pub log_level: log::LevelFilter,
+    #[serde(default = "Default::default")]
+    pub webhook: Option<Webhook>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub enum PenetrateFuture {
     // socks5
-    Socks,
+    Socks { udp_forward: bool },
     // proxy
     Proxy,
     // proxy protocol
     PProxy,
     // websocket
     Websocket,
+    // udp forward
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -110,42 +113,34 @@ pub enum Webhook {
         server: String,
         #[serde(default = "Default::default")]
         use_ssl: bool,
-        #[serde(default = "Default::default")]
-        method: WebhookMethod,
+        method: webhook::hyper::Method,
         #[serde(default = "Default::default")]
         headers: HashMap<String, String>,
-        #[serde(default = "default_webhook_field")]
-        text_field: String,
         #[serde(default = "Default::default")]
-        format_mode: WebhookFormat,
+        format_mode: webhook::hyper::Format,
     },
     Telegram {
-        token: String,
         #[serde(default = "default_telegram_server")]
         server: String,
-    },
-    Executable {
-        program: String,
-        arguments: Vec<String>,
-    },
+        chat_id: String,
+        bot_token: String,
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Penetrate {
     #[serde(default = "default_penetrate_futures")]
-    features: Vec<PenetrateFuture>,
-    #[serde(default = "Default::default")]
-    webhook: Option<Webhook>,
+    pub features: Vec<PenetrateFuture>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
     #[serde(default = "Default::default")]
-    global: Global,
+    pub global: Global,
     #[serde(default = "Default::default")]
-    penetrate: Penetrate,
+    pub penetrate: Penetrate,
     #[serde(default = "Default::default")]
-    dashboard: Option<Dashboard>,
+    pub dashboard: Option<Dashboard>,
 }
 
 impl Default for Feature {
@@ -162,6 +157,7 @@ impl Default for Global {
             feature: Default::default(),
             handshake: Default::default(),
             log_level: default_log_level(),
+            webhook: Default::default(),
         }
     }
 }
@@ -176,7 +172,6 @@ impl Default for Penetrate {
     fn default() -> Self {
         Self {
             features: default_penetrate_futures(),
-            webhook: Default::default(),
         }
     }
 }

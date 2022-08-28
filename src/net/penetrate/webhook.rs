@@ -4,7 +4,7 @@ use crate::{Address, Error};
 
 use super::server;
 
-pub trait PenetrateObserver {
+pub trait PenetrateWebhook {
     fn on_pen_start(
         &self,
         client: &Address,
@@ -60,11 +60,11 @@ pub trait PenetrateObserver {
     }
 }
 
-impl PenetrateObserver for () {}
+impl PenetrateWebhook for () {}
 
-impl<T> PenetrateObserver for Arc<T>
+impl<T> PenetrateWebhook for Arc<T>
 where
-    T: PenetrateObserver,
+    T: PenetrateWebhook,
 {
     fn on_pen_error(&self, client: &Address, config: &server::Config, error: &Error)
     where
@@ -105,9 +105,9 @@ where
     }
 }
 
-impl<T> PenetrateObserver for Option<T>
+impl<T> PenetrateWebhook for Option<T>
 where
-    T: PenetrateObserver,
+    T: PenetrateWebhook,
 {
     fn on_pen_error(&self, client: &Address, config: &server::Config, error: &Error)
     where

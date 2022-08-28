@@ -9,7 +9,7 @@ use crate::{
     client::{self},
     kcp::{self},
     ready, server, Accepter, Address, ClientProvider, Executor, FusoStream, Kind, NetSocket,
-    Observer, Provider, Socket, SocketErr, Task, ToBoxStream, UdpSocket,
+    Webhook, Provider, Socket, SocketErr, Task, ToBoxStream, UdpSocket,
 };
 
 type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>> + Send + 'static>>;
@@ -240,16 +240,16 @@ where
 }
 
 pub fn builder_server<O>(
-    observer: O,
+    webhook: O,
 ) -> server::ServerBuilder<FusoExecutor, FusoAccepter, FusoStream, O>
 where
-    O: Observer + Send + Sync + 'static,
+    O: Webhook + Send + Sync + 'static,
 {
     server::ServerBuilder {
         is_mixed: false,
         executor: FusoExecutor,
         handshake: None,
-        observer: Some(Arc::new(observer)),
+        webhook: Some(Arc::new(webhook)),
         server_provider: Arc::new(FusoAccepter),
     }
 }

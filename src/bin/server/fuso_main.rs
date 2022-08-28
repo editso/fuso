@@ -1,10 +1,20 @@
-#![cfg(feature = "fus-log")]
-
 mod fuso_toml;
 
-use std::net::IpAddr;
+use std::{net::IpAddr, sync::Arc};
 
 use clap::Parser;
+
+use fuso::{
+    penetrate::PenetrateWebhook,
+    webhook::{hyper::HTTPWebhook, telegram::Telegram},
+    Webhook,
+};
+use fuso_toml::Config;
+
+use fuso::{
+    penetrate::PenetrateRsaAndAesHandshake, FusoExecutor, FusoUdpForwardProvider,
+    FusoUdpServerProvider, Socket,
+};
 
 #[derive(Parser)]
 pub struct FusoArgs {
@@ -36,42 +46,100 @@ pub struct FusoArgs {
 fn init_logger(log_level: log::LevelFilter) {
     let is_info_log = log_level.eq(&log::LevelFilter::Info);
     env_logger::builder()
-        .filter_module("fuso", log_level)
         .default_format()
+        // .filter_module("fuso", log_level)
+        .filter_level(log_level)
         .format_timestamp_millis()
-        .format_target(!is_info_log)
+        // .format_target(!is_info_log)
         .init();
 }
 
 fn main() -> fuso::Result<()> {
-    use std::time::Duration;
-
-    use fuso::{
-        observer::Executable, penetrate::PenetrateRsaAndAesHandshake, FusoExecutor,
-        FusoUdpForwardProvider, FusoUdpServerProvider, Socket,
-    };
-
     let args = FusoArgs::parse();
+    let config = Arc::new(fuso_toml::parse(args.config)?);
 
-    init_logger(args.log_level);
-
-    let config = fuso_toml::parse(args.config)?;
-
-    // println!("{:#?}", config);
+    log::trace!("config = {:#?}", config);
 
     fuso::block_on(async move {
-        fuso::builder_server(Executable::new(args.observer, FusoExecutor))
-            .using_handshake(PenetrateRsaAndAesHandshake::Server)
-            .using_kcp(FusoUdpServerProvider, FusoExecutor)
-            .using_penetrate()
-            .heartbeat_timeout(Duration::from_secs(args.heartbeat_delay))
-            .using_adapter()
-            .using_direct()
-            .using_socks()
-            .using_udp_forward(FusoUdpForwardProvider)
-            .build()
-            .bind(Socket::tcp((args.listen, args.port)))
-            .run()
-            .await
+        init_logger(config.global.log_level);
+
+        match config.global.webhook {
+            Some(ref webhook) => match webhook {
+                fuso_toml::Webhook::Http {
+                    server,
+                    use_ssl,
+                    method,
+                    headers,
+                    format_mode,
+                } => {
+                    let http = HTTPWebhook {
+                        server: server.clone(),
+                        format: format_mode.clone(),
+                        method: method.clone(),
+                        enable_ssl: use_ssl.clone(),
+                        executor: FusoExecutor,
+                        headers: headers
+                            .iter()
+                            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+                            .collect(),
+                    };
+
+                    run_async_main(config, http).await
+                }
+                fuso_toml::Webhook::Telegram {
+                    server,
+                    chat_id,
+                    bot_token,
+                } => {
+                    let telegram = Telegram::new(
+                        bot_token.clone(),
+                        chat_id.clone(),
+                        fuso::FusoExecutor,
+                        Some(server.clone()),
+                    );
+                    run_async_main(config, telegram).await
+                }
+            },
+            None => run_async_main(config, ()).await,
+        }
     })
+}
+
+async fn run_async_main<W>(config: Arc<Config>, webhook: W) -> fuso::Result<()>
+where
+    W: Webhook + PenetrateWebhook + Send + Sync + 'static,
+{
+    let fuso_builder = fuso::builder_server(webhook);
+
+    match config.global.feature {
+        fuso_toml::Feature::Tun => todo!(),
+        fuso_toml::Feature::Proxy => todo!(),
+        fuso_toml::Feature::Penetrate => {
+            let mut fuso_builder = fuso_builder
+                .using_handshake(PenetrateRsaAndAesHandshake::Server)
+                .using_kcp(FusoUdpServerProvider, FusoExecutor)
+                .using_penetrate()
+                .using_selector();
+
+            for feature in config.penetrate.features.iter() {
+                fuso_builder = match feature {
+                    fuso_toml::PenetrateFuture::Proxy => fuso_builder.using_direct(),
+                    fuso_toml::PenetrateFuture::Socks { udp_forward: false } => {
+                        fuso_builder.using_socks().simple()
+                    }
+                    fuso_toml::PenetrateFuture::Socks { udp_forward: true } => fuso_builder
+                        .using_socks()
+                        .using_udp_forward(FusoUdpForwardProvider),
+                    fuso_toml::PenetrateFuture::PProxy => todo!(),
+                    fuso_toml::PenetrateFuture::Websocket => unimplemented!(),
+                }
+            }
+
+            fuso_builder
+                .build()
+                .bind(Socket::tcp((config.global.bind, config.global.port)))
+                .run()
+                .await
+        }
+    }
 }
