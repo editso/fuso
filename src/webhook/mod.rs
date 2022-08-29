@@ -1,10 +1,15 @@
-use std::{future::Future, pin::Pin};
+pub mod hyper;
+pub mod telegram;
+
+use std::{collections::HashMap, future::Future, pin::Pin};
 
 use serde_json::json;
 
-use crate::{penetrate::PenetrateObserver, Executor, Observer};
+use crate::{penetrate::PenetrateWebhook, Executor, Webhook};
 
 type BoxedFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+
+
 
 pub struct Executable<E> {
     prog: Option<String>,
@@ -76,7 +81,7 @@ where
     }
 }
 
-impl<E> Observer for Executable<E>
+impl<E> Webhook for Executable<E>
 where
     E: Executor,
 {
@@ -107,7 +112,7 @@ where
     }
 }
 
-impl<E> PenetrateObserver for Executable<E>
+impl<E> PenetrateWebhook for Executable<E>
 where
     E: Executor,
 {
@@ -116,7 +121,7 @@ where
         client: &crate::Address,
         visit: &crate::Address,
         server: &crate::Address,
-        config: &crate::penetrate::server::Config,
+        config: &crate::penetrate::server::ClientConfig,
     ) where
         Self: Sized,
     {
@@ -136,7 +141,7 @@ where
         client: &crate::Address,
         visit: &crate::Address,
         server: &crate::Address,
-        config: &crate::penetrate::server::Config,
+        config: &crate::penetrate::server::ClientConfig,
     ) where
         Self: Sized,
     {
@@ -154,7 +159,7 @@ where
     fn on_pen_error(
         &self,
         client: &crate::Address,
-        config: &crate::penetrate::server::Config,
+        config: &crate::penetrate::server::ClientConfig,
         error: &crate::Error,
     ) where
         Self: Sized,

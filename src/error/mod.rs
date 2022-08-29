@@ -56,6 +56,12 @@ pub enum CompressErr {
 }
 
 #[derive(Debug)]
+pub enum SerdeErr {
+    #[cfg(feature = "fuso-toml")]
+    TomlDe(toml::de::Error),
+}
+
+#[derive(Debug)]
 pub enum SocketErr {
     BadAddress(Socket),
     NotSupport(Socket),
@@ -115,6 +121,7 @@ pub enum Kind {
     Improper(Socket),
     Text(String),
     MaxRetries(usize),
+    Serde(SerdeErr),
 }
 
 impl Display for SyncErr {
@@ -200,6 +207,15 @@ impl From<cbc::cipher::InvalidLength> for Error {
 impl From<cbc::cipher::block_padding::UnpadError> for Error {
     fn from(e: cbc::cipher::block_padding::UnpadError) -> Self {
         Kind::Encryption(EncryptionErr::Aes(AesErr::UnPad(e))).into()
+    }
+}
+
+#[cfg(feature = "fuso-toml")]
+impl From<toml::de::Error> for Error {
+    fn from(e: toml::de::Error) -> Self {
+        Self {
+            kind: Kind::Serde(SerdeErr::TomlDe(e)),
+        }
     }
 }
 
@@ -290,6 +306,7 @@ impl Display for Error {
             Kind::Improper(e) => format!("no suitable ones {}", e),
             Kind::Text(txt) => format!("{}", txt),
             Kind::MaxRetries(retry) => format!("exceeded maximum number of attempts {}", retry),
+            Kind::Serde(serde) => format!("{:?}", serde),
         };
         write!(f, "{}", fmt)
     }

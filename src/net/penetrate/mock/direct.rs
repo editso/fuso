@@ -13,7 +13,7 @@ type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>>
 
 pub struct DirectMock;
 
-impl<S> Provider<(Fallback<S>, Arc<super::super::server::Config>)> for DirectMock
+impl<S> Provider<(Fallback<S>, Arc<super::super::server::ClientConfig>)> for DirectMock
 where
     S: Stream + Send + 'static,
 {
@@ -21,7 +21,7 @@ where
 
     fn call(
         &self,
-        (stream, config): (Fallback<S>, Arc<super::super::server::Config>),
+        (stream, config): (Fallback<S>, Arc<super::super::server::ClientConfig>),
     ) -> Self::Output {
         Box::pin(async move {
             let mut socket = Socket::default();

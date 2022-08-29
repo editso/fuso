@@ -9,8 +9,8 @@ use crate::{
 
 use super::{
     client::PenetrateClientProvider,
-    server::{Config, Peer, PenetrateProvider},
-    PenetrateObserver,
+    server::{ClientConfig, Peer, PenetrateProvider},
+    PenetrateWebhook,
 };
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
@@ -74,7 +74,7 @@ where
     A: Accepter<Stream = S> + Unpin + Send + 'static,
     S: Stream + Send + Sync + 'static,
     P: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
-    O: PenetrateObserver + Send + Sync + 'static,
+    O: PenetrateWebhook + Send + Sync + 'static,
 {
     pub fn read_timeout(mut self, time: Option<Duration>) -> Self {
         self.read_timeout = time;
@@ -109,7 +109,7 @@ where
     pub fn build<F>(self, mock: F) -> Fuso<Server<E, PenetrateProvider<S>, P, S, O>>
     where
         F: Provider<
-                (Fallback<S>, Arc<super::server::Config>),
+                (Fallback<S>, Arc<super::server::ClientConfig>),
                 Output = BoxedFuture<Peer<Fallback<S>>>,
             > + Send
             + Sync
@@ -117,8 +117,8 @@ where
     {
         self.server_builder.build(PenetrateProvider {
             mock: Arc::new(WrappedProvider::wrap(mock)),
-            config: Config {
-                whoami: String::from("anonymous"),
+            config: ClientConfig {
+                who: String::from("anonymous"),
                 is_mixed: self.is_mixed,
                 maximum_wait: self.max_wait_time,
                 heartbeat_delay: self.heartbeat_timeout,

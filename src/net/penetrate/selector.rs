@@ -7,7 +7,7 @@ use crate::{
 
 use super::{
     server::{Peer, PenetrateProvider},
-    PenetrateServerBuilder, PenetrateObserver,
+    PenetrateServerBuilder, PenetrateWebhook,
 };
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
@@ -20,12 +20,12 @@ pub enum Selector<O> {
 pub struct PenetrateSelector<A>(Arc<Vec<A>>);
 
 pub struct PenetrateSelectorBuilder<E, P, S, O> {
-    pub(crate) adapters: Vec<WrappedProvider<(Fallback<S>, Arc<super::server::Config>), Selector<S>>>,
+    pub(crate) adapters: Vec<WrappedProvider<(Fallback<S>, Arc<super::server::ClientConfig>), Selector<S>>>,
     pub(crate) penetrate_builder: PenetrateServerBuilder<E, P, S, O>,
 }
 
 impl<E, P, S, O> PenetrateServerBuilder<E, P, S, O> {
-    pub fn using_adapter(self) -> PenetrateSelectorBuilder<E, P, S, O> {
+    pub fn using_selector(self) -> PenetrateSelectorBuilder<E, P, S, O> {
         PenetrateSelectorBuilder {
             adapters: Default::default(),
             penetrate_builder: self,
@@ -39,7 +39,7 @@ where
     A: Accepter<Stream = S> + Unpin + Send + 'static,
     S: Stream + Send + Sync + 'static,
     P: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
-    O: PenetrateObserver + Send + Sync + 'static
+    O: PenetrateWebhook + Send + Sync + 'static
 {
     pub fn build(self) -> Fuso<Server<E, PenetrateProvider<S>, P, S, O>> {
         self.penetrate_builder
@@ -48,14 +48,14 @@ where
     }
 }
 
-impl<S, M> Provider<(Fallback<S>, Arc<super::server::Config>)> for PenetrateSelector<M>
+impl<S, M> Provider<(Fallback<S>, Arc<super::server::ClientConfig>)> for PenetrateSelector<M>
 where
     S: Stream + Send + Unpin + 'static,
-    M: Provider<(Fallback<S>, Arc<super::server::Config>), Output = BoxedFuture<Selector<S>>> + Sync + Send + 'static,
+    M: Provider<(Fallback<S>, Arc<super::server::ClientConfig>), Output = BoxedFuture<Selector<S>>> + Sync + Send + 'static,
 {
     type Output = BoxedFuture<Peer<Fallback<S>>>;
 
-    fn call(&self, (fallback, config): (Fallback<S>, Arc<super::server::Config>)) -> Self::Output {
+    fn call(&self, (fallback, config): (Fallback<S>, Arc<super::server::ClientConfig>)) -> Self::Output {
         let adapters = self.0.clone();
         Box::pin(async move {
             let mut fallback = fallback;

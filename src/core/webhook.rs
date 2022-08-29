@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Instant};
 
 use crate::Address;
 
-pub trait Observer {
+pub trait Webhook {
     #[inline]
     fn on_connect(&self, address: &Address)
     where
@@ -40,9 +40,9 @@ pub trait Observer {
     }
 }
 
-impl<T> Observer for Option<T>
+impl<T> Webhook for Option<T>
 where
-    T: Observer,
+    T: Webhook,
 {
     #[inline]
     fn on_connect(&self, address: &Address) {
@@ -63,11 +63,11 @@ where
     }
 }
 
-impl Observer for () {}
+impl Webhook for () {}
 
-impl<T> Observer for Arc<T>
+impl<T> Webhook for Arc<T>
 where
-    T: Observer,
+    T: Webhook,
 {
     #[inline]
     fn on_stop(&self, time: Instant, address: &Address) {

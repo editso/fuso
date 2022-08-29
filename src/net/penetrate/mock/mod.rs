@@ -13,7 +13,7 @@ use crate::{guard::Fallback, Accepter, Executor, Provider, Socket, Stream, Wrapp
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
 
-pub type Mock<S> = WrappedProvider<(Fallback<S>, Arc<super::server::Config>), Peer<Fallback<S>>>;
+pub type Mock<S> = WrappedProvider<(Fallback<S>, Arc<super::server::ClientConfig>), Peer<Fallback<S>>>;
 
 impl<E, P, A, S, O> PenetrateSelectorBuilder<E, P, S, O>
 where

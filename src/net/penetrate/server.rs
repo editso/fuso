@@ -22,7 +22,7 @@ use crate::{
 
 use super::accepter::Pen;
 use super::mock::Mock;
-use super::PenetrateObserver;
+use super::PenetrateWebhook;
 use crate::{join, time, Address, Error, Kind, NetSocket, Platform, Processor};
 
 type BoxedFuture<T> = Pin<Box<dyn std::future::Future<Output = crate::Result<T>> + Send + 'static>>;
@@ -108,8 +108,8 @@ pub struct MQueue<T> {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct Config {
-    pub(super) whoami: String,
+pub struct ClientConfig {
+    pub(super) who: String,
     pub(super) is_mixed: bool,
     pub(super) maximum_wait: Duration,
     pub(super) heartbeat_delay: Duration,
@@ -126,20 +126,20 @@ pub struct Config {
 
 pub struct PenetrateProvider<T> {
     pub(crate) mock: Arc<Mock<T>>,
-    pub(crate) config: Config,
+    pub(crate) config: ClientConfig,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PenetrateEnviron {
     conn: Address,
     client: Address,
-    config: Config,
+    config: ClientConfig,
     visitor: Address,
 }
 
 pub struct Penetrate<P, S, A, O> {
     mock: Arc<Mock<S>>,
-    config: Arc<Config>,
+    config: Arc<ClientConfig>,
     accepter: A,
     address: Address,
     writer: WriteHalf<S>,
@@ -174,9 +174,9 @@ impl<T> MQueue<T> {
     }
 }
 
-impl Config {
+impl ClientConfig {
     fn update(&mut self, config: client::Config) {
-        self.whoami = config.name;
+        self.who = config.name;
         self.enable_socks = config.enable_socks5 || config.enable_socks5_udp;
         self.enable_socks_udp = config.enable_socks5_udp;
         self.socks5_username = config.socks_username;
@@ -192,11 +192,11 @@ impl<P, T, A, O> Penetrate<P, T, A, O>
 where
     T: Stream + Sync + Send + 'static,
     A: Accepter<Stream = Pen<T>> + Unpin + Send + 'static,
-    O: PenetrateObserver + Sync + Send + 'static,
+    O: PenetrateWebhook + Sync + Send + 'static,
     P: Sync + Send + 'static,
 {
     pub fn new(
-        config: Config,
+        config: ClientConfig,
         converter: Arc<Mock<T>>,
         processor: Processor<P, T, O>,
         address: Address,
@@ -407,7 +407,7 @@ impl<P, T, A, O> Accepter for Penetrate<P, T, A, O>
 where
     T: Stream + Send + Sync + 'static,
     A: Accepter<Stream = Pen<T>> + Unpin + Send + 'static,
-    O: PenetrateObserver + Sync + Send + 'static,
+    O: PenetrateWebhook + Sync + Send + 'static,
     P: Send + Sync + 'static,
 {
     type Stream = Outcome<T>;
@@ -480,7 +480,7 @@ where
     A: Accepter<Stream = S> + Send + Unpin + 'static,
     S: Stream + Sync + Send + 'static,
     P: Provider<Socket, Output = BoxedFuture<A>> + Send + Sync + 'static,
-    O: PenetrateObserver + Send + Sync + 'static,
+    O: PenetrateWebhook + Send + Sync + 'static,
 {
     type Output = BoxedFuture<(PenetrateGenerator<P, S, A, O>, Environ)>;
 
@@ -581,7 +581,7 @@ impl<P, T, A, O> Generator for PenetrateGenerator<P, T, A, O>
 where
     A: Accepter<Stream = T> + Send + Unpin + 'static,
     T: Stream + Send + Sync + 'static,
-    O: PenetrateObserver + Sync + Send + 'static,
+    O: PenetrateWebhook + Sync + Send + 'static,
     P: Send + Sync + 'static,
 {
     type Output = Option<BoxedFuture<()>>;
@@ -616,7 +616,7 @@ impl crate::Environ for PenetrateEnviron {
     }
 }
 
-impl Display for Config {
+impl Display for ClientConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,

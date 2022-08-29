@@ -12,7 +12,7 @@ type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>>
 pub struct ServerBuilder<E, P, S, O> {
     pub(crate) executor: E,
     pub(crate) is_mixed: bool,
-    pub(crate) observer: Option<Arc<O>>,
+    pub(crate) webhook: Option<Arc<O>>,
     pub(crate) handshake: Option<Handshake<S>>,
     pub(crate) server_provider: Arc<P>,
 }
@@ -47,7 +47,7 @@ where
             bind: Socket::tcp(([0, 0, 0, 0], 0)),
             executor: self.executor,
             provider: self.server_provider,
-            observer: self.observer,
+            observer: self.webhook,
             handshake: self.handshake.map(Arc::new),
             controller: None,
         })

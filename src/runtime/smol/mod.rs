@@ -40,7 +40,7 @@ where
     O: Send + 'static,
 {
     static GLOBAL: once_cell::sync::Lazy<smol::Executor<'_>> = once_cell::sync::Lazy::new(|| {
-        let num_cpus = num_cpus::get().max(2);
+        let num_cpus = num_cpus::get().min(2);
         log::info!("use {} threads to process tasks", num_cpus);
         for n in 0..num_cpus {
             drop({
