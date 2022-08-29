@@ -20,7 +20,7 @@ macro_rules! get_auth {
     ($config: expr) => {{
         match (&$config.socks5_password, &$config.socks5_username) {
             (Some(pwd), Some(username)) => S5Authenticate::standard(username, pwd),
-            (Some(pwd), None) => S5Authenticate::standard(&$config.whoami, pwd),
+            (Some(pwd), None) => S5Authenticate::standard(&$config.who, pwd),
             _ => S5Authenticate::default(),
         }
     }};
@@ -47,6 +47,7 @@ impl<E, P, S, O> PenetrateSocksBuilder<E, P, S, O>
 where
     S: Stream + Send + Sync + 'static,
 {
+    
     pub fn simple(mut self) -> PenetrateSelectorBuilder<E, P, S, O> {
         self.adapter_builder
             .adapters
@@ -75,7 +76,7 @@ where
     }
 }
 
-impl<S> Provider<(Fallback<S>, Arc<super::super::server::Config>)> for SimpleSocksMock
+impl<S> Provider<(Fallback<S>, Arc<super::super::server::ClientConfig>)> for SimpleSocksMock
 where
     S: Stream + Send + Sync + 'static,
 {
@@ -83,7 +84,7 @@ where
 
     fn call(
         &self,
-        (stream, config): (Fallback<S>, Arc<super::super::server::Config>),
+        (stream, config): (Fallback<S>, Arc<super::super::server::ClientConfig>),
     ) -> Self::Output {
         Box::pin(async move {
             let mut stream = stream;
@@ -118,7 +119,7 @@ where
     }
 }
 
-impl<S, U> Provider<(Fallback<S>, Arc<super::super::server::Config>)> for SocksMock<U>
+impl<S, U> Provider<(Fallback<S>, Arc<super::super::server::ClientConfig>)> for SocksMock<U>
 where
     S: Stream + Send + Sync + 'static,
     U: UdpSocket + Unpin + Send + Sync + 'static,
@@ -127,7 +128,7 @@ where
 
     fn call(
         &self,
-        (stream, config): (Fallback<S>, Arc<super::super::server::Config>),
+        (stream, config): (Fallback<S>, Arc<super::super::server::ClientConfig>),
     ) -> Self::Output {
         let udp_provider = self.udp_provider.clone();
         Box::pin(async move {

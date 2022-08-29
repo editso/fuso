@@ -56,7 +56,19 @@ pub enum HandshakePolicy {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+pub struct Kcp {
+    mtu: usize,
+    stream: bool,
+    nodelay: bool,
+    interval: usize,
+    rcvwnd_size: usize,
+    sndwnd_size: usize,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Global {
+    #[serde(default = "Default::default")]
+    pub kcp: Kcp,
     #[serde(default = "default_bind")]
     pub bind: IpAddr,
     #[serde(default = "default_port")]
@@ -72,6 +84,7 @@ pub struct Global {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", content = "params")]
 pub enum PenetrateFuture {
     // socks5
     Socks { udp_forward: bool },
@@ -124,13 +137,18 @@ pub enum Webhook {
         server: String,
         chat_id: String,
         bot_token: String,
-    }
+    },
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Penetrate {
+    // 开启的功能
     #[serde(default = "default_penetrate_futures")]
     pub features: Vec<PenetrateFuture>,
+    // 建立连接最大等待时间
+    pub maximum_wait: usize,
+    // 发送心跳延时
+    pub heartbeat_delay: usize,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -152,6 +170,7 @@ impl Default for Feature {
 impl Default for Global {
     fn default() -> Self {
         Self {
+            kcp: Default::default(),
             bind: default_bind(),
             port: default_port(),
             feature: Default::default(),
@@ -172,6 +191,8 @@ impl Default for Penetrate {
     fn default() -> Self {
         Self {
             features: default_penetrate_futures(),
+            maximum_wait: 5000,
+            heartbeat_delay: 30000,
         }
     }
 }
@@ -194,6 +215,19 @@ impl Default for Config {
             global: Default::default(),
             penetrate: Default::default(),
             dashboard: Default::default(),
+        }
+    }
+}
+
+impl Default for Kcp {
+    fn default() -> Self {
+        Self {
+            mtu: 1500,
+            stream: false,
+            nodelay: true,
+            interval: 10,
+            rcvwnd_size: 1024,
+            sndwnd_size: 1024,
         }
     }
 }

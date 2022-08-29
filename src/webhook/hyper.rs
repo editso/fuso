@@ -79,7 +79,7 @@ impl<E> PenetrateWebhook for HTTPWebhook<E> {
     fn on_pen_error(
         &self,
         client: &crate::Address,
-        _: &crate::penetrate::server::Config,
+        _: &crate::penetrate::server::ClientConfig,
         error: &crate::Error,
     ) where
         Self: Sized,
@@ -103,7 +103,7 @@ impl<E> PenetrateWebhook for HTTPWebhook<E> {
         client: &crate::Address,
         visit: &crate::Address,
         server: &crate::Address,
-        config: &crate::penetrate::server::Config,
+        config: &crate::penetrate::server::ClientConfig,
     ) where
         Self: Sized,
     {
@@ -115,7 +115,7 @@ impl<E> PenetrateWebhook for HTTPWebhook<E> {
         client: &crate::Address,
         visit: &crate::Address,
         server: &crate::Address,
-        _: &crate::penetrate::server::Config,
+        _: &crate::penetrate::server::ClientConfig,
     ) where
         Self: Sized,
     {

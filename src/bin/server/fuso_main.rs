@@ -47,10 +47,10 @@ fn init_logger(log_level: log::LevelFilter) {
     let is_info_log = log_level.eq(&log::LevelFilter::Info);
     env_logger::builder()
         .default_format()
-        // .filter_module("fuso", log_level)
-        .filter_level(log_level)
+        .filter_module("fus", log_level)
+        .filter_module("fuso", log_level)
         .format_timestamp_millis()
-        // .format_target(!is_info_log)
+        .format_target(!is_info_log)
         .init();
 }
 
@@ -58,11 +58,11 @@ fn main() -> fuso::Result<()> {
     let args = FusoArgs::parse();
     let config = Arc::new(fuso_toml::parse(args.config)?);
 
+    init_logger(config.global.log_level);
+
     log::trace!("config = {:#?}", config);
 
     fuso::block_on(async move {
-        init_logger(config.global.log_level);
-
         match config.global.webhook {
             Some(ref webhook) => match webhook {
                 fuso_toml::Webhook::Http {
@@ -130,7 +130,7 @@ where
                     fuso_toml::PenetrateFuture::Socks { udp_forward: true } => fuso_builder
                         .using_socks()
                         .using_udp_forward(FusoUdpForwardProvider),
-                    fuso_toml::PenetrateFuture::PProxy => todo!(),
+                    fuso_toml::PenetrateFuture::PProxy => unimplemented!(),
                     fuso_toml::PenetrateFuture::Websocket => unimplemented!(),
                 }
             }

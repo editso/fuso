@@ -2,18 +2,11 @@
 bind = "0.0.0.0"
 port = 6722
 feature = 'Penetrate'
-log_level = "trace"
+log_level = "info"
 handshake = {type = "Token", params = "my token"}
 reuse_port = false
 fast_reopen = false
 # webhook = { type = "Telegram", params = { chat_id = "xxxx", bot_token = "xxxxx" } }
-
-[kcp]
-mtu = 1400
-nodelay = true
-fast_resnd = false
-sndwnd_size = 200
-rcvwnd_size = 200
 
 [penetrate]
 features = []

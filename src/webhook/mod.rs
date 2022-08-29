@@ -121,7 +121,7 @@ where
         client: &crate::Address,
         visit: &crate::Address,
         server: &crate::Address,
-        config: &crate::penetrate::server::Config,
+        config: &crate::penetrate::server::ClientConfig,
     ) where
         Self: Sized,
     {
@@ -141,7 +141,7 @@ where
         client: &crate::Address,
         visit: &crate::Address,
         server: &crate::Address,
-        config: &crate::penetrate::server::Config,
+        config: &crate::penetrate::server::ClientConfig,
     ) where
         Self: Sized,
     {
@@ -159,7 +159,7 @@ where
     fn on_pen_error(
         &self,
         client: &crate::Address,
-        config: &crate::penetrate::server::Config,
+        config: &crate::penetrate::server::ClientConfig,
         error: &crate::Error,
     ) where
         Self: Sized,

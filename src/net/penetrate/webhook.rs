@@ -10,7 +10,7 @@ pub trait PenetrateWebhook {
         client: &Address,
         visit: &Address,
         server: &Address,
-        config: &server::Config,
+        config: &server::ClientConfig,
     ) where
         Self: Sized,
     {
@@ -28,7 +28,7 @@ pub trait PenetrateWebhook {
         client: &Address,
         visit: &Address,
         server: &Address,
-        _: &server::Config,
+        _: &server::ClientConfig,
     ) where
         Self: Sized,
     {
@@ -52,7 +52,7 @@ pub trait PenetrateWebhook {
         );
     }
 
-    fn on_pen_error(&self, client: &Address, _: &server::Config, error: &Error)
+    fn on_pen_error(&self, client: &Address, _: &server::ClientConfig, error: &Error)
     where
         Self: Sized,
     {
@@ -66,7 +66,7 @@ impl<T> PenetrateWebhook for Arc<T>
 where
     T: PenetrateWebhook,
 {
-    fn on_pen_error(&self, client: &Address, config: &server::Config, error: &Error)
+    fn on_pen_error(&self, client: &Address, config: &server::ClientConfig, error: &Error)
     where
         Self: Sized,
     {
@@ -85,7 +85,7 @@ where
         client: &Address,
         visit: &Address,
         server: &Address,
-        config: &server::Config,
+        config: &server::ClientConfig,
     ) where
         Self: Sized,
     {
@@ -97,7 +97,7 @@ where
         client: &Address,
         visit: &Address,
         server: &Address,
-        config: &server::Config,
+        config: &server::ClientConfig,
     ) where
         Self: Sized,
     {
@@ -109,7 +109,7 @@ impl<T> PenetrateWebhook for Option<T>
 where
     T: PenetrateWebhook,
 {
-    fn on_pen_error(&self, client: &Address, config: &server::Config, error: &Error)
+    fn on_pen_error(&self, client: &Address, config: &server::ClientConfig, error: &Error)
     where
         Self: Sized,
     {
@@ -129,7 +129,7 @@ where
         client: &Address,
         visit: &Address,
         server: &Address,
-        config: &server::Config,
+        config: &server::ClientConfig,
     ) where
         Self: Sized,
     {
@@ -142,7 +142,7 @@ where
         client: &Address,
         visit: &Address,
         server: &Address,
-        config: &server::Config,
+        config: &server::ClientConfig,
     ) where
         Self: Sized,
     {

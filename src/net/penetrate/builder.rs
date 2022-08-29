@@ -9,7 +9,7 @@ use crate::{
 
 use super::{
     client::PenetrateClientProvider,
-    server::{Config, Peer, PenetrateProvider},
+    server::{ClientConfig, Peer, PenetrateProvider},
     PenetrateWebhook,
 };
 
@@ -109,7 +109,7 @@ where
     pub fn build<F>(self, mock: F) -> Fuso<Server<E, PenetrateProvider<S>, P, S, O>>
     where
         F: Provider<
-                (Fallback<S>, Arc<super::server::Config>),
+                (Fallback<S>, Arc<super::server::ClientConfig>),
                 Output = BoxedFuture<Peer<Fallback<S>>>,
             > + Send
             + Sync
@@ -117,8 +117,8 @@ where
     {
         self.server_builder.build(PenetrateProvider {
             mock: Arc::new(WrappedProvider::wrap(mock)),
-            config: Config {
-                whoami: String::from("anonymous"),
+            config: ClientConfig {
+                who: String::from("anonymous"),
                 is_mixed: self.is_mixed,
                 maximum_wait: self.max_wait_time,
                 heartbeat_delay: self.heartbeat_timeout,
