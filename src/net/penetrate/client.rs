@@ -67,6 +67,8 @@ pub struct Config {
     pub(super) socks_username: Option<String>,
     /// socks5密码
     pub(super) socks_password: Option<String>,
+    /// 客户端与服务端通信端口
+    pub(super) channel_port: u16,
     /// 是否启用socks5 udp转发
     pub(super) enable_socks5_udp: bool,
     pub(super) version: String,
@@ -114,7 +116,7 @@ where
             let mut stream = stream;
             let (visit_addr, route_addr) = socket;
             let bind = Poto::Bind(Bind::Setup(
-                Socket::tcp(0).if_stream_mixed(config.enable_kcp || config.enable_socks5_udp),
+                Socket::tcp(config.channel_port).if_stream_mixed(config.enable_kcp || config.enable_socks5_udp),
                 visit_addr.clone(),
             ))
             .bytes();

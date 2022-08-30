@@ -32,6 +32,7 @@ pub struct PenetrateClientBuilder<E, CF, S> {
     upstream: Socket,
     /// 下游地址， 也就是本地需要映射的地址
     downstream: Socket,
+    channel_port: u16,
     /// 创建连接等待时间, 超过视为超时
     maximum_wait: Option<Duration>,
     /// 重连延时
@@ -146,6 +147,7 @@ impl<E, CF, S> ClientBuilder<E, CF, S> {
             name: String::from("anonymous"),
             upstream: upstream.into(),
             downstream: downstream.into(),
+            channel_port: 0,
             client_builder: self,
             maximum_wait: None,
             maximum_retries: None,
@@ -216,6 +218,11 @@ where
         self
     }
 
+    pub fn channel_port(mut self, port: u16) -> Self {
+        self.channel_port = port;
+        self
+    }
+
     pub fn build<A: Into<Socket>, C>(
         self,
         server_socket: A,
@@ -238,6 +245,7 @@ where
                 connector_provider: Arc::new(connector),
                 config: super::client::Config {
                     name: self.name,
+                    channel_port: self.channel_port,
                     maximum_wait: self.maximum_wait.unwrap_or(Duration::from_secs(10)),
                     heartbeat_delay: self.heartbeat_delay.unwrap_or(Duration::from_secs(30)),
                     enable_kcp: self.enable_kcp,

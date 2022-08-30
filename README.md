@@ -81,7 +81,9 @@ fuc --socks --su --s5p xxx --s5u xxx
    如: 使用bash脚本将连接信息通知到tg
    > fus --observer "/bin/bash:[telegram.sh]"
 
-
+6. 指定客户端与服务端通信的端口
+   fus --channel-port 8888 ...
+   --channel-port: 可选的, 客户端与服务端通信端口, 默认随机
 ```
 
 
