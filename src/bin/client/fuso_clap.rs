@@ -81,6 +81,9 @@ struct FusoArgs {
     /// 发送心跳延时
     #[clap(long, default_value = "30", display_order = 14)]
     heartbeat_delay: u64,
+    /// 通信端口
+    #[clap(long, default_value = "0", display_order = 15)]
+    channel_port: u16,
     /// 日志级别
     #[cfg(feature = "fuc-log")]
     #[cfg(debug_assertions)]
@@ -117,6 +120,7 @@ pub async fn fuso_main() -> fuso::Result<()> {
         .enable_kcp(args.kcp)
         .enable_socks5(args.socks)
         .enable_socks5_udp(args.socks_udp)
+        .channel_port(args.channel_port)
         .set_socks5_password(args.socks_password)
         .set_socks5_username(args.socks_username)
         .build(
