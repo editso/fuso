@@ -82,7 +82,7 @@ fuc --socks --su --s5p xxx --s5u xxx
    > fus --observer "/bin/bash:[telegram.sh]"
 
 6. 指定客户端与服务端通信的端口
-   fus --channel-port 8888 ...
+   fuc --channel-port 8888 ...
    --channel-port: 可选的, 客户端与服务端通信端口, 默认随机
 ```
 
