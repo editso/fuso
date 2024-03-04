@@ -1,186 +1,62 @@
-mod controller;
-pub use controller::*;
+use std::{future::Future, pin::Pin};
 
-mod provider;
-pub use provider::*;
+pub mod io;
+pub mod net;
+pub mod rpc;
+pub mod task;
+pub mod split;
+pub mod future;
+pub mod stream;
+pub mod accepter;
+pub mod handshake;
 
-mod observer;
-mod processor;
 
-pub use processor::*;
+pub type BoxedFuture<'a, O> = Pin<Box<dyn Future<Output = O> + Send + 'a>>;
 
-pub use observer::*;
-pub mod compress;
+pub trait Provider<R> {
+    type Arg;
 
-mod accepter;
-pub use accepter::*;
-
-mod boxed;
-pub use boxed::*;
-
-mod pool;
-pub use pool::*;
-
-mod socket;
-use serde::{Deserialize, Serialize};
-pub use socket::*;
-
-pub mod encryption;
-pub mod generator;
-pub mod guard;
-pub mod mixing;
-pub mod protocol;
-
-use std::marker::PhantomData;
-use std::sync::Arc;
-use std::{fmt::Display, pin::Pin};
-
-use std::future::Future;
-
-pub struct Fuso<T>(pub(crate) T);
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub enum Arch {
-    X86,
-    X86_64,
-    Mips,
-    Arm,
-    AArch64,
+    fn call(arg: Self::Arg) -> R;
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub enum Platform {
-    Linux(Arch),
-    Macos(Arch),
-    Windows(Arch),
-    Android(Arch),
-}
+pub trait Stream: io::AsyncRead + io::AsyncWrite {}
 
-impl Default for Arch {
-    #[cfg(target_arch = "x86")]
-    fn default() -> Self {
-        Self::X86
-    }
+pub struct BoxedStream<'a>(Box<dyn Stream + Unpin + Send + 'a>);
 
-    #[cfg(target_arch = "x86_64")]
-    fn default() -> Self {
-        Self::X86_64
-    }
-
-    #[cfg(target_arch = "mips")]
-    fn default() -> Self {
-        Self::Mips
-    }
-
-    #[cfg(target_arch = "arm")]
-    fn default() -> Self {
-        Self::Arm
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    fn default() -> Self {
-        Self::AArch64
-    }
-}
-
-impl Default for Platform {
-    #[cfg(target_os = "windows")]
-    fn default() -> Self {
-        Self::Windows(Default::default())
-    }
-
-    #[cfg(target_os = "macos")]
-    fn default() -> Self {
-        Self::Macos(Default::default())
-    }
-
-    #[cfg(target_os = "linux")]
-    fn default() -> Self {
-        Self::Linux(Default::default())
-    }
-
-    #[cfg(target_os = "android")]
-    fn default() -> Self {
-        Self::Android(Default::default())
-    }
-}
-
-pub struct Serve {
-    pub(crate) fut: Pin<Box<dyn std::future::Future<Output = crate::Result<()>> + 'static>>,
-}
-
-unsafe impl Send for Serve {}
-
-unsafe impl Sync for Serve {}
-
-pub struct Task<T> {
-    pub abort_fn: Option<Box<dyn FnOnce() + Send + 'static>>,
-    pub detach_fn: Option<Box<dyn FnOnce() + Send + 'static>>,
-    pub _marked: PhantomData<T>,
-}
-
-unsafe impl<T> Sync for Task<T> {}
-
-pub trait ResultDisplay {
-    fn display(&self) -> String;
-}
-
-pub trait Executor {
-    fn spawn<F, O>(&self, fut: F) -> Task<O>
+impl<'a> BoxedStream<'a> {
+    pub fn new<S>(stream: S) -> Self
     where
-        F: Future<Output = O> + Send + 'static,
-        O: Send + 'static;
-}
-
-impl<E> Executor for Arc<E>
-where
-    E: Executor + Send + ?Sized,
-{
-    fn spawn<F, O>(&self, fut: F) -> Task<O>
-    where
-        F: Future<Output = O> + Send + 'static,
-        O: Send + 'static,
+        S: Stream + Unpin + Send + 'a,
     {
-        (**self).spawn(fut)
+        Self(Box::new(stream))
     }
 }
 
-impl Future for Fuso<Serve> {
-    type Output = crate::Result<()>;
+impl<T> Stream for T where T: io::AsyncRead + io::AsyncWrite + Unpin {}
 
-    fn poll(
+impl<'a> io::AsyncRead for BoxedStream<'a> {
+    fn poll_read(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        Pin::new(&mut self.0.fut).poll(cx)
+        buf: &mut [u8],
+    ) -> std::task::Poll<crate::error::Result<usize>> {
+        Pin::new(&mut *self.0).poll_read(cx, buf)
     }
 }
 
-impl<O> Task<O> {
-    pub fn abort(&mut self) {
-        if let Some(abort_callback) = self.abort_fn.take() {
-            abort_callback()
-        }
+impl<'a> io::AsyncWrite for BoxedStream<'a> {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<crate::error::Result<usize>> {
+        Pin::new(&mut *self.0).poll_write(cx, buf)
     }
-}
 
-impl<O> Drop for Task<O> {
-    fn drop(&mut self) {
-        if let Some(detach_callback) = self.detach_fn.take() {
-            detach_callback()
-        }
-    }
-}
-
-impl<T, E> ResultDisplay for std::result::Result<T, E>
-where
-    T: Display,
-    E: Display,
-{
-    fn display(&self) -> String {
-        match self {
-            Ok(fmt) => format!("{}", fmt),
-            Err(fmt) => format!("err: {}", fmt),
-        }
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<crate::error::Result<()>> {
+        Pin::new(&mut *self.0).poll_flush(cx)
     }
 }

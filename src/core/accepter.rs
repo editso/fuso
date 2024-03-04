@@ -1,74 +1,20 @@
-use crate::{ready, Address, ReadBuf, Result};
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::{future::Future, pin::Pin};
+use std::{
+    net::SocketAddr,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
-use std::task::{Context, Poll};
+use crate::error;
 
-pub trait NetSocket {
-    fn peer_addr(&self) -> crate::Result<Address>;
+use super::{BoxedStream, Stream};
 
-    fn local_addr(&self) -> crate::Result<Address>;
-}
+pub trait Accepter {
+    type Output;
 
-pub trait Accepter: NetSocket {
-    type Stream;
-    fn poll_accept(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<Self::Stream>>;
-}
-
-pub struct AccepterWrapper<S>(Box<dyn Accepter<Stream = S> + Send + Unpin + 'static>);
-
-pub trait UdpSocket: NetSocket {
-    fn poll_recv_from(
-        self: Pin<&Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<Result<SocketAddr>>;
-
-    fn poll_send(self: Pin<&Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize>>;
-
-    fn poll_recv(self: Pin<&Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>)
-        -> Poll<Result<()>>;
-
-    fn poll_send_to(
-        self: Pin<&Self>,
-        cx: &mut Context<'_>,
-        addr: &SocketAddr,
-        buf: &[u8],
-    ) -> Poll<Result<usize>>;
-}
-
-pub struct Accept<'a, T> {
-    accepter: &'a mut T,
-}
-
-#[pin_project::pin_project]
-pub struct RecvFrom<'a, T> {
-    buf: ReadBuf<'a>,
-    #[pin]
-    receiver: &'a T,
-}
-
-#[pin_project::pin_project]
-pub struct UdpSend<'a, T> {
-    buf: &'a [u8],
-    #[pin]
-    sender: &'a T,
-}
-
-#[pin_project::pin_project]
-pub struct UdpRecv<'a, T> {
-    buf: ReadBuf<'a>,
-    #[pin]
-    receiver: &'a T,
-}
-
-#[pin_project::pin_project]
-pub struct SendTo<'a, T> {
-    buf: &'a [u8],
-    addr: &'a SocketAddr,
-    #[pin]
-    sender: &'a T,
+    fn poll_accept(
+        self: Pin<&mut Self>,
+        ctx: &mut Context<'_>,
+    ) -> Poll<error::Result<Self::Output>>;
 }
 
 pub trait AccepterExt: Accepter {
@@ -80,183 +26,157 @@ pub trait AccepterExt: Accepter {
     }
 }
 
-pub trait UdpReceiverExt: UdpSocket {
-    fn recv_from<'a>(&'a self, buf: &'a mut [u8]) -> RecvFrom<'a, Self>
-    where
-        Self: Sized + Unpin,
-    {
-        RecvFrom {
-            buf: ReadBuf::new(buf),
-            receiver: self,
-        }
-    }
+pub struct Accept<'a, A: Unpin> {
+    accepter: &'a mut A,
+}
 
-    fn send<'a>(&'a self, buf: &'a [u8]) -> UdpSend<'a, Self>
-    where
-        Self: Sized + Unpin,
-    {
-        UdpSend { buf, sender: self }
-    }
+pub struct BoxedAccepter<'a, O>(Box<dyn Accepter<Output = O> + Unpin + Send + 'a>);
 
-    fn recv<'a>(&'a self, buf: &'a mut [u8]) -> UdpRecv<'a, Self>
-    where
-        Self: Sized + Unpin,
-    {
-        UdpRecv {
-            buf: ReadBuf::new(buf),
-            receiver: self,
-        }
-    }
+pub struct StreamAccepter<'a, O>(Box<dyn Accepter<Output = O> + Unpin + Send + 'a>);
 
-    fn send_to<'a>(&'a self, addr: &'a SocketAddr, buf: &'a [u8]) -> SendTo<'a, Self>
+pub struct TaggedAccepter<'a, T: Clone, O> {
+    tag: T,
+    accepter: BoxedAccepter<'a, O>,
+}
+
+pub struct MultiAccepter<'a, O> {
+    accepter_list: Vec<BoxedAccepter<'a, O>>,
+}
+
+impl<'a, O> BoxedAccepter<'a, O> {
+    pub fn new<A>(accepter: A) -> Self
     where
-        Self: Sized + Unpin,
+        A: Accepter<Output = O> + Unpin + Send + 'a,
     {
-        SendTo {
-            buf,
-            addr,
-            sender: self,
+        Self(Box::new(accepter))
+    }
+}
+
+impl<'a, T, O> TaggedAccepter<'a, T, O>
+where
+    T: Clone,
+{
+    pub fn new<A>(tag: T, accepter: A) -> Self
+    where
+        A: Accepter<Output = O> + Unpin + Send + 'a,
+    {
+        Self {
+            tag,
+            accepter: BoxedAccepter::new(accepter),
         }
     }
 }
 
-impl<T> AccepterExt for T where T: Accepter + Unpin {}
-impl<T> UdpReceiverExt for T where T: UdpSocket + Unpin {}
+impl<'a, O> MultiAccepter<'a, O> {
+    pub fn new() -> Self {
+        MultiAccepter {
+            accepter_list: Default::default(),
+        }
+    }
 
-impl<'a, T> Future for Accept<'a, T>
+    pub fn add<A>(&mut self, accepter: A)
+    where
+        A: Accepter<Output = O> + Unpin + Send + 'static,
+    {
+        self.accepter_list.push(BoxedAccepter::new(accepter))
+    }
+}
+
+impl<'a, O> Accepter for MultiAccepter<'a, O> {
+    type Output = O;
+
+    fn poll_accept(
+        mut self: Pin<&mut Self>,
+        ctx: &mut Context<'_>,
+    ) -> Poll<error::Result<Self::Output>> {
+        for accepter in &mut self.accepter_list {
+            match Pin::new(accepter).poll_accept(ctx)? {
+                Poll::Pending => continue,
+                Poll::Ready(out) => return Poll::Ready(Ok(out)),
+            }
+        }
+
+        Poll::Pending
+    }
+}
+
+impl<'a, O> Accepter for BoxedAccepter<'a, O> {
+    type Output = O;
+    fn poll_accept(
+        mut self: Pin<&mut Self>,
+        ctx: &mut Context<'_>,
+    ) -> Poll<error::Result<Self::Output>> {
+        Pin::new(&mut *self.0).poll_accept(ctx)
+    }
+}
+
+impl<'a, T, O> Accepter for TaggedAccepter<'a, T, O>
 where
-    T: Accepter + Unpin,
+    T: Clone + Unpin,
 {
-    type Output = Result<T::Stream>;
+    type Output = (T, O);
 
-    fn poll(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
+    fn poll_accept(
+        mut self: Pin<&mut Self>,
+        ctx: &mut Context<'_>,
+    ) -> Poll<error::Result<Self::Output>> {
+        match Pin::new(&mut self.accepter).poll_accept(ctx)? {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(o) => Poll::Ready(Ok((self.tag.clone(), o))),
+        }
+    }
+}
+
+impl<'a, A> std::future::Future for Accept<'a, A>
+where
+    A: Accepter + Unpin,
+{
+    type Output = error::Result<A::Output>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         Pin::new(&mut *self.accepter).poll_accept(cx)
     }
 }
 
-impl<'a, T> Future for RecvFrom<'a, T>
+impl<'a, O> StreamAccepter<'a, (SocketAddr, O)>
 where
-    T: UdpSocket + Unpin,
+    O: Stream + 'static,
 {
-    type Output = Result<(usize, SocketAddr)>;
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.project();
-        let addr = ready!(Pin::new(&**this.receiver).poll_recv_from(cx, this.buf))?;
-        Poll::Ready(Ok((this.buf.position(), addr)))
-    }
-}
-
-impl<'a, T> Future for SendTo<'a, T>
-where
-    T: UdpSocket + Unpin,
-{
-    type Output = Result<usize>;
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.project();
-        Pin::new(&**this.sender).poll_send_to(cx, this.addr, this.buf)
-    }
-}
-
-impl<'a, T> Future for UdpSend<'a, T>
-where
-    T: UdpSocket + Unpin,
-{
-    type Output = Result<usize>;
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.project();
-        Pin::new(&**this.sender).poll_send(cx, this.buf)
-    }
-}
-
-impl<'a, T> Future for UdpRecv<'a, T>
-where
-    T: UdpSocket + Unpin,
-{
-    type Output = Result<usize>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.project();
-        ready!(Pin::new(&**this.receiver).poll_recv(cx, this.buf))?;
-        Poll::Ready(Ok(this.buf.position()))
-    }
-}
-
-impl<U> NetSocket for Arc<U>
-where
-    U: UdpSocket,
-{
-    fn local_addr(&self) -> crate::Result<Address> {
-        (**self).local_addr()
-    }
-
-    fn peer_addr(&self) -> crate::Result<Address> {
-        (**self).peer_addr()
-    }
-}
-
-impl<U> UdpSocket for Arc<U>
-where
-    U: UdpSocket + Unpin + 'static,
-{
-    fn poll_recv_from(
-        self: Pin<&Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<Result<SocketAddr>> {
-        Pin::new(&**self).poll_recv_from(cx, buf)
-    }
-
-    fn poll_send(self: Pin<&Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize>> {
-        Pin::new(&**self).poll_send(cx, buf)
-    }
-
-    fn poll_recv(
-        self: Pin<&Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<Result<()>> {
-        Pin::new(&**self).poll_recv(cx, buf)
-    }
-
-    fn poll_send_to(
-        self: Pin<&Self>,
-        cx: &mut Context<'_>,
-        addr: &SocketAddr,
-        buf: &[u8],
-    ) -> Poll<Result<usize>> {
-        Pin::new(&**self).poll_send_to(cx, addr, buf)
-    }
-}
-
-impl<S> AccepterWrapper<S> {
-    pub fn wrap<A>(accepter: A) -> Self
+    pub fn new<A>(accepter: A) -> Self
     where
-        A: Accepter<Stream = S> + Send + Unpin + 'static,
+        A: Accepter<Output = (SocketAddr, O)> + Unpin + Send + 'a,
     {
-        AccepterWrapper(Box::new(accepter))
+        Self(Box::new(accepter))
     }
 }
 
-impl<S> NetSocket for AccepterWrapper<S> {
-    fn local_addr(&self) -> crate::Result<Address> {
-        self.0.local_addr()
-    }
-
-    fn peer_addr(&self) -> crate::Result<Address> {
-        self.0.peer_addr()
-    }
-}
-
-impl<S> Accepter for AccepterWrapper<S>
+impl<'a, O> Accepter for StreamAccepter<'a, (SocketAddr, O)>
 where
-    S: Unpin,
+    O: Stream + Send + Unpin + 'static,
 {
-    type Stream = S;
+    type Output = (SocketAddr, BoxedStream<'a>);
+    fn poll_accept(
+        mut self: Pin<&mut Self>,
+        ctx: &mut Context<'_>,
+    ) -> Poll<error::Result<Self::Output>> {
+        match Pin::new(&mut *self.0).poll_accept(ctx)? {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready((addr, stream)) => Poll::Ready(Ok((addr, BoxedStream::new(stream)))),
+        }
+    }
+}
 
-    fn poll_accept(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<Self::Stream>> {
-        Pin::new(&mut *self.0).poll_accept(cx)
+impl<A> AccepterExt for A where A: Accepter {}
+
+#[cfg(test)]
+mod tests {
+
+    use super::{AccepterExt, MultiAccepter};
+
+    #[tokio::test]
+    async fn test_accepter() {
+        let mut accepter = MultiAccepter::<(i32, i32)>::new();
+
+        let (a, b) = accepter.accept().await.unwrap();
     }
 }

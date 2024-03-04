@@ -1,19 +1,26 @@
-mod r#async;
-mod core;
-mod error;
-mod net;
-mod runtime;
-pub mod observer;
+#[cfg(feature = "fuso-cli")]
+pub mod cli;
 
-pub mod client;
+pub mod core;
+
+#[cfg(feature = "fuso-config")]
+pub mod config;
+
+pub mod service;
+
 pub mod server;
 
-#[cfg(any(feature = "fuso-web", feature = "fuso-api"))]
-pub mod http;
+pub mod client;
 
-pub use crate::core::*;
-pub use crate::error::*;
-pub use crate::r#async::*;
-pub use crate::runtime::*;
-pub use crate::net::*;
+pub mod error;
 
+pub mod runtime;
+
+pub mod channel;
+
+pub fn enter_async_main<F>(fut: F) -> error::Result<()>
+where
+    F: std::future::Future<Output = error::Result<()>> + Send,
+{
+    runtime::tokio::block_on(fut)
+}
