@@ -6,6 +6,7 @@ pub mod rpc;
 pub mod task;
 pub mod split;
 pub mod future;
+pub mod filter;
 pub mod stream;
 pub mod accepter;
 pub mod handshake;

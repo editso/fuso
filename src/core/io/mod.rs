@@ -1,9 +1,14 @@
 use std::{
+    io,
     pin::Pin,
     task::{Context, Poll},
 };
 
-use crate::error;
+use crate::{error, select};
+
+use super::BoxedFuture;
+
+use crate::core::split::SplitStream;
 
 pub trait AsyncRead {
     fn poll_read(
@@ -46,7 +51,54 @@ pub trait AsyncWriteExt: AsyncWrite + Unpin {
     {
         Flush { writer: self }
     }
+
+    fn write_all<'a>(&'a mut self, buf: &'a [u8]) -> WriteAll<'a, Self>
+    where
+        Self: Sized,
+    {
+        WriteAll {
+            writer: self,
+            buf,
+            pos: 0,
+        }
+    }
 }
+
+pub trait StreamExt {
+    fn transfer<'a, T>(self, to: T) -> BoxedFuture<'a, error::Result<()>>
+    where
+        T: AsyncRead + AsyncWrite + Unpin + Send + 'a,
+        Self: Sized + AsyncRead + AsyncWrite + Unpin + Send + 'a,
+    {
+        Box::pin(async move {
+            let (reader_2, writer_2) = to.split();
+            let (reader_1, writer_1) = self.split();
+            select![reader_1.copy(writer_2), reader_2.copy(writer_1)]
+        })
+    }
+
+    fn copy<'a, T>(mut self, mut to: T) -> BoxedFuture<'a, error::Result<()>>
+    where
+        T: AsyncWrite + Unpin + Send + 'a,
+        Self: AsyncRead + Unpin + Send + Sized + 'a,
+    {
+        Box::pin(async move {
+            let mut buf = [0u8; 2048];
+
+            loop {
+                let n = self.read(&mut buf).await?;
+
+                if n == 0 {
+                    break Err(io::Error::from(io::ErrorKind::UnexpectedEof).into());
+                }
+
+                to.write_all(&buf).await?;
+            }
+        })
+    }
+}
+
+impl<T> StreamExt for T {}
 
 #[pin_project::pin_project]
 pub struct Read<'a, R> {
@@ -60,6 +112,14 @@ pub struct Write<'a, W> {
     writer: &'a mut W,
     #[pin]
     buf: &'a [u8],
+}
+
+#[pin_project::pin_project]
+pub struct WriteAll<'a, W> {
+    writer: &'a mut W,
+    #[pin]
+    buf: &'a [u8],
+    pos: usize,
 }
 
 #[pin_project::pin_project]
@@ -101,6 +161,30 @@ where
     }
 }
 
+impl<'a, W> std::future::Future for WriteAll<'a, W>
+where
+    W: AsyncWrite + Unpin,
+{
+    type Output = error::Result<()>;
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+
+        while *this.pos < this.buf.len() {
+            match Pin::new(&mut **this.writer).poll_write(cx, &this.buf[*this.pos..])? {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(0) => {
+                    return Poll::Ready(Err(io::Error::from(io::ErrorKind::BrokenPipe).into()))
+                }
+                Poll::Ready(n) => {
+                    *this.pos += n;
+                }
+            };
+        }
+
+        Poll::Ready(Ok(()))
+    }
+}
+
 impl<T> AsyncWriteExt for T where T: AsyncWrite + Unpin {}
 
 impl<T> AsyncReadExt for T where T: AsyncRead + Unpin {}
@@ -134,4 +218,3 @@ where
         Pin::new(&mut **self).poll_read(cx, buf)
     }
 }
- 

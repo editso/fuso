@@ -5,7 +5,25 @@ use std::{
 
 use std::future::Future;
 
+use super::BoxedFuture;
+
+#[macro_export]
+macro_rules! select {
+    ($($fut: expr),*) => {
+        $crate::core::future::Select(vec![
+            $(
+                {
+                    let fut: BoxedFuture<'a, _> = Box::pin($fut);
+                    fut
+                }
+            ),*
+        ]).await
+    };
+}
+
 pub struct StoredFuture<'a, O>(Option<Pin<Box<dyn Future<Output = O> + 'a>>>);
+
+pub struct Select<'a, O>(pub Vec<BoxedFuture<'a, O>>);
 
 unsafe impl<'a, O> Send for StoredFuture<'a, O> {}
 unsafe impl<'a, O> Sync for StoredFuture<'a, O> {}
@@ -28,5 +46,19 @@ impl<'a, O> StoredFuture<'a, O> {
 impl<'a, O> StoredFuture<'a, O> {
     pub fn new() -> Self {
         Self(Default::default())
+    }
+}
+
+impl<O> std::future::Future for Select<'_, O> {
+    type Output = O;
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        for fut in self.0.iter_mut() {
+            match Pin::new(fut).poll(cx) {
+                Poll::Pending => continue,
+                Poll::Ready(o) => return Poll::Ready(o),
+            }
+        }
+
+        Poll::Pending
     }
 }

@@ -2,7 +2,7 @@ use std::{pin::Pin, sync::Arc};
 
 use parking_lot::Mutex;
 
-use super::io::{AsyncRead, AsyncWrite};
+use super::io::{AsyncRead, AsyncWrite, StreamExt};
 
 pub struct ReadHalf<S> {
     reader: Arc<Mutex<S>>,
@@ -29,6 +29,7 @@ pub trait SplitStream: AsyncWrite + AsyncRead {
 }
 
 impl<T> SplitStream for T where T: AsyncWrite + AsyncRead + Unpin {}
+
 
 impl<S> AsyncRead for ReadHalf<S>
 where
