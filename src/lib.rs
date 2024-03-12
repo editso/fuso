@@ -16,7 +16,6 @@ pub mod error;
 
 pub mod runtime;
 
-pub mod channel;
 
 pub fn enter_async_main<F>(fut: F) -> error::Result<()>
 where

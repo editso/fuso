@@ -3,6 +3,7 @@ pub type Result<T> = std::result::Result<T, FusoError>;
 
 #[derive(Debug)]
 pub enum FusoError{
+  BadMagic,
   TomlDeError(toml::de::Error),
   StdIo(std::io::Error),
 }

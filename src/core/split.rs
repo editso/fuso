@@ -2,7 +2,7 @@ use std::{pin::Pin, sync::Arc};
 
 use parking_lot::Mutex;
 
-use super::io::{AsyncRead, AsyncWrite, StreamExt};
+use super::io::{AsyncRead, AsyncWrite};
 
 pub struct ReadHalf<S> {
     reader: Arc<Mutex<S>>,

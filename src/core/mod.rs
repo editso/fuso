@@ -1,16 +1,16 @@
-use std::{future::Future, pin::Pin};
+use std::{future::Future, net::SocketAddr, pin::Pin};
 
+pub mod accepter;
+pub mod future;
+pub mod handshake;
 pub mod io;
 pub mod net;
+pub mod processor;
+pub mod protocol;
 pub mod rpc;
-pub mod task;
 pub mod split;
-pub mod future;
-pub mod filter;
 pub mod stream;
-pub mod accepter;
-pub mod handshake;
-
+pub mod task;
 
 pub type BoxedFuture<'a, O> = Pin<Box<dyn Future<Output = O> + Send + 'a>>;
 
@@ -21,6 +21,11 @@ pub trait Provider<R> {
 }
 
 pub trait Stream: io::AsyncRead + io::AsyncWrite {}
+
+pub struct Connection<'a> {
+    addr: SocketAddr,
+    stream: BoxedStream<'a>,
+}
 
 pub struct BoxedStream<'a>(Box<dyn Stream + Unpin + Send + 'a>);
 
@@ -59,5 +64,14 @@ impl<'a> io::AsyncWrite for BoxedStream<'a> {
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<crate::error::Result<()>> {
         Pin::new(&mut *self.0).poll_flush(cx)
+    }
+}
+
+impl<'a> From<(SocketAddr, BoxedStream<'a>)> for Connection<'a> {
+    fn from(value: (SocketAddr, BoxedStream<'a>)) -> Self {
+        Self {
+            addr: value.0,
+            stream: value.1,
+        }
     }
 }

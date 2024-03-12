@@ -185,9 +185,9 @@ where
     }
 }
 
-impl<T> AsyncWriteExt for T where T: AsyncWrite + Unpin {}
-
 impl<T> AsyncReadExt for T where T: AsyncRead + Unpin {}
+
+impl<T> AsyncWriteExt for T where T: AsyncWrite + Unpin {}
 
 impl<T> AsyncWrite for &mut T
 where
@@ -216,5 +216,29 @@ where
         buf: &mut [u8],
     ) -> Poll<error::Result<usize>> {
         Pin::new(&mut **self).poll_read(cx, buf)
+    }
+}
+
+impl AsyncRead for std::io::Cursor<Vec<u8>> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<error::Result<usize>> {
+        Poll::Ready(Ok(std::io::Read::read(&mut *self, buf)?))
+    }
+}
+
+impl AsyncWrite for std::io::Cursor<Vec<u8>> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<error::Result<usize>> {
+        Poll::Ready(Ok(std::io::Write::write(&mut *self, buf)?))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<error::Result<()>> {
+        Poll::Ready(Ok(()))
     }
 }

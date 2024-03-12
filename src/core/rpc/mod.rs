@@ -1,12 +1,13 @@
+pub mod structs;
+
 use std::{pin::Pin, task::Poll};
 
 use crate::error;
 
-pub trait AsyncCaller {
-    fn poll_call(self: Pin<&mut Self>, raw_arg: &[u8]) -> Poll<error::Result<Vec<u8>>>;
-}
+use super::BoxedFuture;
 
+pub trait AsyncCall<T> {
+    type Output;
 
-pub struct Remote{
-  
+    fn call<'a>(&'a mut self, data: T) -> BoxedFuture<'a, Self::Output>;
 }

@@ -1,16 +1,18 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, str::FromStr};
 
 use fuso::{
     config::server::Config,
     core::{
         accepter::{AccepterExt, MultiAccepter, StreamAccepter, TaggedAccepter},
-        handshake::Handshake,
-        io::AsyncReadExt,
-        rpc::AsyncCaller,
+        handshake::Handshaker,
+        io::{AsyncReadExt, AsyncWriteExt, StreamExt},
+        processor::{IProcessor, Processor, StreamProcessor},
+        protocol::{AsyncPacketRead, AsyncPacketSend},
         split::SplitStream,
         stream::fallback::Fallback,
     },
     error,
+    server::port_forward::{PortForwarder, ShareAccepter},
 };
 
 #[derive(Debug, Clone)]
@@ -81,27 +83,37 @@ async fn enter_fuso_main(conf: Config) -> error::Result<()> {
     }
 
     loop {
-        let (tag, (addr, s)) = accepter.accept().await?;
+        let (tag, (addr, transport)) = accepter.accept().await?;
 
-        let mut a = s.do_handshake(&()).await?;
+        let a = StreamAccepter::new({
+            fuso::core::net::TcpListener::bind_with_tokio(SocketAddr::from_str("0.0.0.0:0").unwrap()).await?
+        });
+
+        let mut forwarder = PortForwarder::new(
+            transport, 
+            ShareAccepter::new(a, 1110, Vec::new()));
+
+        let (c1, c2) = forwarder.accept().await?;
+
 
         
 
-        let mut buf = [0u8; 1024];
+        // let a = processor.process(a).await;
 
-        let (mut reader, writer) = a.split();
+        // let a = PortForward::new(a, ShareAccepter::new(
+        //     accepter,
+        //     // Rc4Recognizer(prefix, a)
+        // ));
 
-        let n = reader.read(&mut buf).await?;
+        // let (from, to) = a.accept().await?;
+
+        // let n = reader.read(&mut buf).await?;
 
         // let (k, s) = a.into_inner();
 
         // assert_eq!(k, Some(buf[..n].to_vec()));
 
-        println!("{:?}", String::from_utf8_lossy(&buf[..n]));
-        
-        
-        
-        
+        // println!("{:?}", String::from_utf8_lossy(&buf[..n]));
 
         println!("{:?} => {}", tag, addr);
     }
