@@ -33,11 +33,13 @@ codegen-units = 1
 panic = 'abort'
 
 [features]
-default = ["fuso-config", "fuso-cli", "fuso-kcp"]
+default = ["fuso-config", "fuso-cli", "fuso-kcp", "fuso-rt-tokio"]
 fuso-kcp = ["kcp-rust"]
 fuso-cli = ["clap"]
 fuso-serde = ["serde"]
 fuso-config = ["toml", "serde"]
+fuso-runtime = []
+fuso-rt-tokio = ["dep:tokio", "fuso-runtime"]
 
 
 [build-dependencies]
@@ -79,6 +81,7 @@ features = ["derive"]
 
 
 [dependencies.tokio]
+optional = true
 version = "1.36.0"
 features = ["full"]
 

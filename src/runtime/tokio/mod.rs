@@ -1,8 +1,12 @@
 mod kcp;
 mod tcp;
 
+mod port_forward;
+
 pub use kcp::*;
 pub use tcp::*;
+
+pub use port_forward::*;
 
 pub struct TokioRuntime;
 
@@ -24,5 +28,22 @@ impl super::Runtime for TokioRuntime {
         O: Send + 'static,
     {
         tokio::spawn(fut);
+    }
+
+    fn wait_for<F, O>(
+        timeout: std::time::Duration,
+        future: F,
+    ) -> crate::core::BoxedFuture<'static, crate::error::Result<O>>
+    where
+        F: std::future::Future<Output = O> + Send + 'static,
+    {
+        Box::pin(async move {
+            let a = tokio::time::timeout(timeout, future).await;
+            unimplemented!()
+        })
+    }
+    
+    fn sleep(timeout: std::time::Duration) -> crate::core::BoxedFuture<'static, ()> {
+        todo!()
     }
 }

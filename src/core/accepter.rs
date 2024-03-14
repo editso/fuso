@@ -178,7 +178,7 @@ mod tests {
     async fn test_accepter() {
         let mut accepter = MultiAccepter::<(i32, i32)>::new();
 
-        let (a, b) = accepter.accept().await.unwrap();
+        let _ = accepter.accept().await.unwrap();
     }
 }
                                                                                                                                                                                               

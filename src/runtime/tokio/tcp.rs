@@ -55,8 +55,10 @@ impl TcpStream {
     }
 }
 
+
+#[cfg(feature = "fuso-rt-tokio")]
 impl TcpListener {
-    pub async fn bind_with_tokio<A>(addr: A) -> error::Result<Self>
+    pub async fn bind<A>(addr: A) -> error::Result<Self>
     where
         A: tokio::net::ToSocketAddrs,
     {

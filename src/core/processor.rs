@@ -39,7 +39,7 @@ pub struct Processor<'a, A, R> {
     processors: Vec<BoxedProcessor<'a, A, R>>,
 }
 
-pub struct BoxedPreprocessor<'a, In, Out>(Arc<dyn Preprocessor<In, Output = Out> + Sync + Send + 'a>);
+pub struct BoxedPreprocessor<'a, In, Out>(pub(crate) Arc<dyn Preprocessor<In, Output = Out> + Sync + Send + 'a>);
 
 
 impl<A, R> IProcessor<A, R> for BoxedProcessor<'_, A, R>

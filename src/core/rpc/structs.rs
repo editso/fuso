@@ -10,6 +10,7 @@ pub mod port_forward {
 
     #[derive(Debug, Serialize, Deserialize)]
     pub enum Response {
+        Ok,
         Error(),
     }
 

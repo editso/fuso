@@ -43,8 +43,10 @@ impl TcpStream {
     }
 }
 
+
+#[cfg(feature = "fuso-runtime")]
 impl TcpListener {
-    pub async fn bind<P, A>(addr: A) -> error::Result<TcpListener>
+    pub async fn bind_with_provider<P, A>(addr: A) -> error::Result<TcpListener>
     where
         P: TcpProvider,
         A: Into<SocketAddr>,
@@ -54,6 +56,7 @@ impl TcpListener {
         })
     }
 }
+
 
 impl AsyncWrite for TcpStream {
     fn poll_write(

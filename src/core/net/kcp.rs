@@ -35,8 +35,9 @@ pub enum KcpStream {
     Server(kcp_rust::KcpStream<kcp_rust::ServerImpl>),
 }
 
+#[cfg(feature = "fuso-runtime")]
 impl KcpListener {
-    pub async fn bind<P, A>(conf: kcp_rust::Config, addr: A) -> error::Result<Self>
+    pub async fn bind_with_provider<P, A>(conf: kcp_rust::Config, addr: A) -> error::Result<Self>
     where
         P: KcpProvider,
         A: Into<SocketAddr>,

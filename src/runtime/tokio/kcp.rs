@@ -16,8 +16,10 @@ pub struct KcpWithTokioRuntime;
 
 pub struct TokioUdpSocket(Arc<tokio::net::UdpSocket>);
 
+
+#[cfg(feature = "fuso-rt-tokio")]
 impl KcpListener {
-    pub async fn bind_with_tokio<A>(conf: kcp_rust::Config, addr: A) -> error::Result<Self>
+    pub async fn bind<A>(conf: kcp_rust::Config, addr: A) -> error::Result<Self>
     where
         A: Into<SocketAddr>,
     {
@@ -29,6 +31,7 @@ impl KcpListener {
         })
     }
 }
+
 
 impl crate::core::net::UdpProvider for KcpWithTokioRuntime {
     type Binder = Self;

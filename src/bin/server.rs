@@ -6,6 +6,7 @@ use fuso::{
         accepter::{AccepterExt, MultiAccepter, StreamAccepter, TaggedAccepter},
         handshake::Handshaker,
         io::{AsyncReadExt, AsyncWriteExt, StreamExt},
+        net::TcpListener,
         processor::{IProcessor, Processor, StreamProcessor},
         protocol::{AsyncPacketRead, AsyncPacketSend},
         split::SplitStream,
@@ -45,11 +46,8 @@ async fn enter_fuso_main(conf: Config) -> error::Result<()> {
                 accepter.add(TaggedAccepter::new(
                     Tagged::Kcp,
                     StreamAccepter::new({
-                        fuso::core::net::KcpListener::bind_with_tokio(
-                            Default::default(),
-                            kcp.as_socket_addr(),
-                        )
-                        .await?
+                        fuso::core::net::KcpListener::bind(Default::default(), kcp.as_socket_addr())
+                            .await?
                     }),
                 ));
             }
@@ -57,7 +55,7 @@ async fn enter_fuso_main(conf: Config) -> error::Result<()> {
                 accepter.add(TaggedAccepter::new(
                     Tagged::Tcp,
                     StreamAccepter::new({
-                        fuso::core::net::TcpListener::bind_with_tokio(tcp.as_socket_addr()).await?
+                        fuso::core::net::TcpListener::bind(tcp.as_socket_addr()).await?
                     }),
                 ));
             }
@@ -65,8 +63,7 @@ async fn enter_fuso_main(conf: Config) -> error::Result<()> {
                 accepter.add(TaggedAccepter::new(
                     Tagged::Tcp,
                     StreamAccepter::new({
-                        fuso::core::net::TcpListener::bind_with_tokio(proxy.as_socket_addr())
-                            .await?
+                        fuso::core::net::TcpListener::bind(proxy.as_socket_addr()).await?
                     }),
                 ));
             }
@@ -74,8 +71,7 @@ async fn enter_fuso_main(conf: Config) -> error::Result<()> {
                 accepter.add(TaggedAccepter::new(
                     Tagged::Tcp,
                     StreamAccepter::new({
-                        fuso::core::net::TcpListener::bind_with_tokio(forward.as_socket_addr())
-                            .await?
+                        fuso::core::net::TcpListener::bind(forward.as_socket_addr()).await?
                     }),
                 ));
             }
@@ -86,17 +82,13 @@ async fn enter_fuso_main(conf: Config) -> error::Result<()> {
         let (tag, (addr, transport)) = accepter.accept().await?;
 
         let a = StreamAccepter::new({
-            fuso::core::net::TcpListener::bind_with_tokio(SocketAddr::from_str("0.0.0.0:0").unwrap()).await?
+            fuso::core::net::TcpListener::bind(SocketAddr::from_str("0.0.0.0:9999").unwrap()).await?
         });
 
-        let mut forwarder = PortForwarder::new(
-            transport, 
-            ShareAccepter::new(a, 1110, Vec::new()));
+        let mut forwarder =
+            PortForwarder::new(transport, ShareAccepter::new(a, 1110, Vec::new()), ());
 
         let (c1, c2) = forwarder.accept().await?;
-
-
-        
 
         // let a = processor.process(a).await;
 
