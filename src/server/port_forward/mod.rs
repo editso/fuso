@@ -15,13 +15,15 @@ use std::marker::PhantomData;
 use std::{collections::HashMap, pin::Pin, sync::Arc, task::Poll};
 
 use crate::core::future::Poller;
+use crate::core::io::AsyncReadExt;
 use crate::core::rpc::structs::port_forward;
+use crate::core::Stream;
 use crate::runtime::Runtime;
 use crate::{
     core::{
         accepter::Accepter,
         io::{AsyncRead, AsyncWrite},
-        processor::{BoxedPreprocessor, Preprocessor},
+        processor::{Preprocessor, WrappedPreprocessor},
         rpc::{
             structs::port_forward::{Request, VisitorProtocol},
             AsyncCall,
@@ -37,11 +39,12 @@ enum Outcome {
     Ready(u64, Connection),
     Pending(u64),
     Timeout(u64),
+    Stopped(Option<error::FusoError>),
 }
 
 pub enum Whence {
     Visitor(Connection),
-    Transport(Connection),
+    Mapping(Connection),
 }
 
 #[derive(Clone)]
@@ -55,14 +58,15 @@ pub struct PortForwarder<Runtime, A, T> {
     accepter: A,
     visitors: Visitors,
     transport: Transport<T>,
-    preprocessor: BoxedPreprocessor<'static, Connection, VisitorProtocol>,
+    prepmap: WrappedPreprocessor<'static, Connection, error::Result<Connection>>,
+    prepvis: WrappedPreprocessor<'static, Connection, error::Result<VisitorProtocol>>,
     _marked: PhantomData<Runtime>,
 }
 
 impl<R, A, T> Accepter for PortForwarder<R, A, T>
 where
     A: Accepter<Output = Whence> + Unpin + 'static,
-    T: Unpin + Send + 'static,
+    T: Stream + Unpin + Send + 'static,
     R: Runtime + Unpin + 'static,
 {
     type Output = (Connection, Connection);
@@ -86,60 +90,81 @@ where
                         conn,
                         self.visitors.clone(),
                         self.transport.clone(),
-                        self.preprocessor.clone(),
+                        self.prepvis.clone(),
                     );
 
                     self.poller.add(fut);
 
                     false
                 }
-                Some(Whence::Transport(conn)) => {
-                    let fut = Self::new_transport(conn, self.transport.clone());
+                Some(Whence::Mapping(conn)) => {
+                    let fut = Self::do_prepare_mapping(
+                        conn,
+                        self.transport.clone(),
+                        self.prepmap.clone(),
+                    );
+
                     self.poller.add(fut);
 
                     false
                 }
             };
 
-            if let Poll::Ready(r) = Pin::new(&mut self.poller).poll(ctx) {
-                match r {
+            polled = match Pin::new(&mut self.poller).poll(ctx) {
+                Poll::Pending => polled,
+                Poll::Ready(r) => match r {
                     Err(_) => unimplemented!(),
-                    Ok(forward) => match forward {
-                        Outcome::Pending(token) => {
-                            self.poller.add(Self::wait_transport(
-                                token,
-                                std::time::Duration::from_secs(10),
-                            ));
+                    Ok(forward) => {
+                        match forward {
+                            Outcome::Pending(token) => {
+                                self.poller.add(Self::wait_transport(
+                                    token,
+                                    std::time::Duration::from_secs(10),
+                                ));
+                            }
+                            Outcome::Timeout(token) => {
+                                if let Some(conn) = self.visitors.take(token) {
+                                    log::warn!("failed to create mapping {{ token={}, addr={}, msg='timeout' }}", token, conn.addr());
+                                }
+                            }
+                            Outcome::Ready(token, transport) => {
+                                match self.visitors.take(token) {
+                                    Some(visitor) => return Poll::Ready(Ok((visitor, transport))),
+                                    None => log::warn!("invalid mapping because the client has been closed {{ token={token} }}")
+                                };
+                            }
+                            Outcome::Stopped(error) => {
+                                return {
+                                    match error {
+                                        Some(e) => Poll::Ready(Err(e)),
+                                        None => Poll::Ready(Err(error::FusoError::Abort)),
+                                    }
+                                }
+                            }
                         }
-                        Outcome::Timeout(token) => match self.visitors.take(token) {
-                            Some(_) => {}
-                            None => {}
-                        },
-                        Outcome::Ready(token, transport) => {
-                            match self.visitors.take(token) {
-                                Some(visitor) => return Poll::Ready(Ok((visitor, transport))),
-                                None => {}
-                            };
-                        }
-                    },
-                }
-            }
+
+                        false
+                    }
+                },
+            };
         }
 
         Poll::Pending
     }
 }
 
-
 #[cfg(feature = "fuso-runtime")]
 impl<R, A, T> PortForwarder<R, A, T>
 where
     A: Accepter<Output = Whence> + Unpin + 'static,
-    T: AsyncRead + AsyncWrite + Unpin + 'static,
+    T: Stream + Unpin + Send + 'static,
 {
-    pub fn new_with_runtime<P>(stream: T, accepter: A, preprocessor: P) -> Self
+    pub fn new_with_runtime<P, M>(stream: T, accepter: A, prepvis: P, prepmap: M) -> Self
     where
-        P: Preprocessor<Connection, Output = VisitorProtocol> + Send + Sync + 'static,
+        P: Preprocessor<Connection, Output = error::Result<VisitorProtocol>>,
+        P: Send + Sync + 'static,
+        M: Preprocessor<Connection, Output = error::Result<Connection>>,
+        M: Send + Sync + 'static,
     {
         let (reader, writer) = stream.split();
         Self {
@@ -147,7 +172,8 @@ where
             accepter,
             visitors: Default::default(),
             transport: Transport::new(reader, writer),
-            preprocessor: BoxedPreprocessor(Arc::new(preprocessor)),
+            prepvis: WrappedPreprocessor(Arc::new(prepvis)),
+            prepmap: WrappedPreprocessor(Arc::new(prepmap)),
             _marked: PhantomData,
         }
     }
@@ -156,8 +182,10 @@ where
 impl<R, A, T> PortForwarder<R, A, T>
 where
     R: Runtime,
+    T: AsyncWrite + AsyncRead + Send + Unpin,
 {
     async fn wait_transport(token: u64, timeout: std::time::Duration) -> error::Result<Outcome> {
+        log::debug!("wait for mapping {{ token={token}, timeout={timeout:?} }}");
         R::sleep(timeout).await;
         Ok(Outcome::Timeout(token))
     }
@@ -166,17 +194,19 @@ where
         conn: Connection,
         visitors: Visitors,
         transport: Transport<T>,
-        preprocessor: BoxedPreprocessor<'_, Connection, VisitorProtocol>,
+        preprocessor: WrappedPreprocessor<'_, Connection, error::Result<VisitorProtocol>>,
     ) -> error::Result<Outcome> {
         let mut transport = transport;
 
-        let (conn, addr) = match preprocessor.prepare(conn).await {
+        let (conn, addr) = match preprocessor.prepare(conn).await? {
             VisitorProtocol::Other(conn, addr) => (conn, addr),
             VisitorProtocol::Socks(conn, socks) => match socks {
                 port_forward::WithSocks::Tcp(addr) => (conn, Some(addr)),
                 port_forward::WithSocks::Udp() => todo!(),
             },
         };
+
+        log::debug!("create mapping {} -- [T] -- {:?}", conn.addr(), addr);
 
         let token = visitors.store(conn);
 
@@ -191,11 +221,24 @@ where
         Ok(Outcome::Pending(token))
     }
 
-    async fn new_transport(conn: Connection, transport: Transport<T>) -> error::Result<Outcome> {
-        Ok(Outcome::Ready(0, conn))
+    async fn do_prepare_mapping(
+        conn: Connection,
+        _: Transport<T>,
+        preprocessor: WrappedPreprocessor<'_, Connection, error::Result<Connection>>,
+    ) -> error::Result<Outcome> {
+        let mut conn = preprocessor.prepare(conn).await?;
+
+        let mut buf = [0u8; 8];
+
+        conn.read_exact(&mut buf).await?;
+
+        let token = u64::from_be_bytes(buf);
+
+        log::debug!("created mapping {{ token={token} }}");
+
+        Ok(Outcome::Ready(token, conn))
     }
 }
-
 
 impl Default for Visitors {
     fn default() -> Self {
@@ -213,7 +256,9 @@ impl Visitors {
 
     fn store(&self, conn: Connection) -> u64 {
         let token = self.next_token();
+
         self.connections.lock().insert(token, conn);
+
         token
     }
 
@@ -227,13 +272,13 @@ impl Visitors {
             let (cur_tok, overflow) = if connections.contains_key(&cur_tok) {
                 cur_tok.overflowing_add(1)
             } else {
-                (cur_tok, false)
+                break cur_tok;
             };
 
             if overflow {
                 *inc_token = 1;
             } else {
-                break cur_tok;
+                *inc_token = cur_tok;
             }
         }
     }

@@ -81,12 +81,19 @@ async fn enter_fuso_main(conf: Config) -> error::Result<()> {
     loop {
         let (tag, (addr, transport)) = accepter.accept().await?;
 
-        let a = StreamAccepter::new({
-            fuso::core::net::TcpListener::bind(SocketAddr::from_str("0.0.0.0:9999").unwrap()).await?
-        });
-
-        let mut forwarder =
-            PortForwarder::new(transport, ShareAccepter::new(a, 1110, Vec::new()), ());
+        let mut forwarder = PortForwarder::new(
+            transport,
+            ShareAccepter::new(1110, rand::random(), {
+                StreamAccepter::new({
+                    fuso::core::net::TcpListener::bind(
+                        SocketAddr::from_str("0.0.0.0:9999").unwrap(),
+                    )
+                    .await?
+                })
+            }),
+            (),
+            None,
+        );
 
         let (c1, c2) = forwarder.accept().await?;
 

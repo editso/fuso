@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{pin::Pin, sync::Arc};
 
 use super::{
     io::{AsyncRead, AsyncWrite},
@@ -39,8 +39,9 @@ pub struct Processor<'a, A, R> {
     processors: Vec<BoxedProcessor<'a, A, R>>,
 }
 
-pub struct BoxedPreprocessor<'a, In, Out>(pub(crate) Arc<dyn Preprocessor<In, Output = Out> + Sync + Send + 'a>);
-
+pub struct WrappedPreprocessor<'a, In, Out>(
+    pub(crate) Arc<dyn Preprocessor<In, Output = Out> + Sync + Send + 'a>,
+);
 
 impl<A, R> IProcessor<A, R> for BoxedProcessor<'_, A, R>
 where
@@ -86,15 +87,14 @@ impl<'a, A, R> Processor<'a, A, R> {
     }
 }
 
-
-impl<In, Out> Preprocessor<In> for BoxedPreprocessor<'_, In, Out>{
+impl<In, Out> Preprocessor<In> for WrappedPreprocessor<'_, In, Out> {
     type Output = Out;
     fn prepare<'a>(&'a self, input: In) -> BoxedFuture<'a, Self::Output> {
-        unimplemented!()
+        self.0.prepare(input)
     }
 }
 
-impl<In, Out> Clone for BoxedPreprocessor<'_, In, Out>{
+impl<In, Out> Clone for WrappedPreprocessor<'_, In, Out> {
     fn clone(&self) -> Self {
         Self(self.0.clone())
     }

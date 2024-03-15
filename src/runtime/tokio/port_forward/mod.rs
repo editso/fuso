@@ -6,8 +6,9 @@ use crate::{
         io::{AsyncRead, AsyncWrite},
         processor::Preprocessor,
         rpc::structs::port_forward::VisitorProtocol,
-        BoxedStream, Connection,
+        BoxedStream, Connection, Stream,
     },
+    error,
     server::port_forward::{PortForwarder, ShareAccepter, Whence},
 };
 
@@ -17,7 +18,7 @@ impl<A> ShareAccepter<TokioRuntime, A>
 where
     A: Accepter<Output = (SocketAddr, BoxedStream<'static>)> + Unpin + Send,
 {
-    pub fn new(accepter: A, magic: u32, secret: Vec<u8>) -> Self {
+    pub fn new(magic: u32, secret: [u8; 16], accepter: A) -> Self {
         ShareAccepter::<TokioRuntime, A>::new_runtime(accepter, magic, secret)
     }
 }
@@ -25,12 +26,15 @@ where
 impl<A, T> PortForwarder<TokioRuntime, A, T>
 where
     A: Accepter<Output = Whence> + Unpin + 'static,
-    T: AsyncRead + AsyncWrite + Unpin + 'static,
+    T: Stream + Send + Unpin + 'static,
 {
-    pub fn new<P>(stream: T, accepter: A, preprocessor: P) -> Self
+    pub fn new<P, M>(stream: T, accepter: A, prepvis: P, prepmap: M) -> Self
     where
-        P: Preprocessor<Connection<'static>, Output = VisitorProtocol> + Send + Sync + 'static,
+        P: Preprocessor<Connection<'static>, Output = error::Result<VisitorProtocol>>,
+        P: Send + Sync + 'static,
+        M: Preprocessor<Connection<'static>, Output = error::Result<Connection<'static>>>,
+        M: Send + Sync + 'static,
     {
-        PortForwarder::<TokioRuntime, A, T>::new_with_runtime(stream, accepter, preprocessor)
+        PortForwarder::<TokioRuntime, A, T>::new_with_runtime(stream, accepter, prepvis, prepmap)
     }
 }

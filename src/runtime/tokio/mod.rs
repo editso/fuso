@@ -8,6 +8,8 @@ pub use tcp::*;
 
 pub use port_forward::*;
 
+use crate::error;
+
 pub struct TokioRuntime;
 
 pub fn block_on<T, F>(f: F) -> T
@@ -30,20 +32,23 @@ impl super::Runtime for TokioRuntime {
         tokio::spawn(fut);
     }
 
-    fn wait_for<F, O>(
+    fn wait_for<'a, F, O>(
         timeout: std::time::Duration,
         future: F,
-    ) -> crate::core::BoxedFuture<'static, crate::error::Result<O>>
+    ) -> crate::core::BoxedFuture<'a, crate::error::Result<O>>
     where
-        F: std::future::Future<Output = O> + Send + 'static,
+        F: std::future::Future<Output = O> + Send + 'a,
     {
         Box::pin(async move {
-            let a = tokio::time::timeout(timeout, future).await;
-            unimplemented!()
+            tokio::time::timeout(timeout, future)
+                .await
+                .map_err(|_| error::FusoError::Timeout)
         })
     }
-    
+
     fn sleep(timeout: std::time::Duration) -> crate::core::BoxedFuture<'static, ()> {
-        todo!()
+        Box::pin(async move {
+            tokio::time::sleep(timeout).await;
+        })
     }
 }

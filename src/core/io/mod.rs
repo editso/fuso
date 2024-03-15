@@ -35,6 +35,17 @@ pub trait AsyncReadExt: AsyncRead + Unpin {
     {
         Read { reader: self, buf }
     }
+
+    fn read_exact<'a>(&'a mut self, buf: &'a mut [u8]) -> ReadExact<'a, Self>
+    where
+        Self: Sized,
+    {
+        ReadExact {
+            reader: self,
+            off: 0,
+            buf: buf,
+        }
+    }
 }
 
 pub trait AsyncWriteExt: AsyncWrite + Unpin {
@@ -108,6 +119,14 @@ pub struct Read<'a, R> {
 }
 
 #[pin_project::pin_project]
+pub struct ReadExact<'a, R> {
+    #[pin]
+    buf: &'a mut [u8],
+    off: usize,
+    reader: &'a mut R,
+}
+
+#[pin_project::pin_project]
 pub struct Write<'a, W> {
     writer: &'a mut W,
     #[pin]
@@ -136,6 +155,35 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut this = self.project();
         Pin::new(&mut **this.reader).poll_read(cx, &mut *this.buf)
+    }
+}
+
+impl<'a, R> std::future::Future for ReadExact<'a, R>
+where
+    R: AsyncRead + Unpin,
+{
+    type Output = error::Result<()>;
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut this = self.project();
+
+        while *this.off < this.buf.len() {
+            let rem = &mut this.buf[*this.off..];
+            match Pin::new(&mut *this.reader).poll_read(cx, rem)? {
+                Poll::Pending => break,
+                Poll::Ready(0) => {
+                    return Poll::Ready(Err(io::Error::from(io::ErrorKind::BrokenPipe).into()))
+                }
+                Poll::Ready(n) => {
+                    *this.off += n;
+                }
+            };
+        }
+
+        if *this.off < this.buf.len() {
+            Poll::Pending
+        } else {
+            Poll::Ready(Ok(()))
+        }
     }
 }
 

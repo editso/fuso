@@ -1,11 +1,9 @@
 use crate::{
     core::{
-        rpc::{
+        io::{AsyncRead, AsyncWrite, AsyncWriteExt}, rpc::{
             structs::port_forward::{Request, Response},
             AsyncCall,
-        },
-        split::{ReadHalf, WriteHalf},
-        BoxedFuture,
+        }, split::{ReadHalf, WriteHalf}, BoxedFuture
     },
     error,
 };
@@ -21,11 +19,15 @@ impl<T> Transport<T> {
     }
 }
 
-impl<T> AsyncCall<Request> for Transport<T> {
+impl<T> AsyncCall<Request> for Transport<T> 
+where T: AsyncWrite + AsyncRead + Send + Unpin{
     type Output = error::Result<Response>;
 
     fn call<'a>(&'a mut self, data: Request) -> BoxedFuture<'a, Self::Output> {
-        Box::pin(async move { unimplemented!() })
+        Box::pin(async move { 
+            self.writer.write(b"").await?;
+            Ok(Response::Ok)
+        })
     }
 }
 

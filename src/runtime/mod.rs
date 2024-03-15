@@ -10,9 +10,9 @@ pub trait Runtime {
         F: std::future::Future<Output = O> + Send + 'static,
         O: Send + 'static;
 
-    fn wait_for<F, O>(timeout: std::time::Duration, fut: F) -> BoxedFuture<'static, error::Result<O>>
+    fn wait_for<'a, F, O>(timeout: std::time::Duration, fut: F) -> BoxedFuture<'a, error::Result<O>>
     where
-        F: std::future::Future<Output = O> + Send + 'static;
+        F: std::future::Future<Output = O> + Send + 'a;
 
     fn sleep(timeout: std::time::Duration) -> BoxedFuture<'static, ()>;
 }
