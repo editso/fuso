@@ -3,23 +3,22 @@ use std::net::SocketAddr;
 use crate::{
     core::{
         accepter::Accepter,
-        io::{AsyncRead, AsyncWrite},
         processor::Preprocessor,
         rpc::structs::port_forward::VisitorProtocol,
         BoxedStream, Connection, Stream,
     },
     error,
-    server::port_forward::{PortForwarder, ShareAccepter, Whence},
+    server::port_forward::{PortForwarder, MuxAccepter, Whence},
 };
 
 use super::TokioRuntime;
 
-impl<A> ShareAccepter<TokioRuntime, A>
+impl<A> MuxAccepter<TokioRuntime, A>
 where
     A: Accepter<Output = (SocketAddr, BoxedStream<'static>)> + Unpin + Send,
 {
     pub fn new(magic: u32, secret: [u8; 16], accepter: A) -> Self {
-        ShareAccepter::<TokioRuntime, A>::new_runtime(accepter, magic, secret)
+        MuxAccepter::<TokioRuntime, A>::new_runtime(accepter, magic, secret)
     }
 }
 

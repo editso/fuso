@@ -1,3 +1,5 @@
+use std::ops::Deref;
+
 use serde::{Deserialize, Serialize};
 
 pub mod client;
@@ -53,5 +55,22 @@ pub struct KeepAlive {
 impl Default for BootKind {
     fn default() -> Self {
         Self::Default
+    }
+}
+
+
+pub struct Stateful<C>{
+    pub conf: C
+}
+
+impl<C> Stateful<C>{
+    
+}
+
+impl<C> Deref for Stateful<C>{
+    type Target = C;
+
+    fn deref(&self) -> &Self::Target {
+        &self.conf
     }
 }

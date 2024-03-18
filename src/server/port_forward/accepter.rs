@@ -14,14 +14,14 @@ use crate::core::{accepter::Accepter, BoxedStream};
 use crate::error;
 use crate::runtime::Runtime;
 
-pub struct ShareAccepter<R, A> {
+pub struct MuxAccepter<R, A> {
     accepter: A,
     handshaker: Arc<Rc4MagicHandshake>,
     connections: Poller<'static, error::Result<Whence>>,
     _marked: PhantomData<R>,
 }
 
-impl<R, A> Accepter for ShareAccepter<R, A>
+impl<R, A> Accepter for MuxAccepter<R, A>
 where
     A: Accepter<Output = (SocketAddr, BoxedStream<'static>)> + Unpin + 'static,
     R: Runtime + Unpin + 'static,
@@ -75,7 +75,7 @@ where
     }
 }
 
-impl<R, A> ShareAccepter<R, A>
+impl<R, A> MuxAccepter<R, A>
 where
     R: Runtime,
 {
@@ -95,7 +95,7 @@ where
 }
 
 #[cfg(feature = "fuso-runtime")]
-impl<R, A> ShareAccepter<R, A>
+impl<R, A> MuxAccepter<R, A>
 where
     A: Accepter<Output = (SocketAddr, BoxedStream<'static>)> + Unpin + Send,
 {

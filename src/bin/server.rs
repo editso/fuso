@@ -1,9 +1,10 @@
 use std::{net::SocketAddr, str::FromStr};
 
 use fuso::{
-    config::server::Config,
+    config::{server::Config, Stateful},
     core::{
         accepter::{AccepterExt, MultiAccepter, StreamAccepter, TaggedAccepter},
+        future::Select,
         handshake::Handshaker,
         io::{AsyncReadExt, AsyncWriteExt, StreamExt},
         net::TcpListener,
@@ -13,7 +14,10 @@ use fuso::{
         stream::fallback::Fallback,
     },
     error,
-    server::port_forward::{PortForwarder, ShareAccepter},
+    server::{
+        manager::{Manager, MultiServiceManager},
+        port_forward::{MuxAccepter, PortForwarder},
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -38,9 +42,78 @@ async fn enter_fuso_main(conf: Config) -> error::Result<()> {
         .filter_level(log::LevelFilter::Debug)
         .init();
 
+    enter_fuso_serve(Stateful{
+        conf
+    }).await?;
+    // axum::serve(tcp_listener, make_service)
+
+    loop {
+
+        // mgr.manage(|ctrl|async move{
+
+        // });
+
+        // mgr.service(|mgr| async move {
+        //     enter_port_forward_service().await
+        // });
+
+        // let a = processor.process(a).await;
+
+        // let a = PortForward::new(a, ShareAccepter::new(
+        //     accepter,
+        //     // Rc4Recognizer(prefix, a)
+        // ));
+
+        // let (from, to) = a.accept().await?;
+
+        // let n = reader.read(&mut buf).await?;
+
+        // let (k, s) = a.into_inner();
+
+        // assert_eq!(k, Some(buf[..n].to_vec()));
+
+        // println!("{:?}", String::from_utf8_lossy(&buf[..n]));
+
+        // println!("{:?} => {}", tag, addr);
+    }
+
+    Ok(())
+}
+
+// pub async fn enter_port_forward_service(mgr){
+//     let (tag, (addr, transport)) = accepter.accept().await?;
+
+//     let mut forwarder = PortForwarder::new(
+//         transport,
+//         {
+//             ShareAccepter::new(1110, rand::random(), {
+//                 StreamAccepter::new({
+//                     fuso::core::net::TcpListener::bind(
+//                         SocketAddr::from_str("0.0.0.0:9999").unwrap(),
+//                     )
+//                     .await?
+//                 })
+//             })
+//         },
+//         (),
+//         None,
+//     );
+
+//     let mgr = 0;
+
+//     let (c1, c2) = forwarder.accept().await?;
+
+//     mgr.spawn(PortForward(), async move{
+//         c1.copy(c2);
+//     });
+
+//     unimplemented!()
+// }
+
+async fn enter_fuso_serve(conf: Stateful<Config>) -> error::Result<()> {
     let mut accepter = MultiAccepter::new();
 
-    for listen in conf.listens {
+    for listen in &conf.listens {
         match listen {
             fuso::config::server::Listen::Kcp(kcp) => {
                 accepter.add(TaggedAccepter::new(
@@ -79,43 +152,29 @@ async fn enter_fuso_main(conf: Config) -> error::Result<()> {
     }
 
     loop {
-        let (tag, (addr, transport)) = accepter.accept().await?;
-
+        let (addr, (_, transport)) = accepter.accept().await?;
         let mut forwarder = PortForwarder::new(
             transport,
-            ShareAccepter::new(1110, rand::random(), {
-                StreamAccepter::new({
-                    fuso::core::net::TcpListener::bind(
-                        SocketAddr::from_str("0.0.0.0:9999").unwrap(),
-                    )
-                    .await?
+            {
+                MuxAccepter::new(1110, rand::random(), {
+                    StreamAccepter::new({
+                        fuso::core::net::TcpListener::bind(
+                            SocketAddr::from_str("0.0.0.0:9999").unwrap(),
+                        )
+                        .await?
+                    })
                 })
-            }),
+            },
             (),
             None,
         );
 
+        let mgr = 0;
+
         let (c1, c2) = forwarder.accept().await?;
-
-        // let a = processor.process(a).await;
-
-        // let a = PortForward::new(a, ShareAccepter::new(
-        //     accepter,
-        //     // Rc4Recognizer(prefix, a)
-        // ));
-
-        // let (from, to) = a.accept().await?;
-
-        // let n = reader.read(&mut buf).await?;
-
-        // let (k, s) = a.into_inner();
-
-        // assert_eq!(k, Some(buf[..n].to_vec()));
-
-        // println!("{:?}", String::from_utf8_lossy(&buf[..n]));
-
-        println!("{:?} => {}", tag, addr);
     }
+
+    let s = fuso::server::Serve {};
 
     Ok(())
 }

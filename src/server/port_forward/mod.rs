@@ -17,6 +17,7 @@ use std::{collections::HashMap, pin::Pin, sync::Arc, task::Poll};
 use crate::core::future::Poller;
 use crate::core::io::AsyncReadExt;
 use crate::core::rpc::structs::port_forward;
+use crate::core::token::IncToken;
 use crate::core::Stream;
 use crate::runtime::Runtime;
 use crate::{
@@ -28,14 +29,13 @@ use crate::{
             structs::port_forward::{Request, VisitorProtocol},
             AsyncCall,
         },
-        split::SplitStream,
     },
     error,
 };
 
 type Connection = crate::core::Connection<'static>;
 
-enum Outcome {
+pub enum Outcome {
     Ready(u64, Connection),
     Pending(u64),
     Timeout(u64),
@@ -49,7 +49,7 @@ pub enum Whence {
 
 #[derive(Clone)]
 pub struct Visitors {
-    inc_token: Arc<Mutex<u64>>,
+    inc_token: IncToken,
     connections: Arc<Mutex<HashMap<u64, Connection>>>,
 }
 
@@ -57,7 +57,7 @@ pub struct PortForwarder<Runtime, A, T> {
     poller: Poller<'static, error::Result<Outcome>>,
     accepter: A,
     visitors: Visitors,
-    transport: Transport<T>,
+    transport: Transport<'static, T>,
     prepmap: WrappedPreprocessor<'static, Connection, error::Result<Connection>>,
     prepvis: WrappedPreprocessor<'static, Connection, error::Result<VisitorProtocol>>,
     _marked: PhantomData<Runtime>,
@@ -110,42 +110,44 @@ where
                 }
             };
 
-            polled = match Pin::new(&mut self.poller).poll(ctx) {
-                Poll::Pending => polled,
-                Poll::Ready(r) => match r {
-                    Err(_) => unimplemented!(),
-                    Ok(forward) => {
-                        match forward {
-                            Outcome::Pending(token) => {
-                                self.poller.add(Self::wait_transport(
-                                    token,
-                                    std::time::Duration::from_secs(10),
-                                ));
-                            }
-                            Outcome::Timeout(token) => {
-                                if let Some(conn) = self.visitors.take(token) {
-                                    log::warn!("failed to create mapping {{ token={}, addr={}, msg='timeout' }}", token, conn.addr());
-                                }
-                            }
-                            Outcome::Ready(token, transport) => {
-                                match self.visitors.take(token) {
-                                    Some(visitor) => return Poll::Ready(Ok((visitor, transport))),
-                                    None => log::warn!("invalid mapping because the client has been closed {{ token={token} }}")
-                                };
-                            }
-                            Outcome::Stopped(error) => {
-                                return {
-                                    match error {
-                                        Some(e) => Poll::Ready(Err(e)),
-                                        None => Poll::Ready(Err(error::FusoError::Abort)),
-                                    }
-                                }
-                            }
-                        }
+            let (need_poll, outcome) = match Pin::new(&mut self.poller).poll(ctx) {
+                Poll::Pending => continue,
+                Poll::Ready(Ok(o)) => (false, o),
+                Poll::Ready(Err(_)) => continue,
+            };
 
-                        false
+            polled = need_poll;
+
+            match outcome {
+                Outcome::Pending(token) => {
+                    self.poller.add(Self::wait_transport(
+                        token,
+                        std::time::Duration::from_secs(10),
+                    ));
+                }
+                Outcome::Timeout(token) => {
+                    if let Some(conn) = self.visitors.take(token) {
+                        log::warn!(
+                            "failed to create mapping {{ token={}, addr={}, msg='timeout' }}",
+                            token,
+                            conn.addr()
+                        );
                     }
-                },
+                }
+                Outcome::Ready(token, transport) => {
+                    match self.visitors.take(token) {
+                        Some(visitor) => return Poll::Ready(Ok((visitor, transport))),
+                        None => log::warn!("invalid mapping because the client has been closed {{ token={token} }}")
+                    };
+                }
+                Outcome::Stopped(error) => {
+                    return {
+                        match error {
+                            Some(e) => Poll::Ready(Err(e)),
+                            None => Poll::Ready(Err(error::FusoError::Abort)),
+                        }
+                    }
+                }
             };
         }
 
@@ -166,12 +168,17 @@ where
         M: Preprocessor<Connection, Output = error::Result<Connection>>,
         M: Send + Sync + 'static,
     {
-        let (reader, writer) = stream.split();
+        let mut poller = Poller::new();
+
+        let (transport, hold) = Transport::new(stream);
+
+        poller.add(hold);
+
         Self {
-            poller: Poller::new(),
+            poller,
             accepter,
+            transport,
             visitors: Default::default(),
-            transport: Transport::new(reader, writer),
             prepvis: WrappedPreprocessor(Arc::new(prepvis)),
             prepmap: WrappedPreprocessor(Arc::new(prepmap)),
             _marked: PhantomData,
@@ -193,7 +200,7 @@ where
     async fn do_prepare_visitor(
         conn: Connection,
         visitors: Visitors,
-        transport: Transport<T>,
+        transport: Transport<'_, T>,
         preprocessor: WrappedPreprocessor<'_, Connection, error::Result<VisitorProtocol>>,
     ) -> error::Result<Outcome> {
         let mut transport = transport;
@@ -223,7 +230,7 @@ where
 
     async fn do_prepare_mapping(
         conn: Connection,
-        _: Transport<T>,
+        _: Transport<'_, T>,
         preprocessor: WrappedPreprocessor<'_, Connection, error::Result<Connection>>,
     ) -> error::Result<Outcome> {
         let mut conn = preprocessor.prepare(conn).await?;
@@ -243,7 +250,7 @@ where
 impl Default for Visitors {
     fn default() -> Self {
         Self {
-            inc_token: Arc::new(Mutex::new(1)),
+            inc_token: Default::default(),
             connections: Default::default(),
         }
     }
@@ -264,22 +271,7 @@ impl Visitors {
 
     fn next_token(&self) -> u64 {
         let connections = self.connections.lock();
-        let mut inc_token = self.inc_token.lock();
-
-        loop {
-            let cur_tok = *inc_token;
-
-            let (cur_tok, overflow) = if connections.contains_key(&cur_tok) {
-                cur_tok.overflowing_add(1)
-            } else {
-                break cur_tok;
-            };
-
-            if overflow {
-                *inc_token = 1;
-            } else {
-                *inc_token = cur_tok;
-            }
-        }
+        self.inc_token
+            .next(|token| !connections.contains_key(&token))
     }
 }

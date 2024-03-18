@@ -6,6 +6,7 @@ pub enum FusoError{
   BadMagic,
   Timeout,
   Abort,
+  BadRpcCall(u64),
   TomlDeError(toml::de::Error),
   StdIo(std::io::Error),
 }

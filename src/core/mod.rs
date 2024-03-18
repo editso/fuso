@@ -19,6 +19,7 @@ pub mod rpc;
 pub mod split;
 pub mod stream;
 pub mod task;
+pub mod token;
 
 pub type BoxedFuture<'a, O> = Pin<Box<dyn Future<Output = O> + Send + 'a>>;
 

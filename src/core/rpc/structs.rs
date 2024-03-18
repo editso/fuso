@@ -5,6 +5,8 @@ pub mod port_forward {
 
     #[derive(Debug, Serialize, Deserialize)]
     pub enum Request {
+        Ping,
+        Pong,
         New(u64, Option<ServerAddr>),
     }
 

@@ -64,6 +64,19 @@ impl<'a, O> Poller<'a, O> {
     }
 }
 
+impl<'a, O> Select<'a, O> {
+    pub fn new() -> Self {
+        Self(Default::default())
+    }
+
+    pub fn add<F>(&mut self, fut: F)
+    where
+        F: std::future::Future<Output = O> + Send + 'a,
+    {
+        self.0.push(Box::pin(fut))
+    }
+}
+
 impl<O> std::future::Future for Select<'_, O> {
     type Output = O;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
