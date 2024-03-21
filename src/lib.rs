@@ -21,5 +21,5 @@ pub fn enter_async_main<F>(fut: F) -> error::Result<()>
 where
     F: std::future::Future<Output = error::Result<()>> + Send,
 {
-    runtime::tokio::block_on(fut)
+    runtime::block_on(fut)
 }

@@ -42,9 +42,7 @@ async fn enter_fuso_main(conf: Config) -> error::Result<()> {
         .filter_level(log::LevelFilter::Debug)
         .init();
 
-    enter_fuso_serve(Stateful{
-        conf
-    }).await?;
+    enter_fuso_serve(Stateful::new(conf)).await?;
     // axum::serve(tcp_listener, make_service)
 
     loop {

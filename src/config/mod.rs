@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use std::{ops::Deref, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
@@ -52,25 +52,47 @@ pub struct KeepAlive {
     interval: u32,
 }
 
+
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum RestartPolicy{
+    Never,
+    Always,
+    Counter
+}
+
 impl Default for BootKind {
     fn default() -> Self {
         Self::Default
     }
 }
 
+impl Default for RestartPolicy{
+    fn default() -> Self {
+        RestartPolicy::Always
+    }
+}
 
 pub struct Stateful<C>{
-    pub conf: C
+    pub conf: Arc<C>
 }
 
 impl<C> Stateful<C>{
-    
+    pub fn new(c: C) -> Self{
+        Self { conf: Arc::new(c) }
+    }
 }
 
 impl<C> Deref for Stateful<C>{
-    type Target = C;
+    type Target = Arc<C>;
 
     fn deref(&self) -> &Self::Target {
         &self.conf
+    }
+}
+
+impl<C> Clone for Stateful<C>{
+    fn clone(&self) -> Self {
+        Stateful { conf: self.conf.clone() }
     }
 }

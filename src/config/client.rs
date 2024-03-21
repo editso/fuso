@@ -1,12 +1,12 @@
 use std::{
     collections::{HashMap, HashSet},
     io,
-    net::IpAddr,
+    net::{IpAddr, Ipv4Addr},
 };
 
 use serde::{Deserialize, Serialize};
 
-use super::{Authentication, BootKind, Compress, Crypto, KeepAlive};
+use super::{Authentication, BootKind, Compress, Crypto, KeepAlive, RestartPolicy};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
@@ -40,14 +40,14 @@ pub struct Server {
     pub authentication: Authentication,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ServerAddr {
     WithIpAddr(Vec<IpAddr>),
     WithDomain(Vec<String>),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Service {
     /// 代理
@@ -57,11 +57,13 @@ pub enum Service {
     Forward(WithForwardService),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WithForwardService {
     /// 服务器运行方式
     #[serde(default = "Default::default")]
     pub boot: BootKind,
+    #[serde(default = "Default::default")]
+    pub restart: RestartPolicy,
     /// 转发到的目标地址
     pub target: FinalTarget,
     /// 对于某些长连接的请求，保持会话
@@ -82,20 +84,24 @@ pub struct WithForwardService {
     pub compress: HashSet<Compress>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WithBridgeService {
     pub bind: IpAddr,
     pub port: u16,
+    #[serde(default = "Default::default")]
+    pub restart: RestartPolicy,
     #[serde(rename = "auth")]
     pub authentication: Authentication,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WithProxyService {
     /// 监听地址
     pub bind: IpAddr,
     /// 监听端口
     pub port: u16,
+    #[serde(default = "Default::default")]
+    pub restart: RestartPolicy,
     /// 启动方式
     #[serde(default = "Default::default")]
     pub boot: BootKind,
@@ -114,20 +120,21 @@ pub struct WithProxyService {
     pub keep_alive: Option<KeepAlive>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "with", rename_all = "lowercase")]
 pub enum Rewrite {
     #[serde(rename = "http_header")]
     HttpHeader(WithHttpHeaderRewrite),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WithHttpHeaderRewrite {
     #[serde(flatten)]
     pub headers: HashMap<String, String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum FinalTarget {
     /// 静态地址
@@ -142,7 +149,6 @@ impl Default for FinalTarget {
     }
 }
 
-
 impl ServerAddr {
     async fn connect(&self, port: u16) -> io::Result<()> {
         match self {
@@ -152,6 +158,25 @@ impl ServerAddr {
             ServerAddr::WithDomain(domain) => {
                 unimplemented!()
             }
+        }
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            server: Server {
+                addr: ServerAddr::WithIpAddr(vec![IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))]),
+                ports: vec![6528],
+                retries: -1, // always
+                crypto: Default::default(),
+                compress: Default::default(),
+                authentication: Authentication::None,
+            },
+            features: Default::default(),
+            services: Default::default(),
+            default_crypto: Default::default(),
+            default_compress: Default::default(),
         }
     }
 }
