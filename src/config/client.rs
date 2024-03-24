@@ -1,8 +1,11 @@
 use std::{
     collections::{HashMap, HashSet},
+    fmt::Display,
     io,
     net::{IpAddr, Ipv4Addr},
 };
+
+use crate::error;
 
 use serde::{Deserialize, Serialize};
 
@@ -27,7 +30,7 @@ pub enum Feature {
     Socks5,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Server {
     pub addr: ServerAddr,
     pub ports: Vec<u16>,
@@ -90,8 +93,6 @@ pub struct WithBridgeService {
     pub port: u16,
     #[serde(default = "Default::default")]
     pub restart: RestartPolicy,
-    #[serde(rename = "auth")]
-    pub authentication: Authentication,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -120,7 +121,6 @@ pub struct WithProxyService {
     pub keep_alive: Option<KeepAlive>,
 }
 
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "with", rename_all = "lowercase")]
 pub enum Rewrite {
@@ -143,22 +143,71 @@ pub enum FinalTarget {
     Dynamic,
 }
 
+#[derive(Debug)]
+pub enum Host<'a> {
+    Ip(&'a IpAddr),
+    Domain(&'a str),
+}
+
 impl Default for FinalTarget {
     fn default() -> Self {
         Self::Dynamic
     }
 }
 
-impl ServerAddr {
-    async fn connect(&self, port: u16) -> io::Result<()> {
+impl Display for Host<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ServerAddr::WithIpAddr(addr) => {
-                unimplemented!()
+            Host::Ip(ip) => write!(f, "{ip}"),
+            Host::Domain(domain) => write!(f, "{domain}"),
+        }
+    }
+}
+
+impl ServerAddr {
+    pub async fn try_connect<'a, F, O, Fut>(&'a self, port: u16, f: F) -> error::Result<O>
+    where
+        F: Fn(Host<'a>, u16) -> Fut + 'a,
+        Fut: std::future::Future<Output = error::Result<O>> + 'a,
+    {
+        match self {
+            ServerAddr::WithIpAddr(addrs) => {
+                for ip in addrs {
+                    if let Ok(output) = f(Host::Ip(ip), port).await {
+                        return Ok(output);
+                    }
+                }
             }
-            ServerAddr::WithDomain(domain) => {
-                unimplemented!()
+            ServerAddr::WithDomain(domains) => {
+                for domain in domains {
+                    if let Ok(output) = f(Host::Domain(domain), port).await {
+                        return Ok(output);
+                    }
+                }
             }
         }
+
+        Err(error::FusoError::StdIo(
+            io::ErrorKind::ConnectionRefused.into(),
+        ))
+    }
+}
+
+impl Server {
+    pub async fn try_connect<'a, F, O, Fut>(&'a self, f: F) -> error::Result<O>
+    where
+        F: Fn(Host<'a>, u16) -> Fut + Copy + 'a,
+        Fut: std::future::Future<Output = error::Result<O>> + 'a,
+    {
+        for port in &self.ports {
+            if let Ok(output) = self.addr.try_connect(*port, f).await {
+                return Ok(output);
+            }
+        }
+
+        Err(error::FusoError::StdIo(
+            io::ErrorKind::ConnectionRefused.into(),
+        ))
     }
 }
 
@@ -178,6 +227,35 @@ impl Default for Config {
             default_crypto: Default::default(),
             default_compress: Default::default(),
         }
+    }
+}
+
+impl Config {
+    pub fn check(&self) -> error::Result<()> {
+        let mut bind_ports = Vec::new();
+
+        let mut remote_ports = self.server.ports.clone();
+
+        for (name, service) in &self.services {
+            match service {
+                Service::Proxy(proxy) => {
+                    bind_ports.push((name, proxy.port));
+                }
+                Service::Bridge(bridge) => {
+                    bind_ports.push((name, bridge.port));
+                }
+                Service::Forward(forward) => {}
+            }
+        }
+
+        for (name, port) in bind_ports {
+            if remote_ports.contains(&port) {
+                log::error!("loop call at {name}");
+                return Err(error::FusoError::Abort);
+            }
+        }
+
+        Ok(())
     }
 }
 

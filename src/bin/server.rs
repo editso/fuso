@@ -11,7 +11,7 @@ use fuso::{
         processor::{IProcessor, Processor, StreamProcessor},
         protocol::{AsyncPacketRead, AsyncPacketSend},
         split::SplitStream,
-        stream::fallback::Fallback,
+        stream::{fallback::Fallback, handshake::Handshake},
     },
     error,
     server::{
@@ -151,6 +151,8 @@ async fn enter_fuso_serve(conf: Stateful<Config>) -> error::Result<()> {
 
     loop {
         let (addr, (_, transport)) = accepter.accept().await?;
+
+
         let mut forwarder = PortForwarder::new(
             transport,
             {

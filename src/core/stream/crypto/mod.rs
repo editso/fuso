@@ -41,10 +41,7 @@ pub struct EncryptedStream<'a> {
     crypto: BoxedCodec<'a>,
 }
 
-pub async fn encrypt_stream<'a, S>(
-    stream: S,
-    cryptos: Vec<Crypto>,
-) -> error::Result<EncryptedStream<'a>>
+pub fn encrypt_stream<'a, S>(stream: S, cryptos: Vec<Crypto>) -> EncryptedStream<'a>
 where
     S: AsyncRead + AsyncWrite + Send + Unpin + 'a,
 {
@@ -77,10 +74,10 @@ where
         crypto
     };
 
-    Ok(EncryptedStream {
+    EncryptedStream {
         crypto,
         stream: BoxedStream::new(stream),
-    })
+    }
 }
 
 impl<T> AsyncCrypto for T where T: AsyncDecrypt + AsyncEncrypt {}

@@ -19,10 +19,10 @@ pub struct CompressedStream<'a> {
     compressor: BoxedCodec<'a>,
 }
 
-pub async fn compress_stream<'a, S>(
+pub fn compress_stream<'a, S>(
     stream: S,
     compress: Vec<Compress>,
-) -> error::Result<CompressedStream<'a>>
+) -> CompressedStream<'a>
 where
     S: AsyncRead + AsyncWrite + Send + Unpin + 'a,
 {
@@ -54,10 +54,10 @@ where
         compressor
     };
 
-    Ok(CompressedStream {
+    CompressedStream {
         stream: BoxedStream::new(stream),
         compressor,
-    })
+    }
 }
 
 impl<'a> AsyncRead for CompressedStream<'a> {

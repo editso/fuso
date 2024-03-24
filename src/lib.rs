@@ -6,7 +6,7 @@ pub mod core;
 #[cfg(feature = "fuso-config")]
 pub mod config;
 
-pub mod service;
+pub mod runner;
 
 pub mod server;
 

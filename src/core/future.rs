@@ -41,7 +41,13 @@ impl<'a, O> StoredFuture<'a, O> {
             None => Box::pin(f()),
         };
 
-        Pin::new(&mut fut).poll(cx)
+        match Pin::new(&mut fut).poll(cx) {
+            Poll::Ready(o) => Poll::Ready(o),
+            Poll::Pending => {
+                self.0.replace(fut);
+                Poll::Pending
+            }
+        }
     }
 }
 

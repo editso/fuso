@@ -44,7 +44,7 @@ impl io::AsyncWrite for tokio::net::TcpStream {
 }
 
 impl TcpStream {
-    pub async fn connect_with_tokio<A>(addr: A) -> error::Result<Self>
+    pub async fn connect<A>(addr: A) -> error::Result<Self>
     where
         A: tokio::net::ToSocketAddrs,
     {
@@ -54,7 +54,6 @@ impl TcpStream {
         })
     }
 }
-
 
 #[cfg(feature = "fuso-rt-tokio")]
 impl TcpListener {

@@ -32,7 +32,7 @@ pub struct TcpStream {
 }
 
 impl TcpStream {
-    pub async fn connect<P, A>(addr: A) -> error::Result<Self>
+    pub async fn connect_with_provider<P, A>(addr: A) -> error::Result<Self>
     where
         P: TcpProvider,
         A: Into<SocketAddr>,

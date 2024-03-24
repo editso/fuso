@@ -55,6 +55,7 @@ pub struct KeepAlive {
 
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum RestartPolicy{
     Never,
     Always,

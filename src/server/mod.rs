@@ -1,6 +1,5 @@
 use crate::{
     core::{accepter::Accepter},
-    service::FusoService,
 };
 
 mod handshake;

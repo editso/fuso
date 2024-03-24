@@ -8,6 +8,7 @@ use std::{
 
 use self::io::{AsyncRead, AsyncWrite};
 
+pub mod connector;
 pub mod accepter;
 pub mod future;
 pub mod handshake;
