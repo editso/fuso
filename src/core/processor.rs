@@ -1,63 +1,101 @@
-use std::{ops::Deref, pin::Pin, sync::Arc};
+use std::{pin::Pin, sync::Arc};
 
-use crate::{ClientProvider, DecorateProvider, Provider, Socket};
+use super::{
+    io::{AsyncRead, AsyncWrite},
+    BoxedFuture,
+};
 
-type BoxedFuture<O> = Pin<Box<dyn std::future::Future<Output = crate::Result<O>> + Send + 'static>>;
-
-pub struct Processor<P, S, O> {
-    provider: Arc<P>,
-    observer: Option<Arc<O>>,
-    decorator: Option<DecorateProvider<S>>,
+pub enum Process<A, R> {
+    Next(A),
+    Reject(A),
+    Resolve(R),
 }
 
-impl<P, S, O> Processor<P, S, O> {
-    pub fn new(
-        provider: Arc<P>,
-        observer: Option<Arc<O>>,
-        decorator: Option<DecorateProvider<S>>,
-    ) -> Self {
-        Self {
-            provider,
-            observer,
-            decorator,
-        }
-    }
+pub trait Preprocessor<In> {
+    type Output;
 
-    pub fn observer(&self) -> &Option<Arc<O>> {
-        &self.observer
-    }
+    fn prepare<'a>(&'a self, input: In) -> BoxedFuture<'a, Self::Output>;
+}
 
-    pub async fn decorate(&self, client: S) -> crate::Result<S> {
-        match self.decorator.as_ref() {
-            None => Ok(client),
-            Some(decorator) => decorator.call(client).await,
-        }
+pub trait IProcessor<A, R> {
+    fn process<'a>(&'a mut self, data: A) -> BoxedFuture<'a, Process<A, R>>;
+}
+
+pub trait StreamProcessor {
+    fn process<'a, P, R>(self, processor: &'a mut P) -> BoxedFuture<'a, Process<Self, R>>
+    where
+        Self: Sized + Send,
+        P: IProcessor<Self, R> + Send + 'a,
+    {
+        processor.process(self)
     }
 }
 
-impl<P, S> Deref for Processor<ClientProvider<P>, S, ()> {
-    type Target = Arc<ClientProvider<P>>;
+impl<'a, T> StreamProcessor for T where T: AsyncRead + AsyncWrite {}
 
-    fn deref(&self) -> &Self::Target {
-        &self.provider
-    }
+pub struct BoxedProcessor<'a, A, R>(Box<dyn IProcessor<A, R> + Send + Unpin + 'a>);
+
+pub struct Processor<'a, A, R> {
+    processors: Vec<BoxedProcessor<'a, A, R>>,
 }
 
-impl<P, A, S, O> Processor<P, S, O>
+pub struct WrappedPreprocessor<'a, In, Out>(
+    pub(crate) Arc<dyn Preprocessor<In, Output = Out> + Sync + Send + 'a>,
+);
+
+impl<A, R> IProcessor<A, R> for BoxedProcessor<'_, A, R>
 where
-    P: Provider<Socket, Output = BoxedFuture<A>>,
+    A: Send,
 {
-    pub fn bind(&self, socket: Socket) -> BoxedFuture<A> {
-        self.provider.call(socket)
+    fn process<'a>(&'a mut self, data: A) -> BoxedFuture<'a, Process<A, R>> {
+        self.0.process(data)
     }
 }
 
-impl<P, S, O> Clone for Processor<P, S, O> {
-    fn clone(&self) -> Self {
+impl<A, R> IProcessor<A, R> for Processor<'_, A, R>
+where
+    A: Send,
+{
+    fn process<'a>(&'a mut self, data: A) -> BoxedFuture<'a, Process<A, R>> {
+        Box::pin(async move {
+            let mut data = data;
+            for processor in self.processors.iter_mut() {
+                data = match processor.process(data).await {
+                    Process::Next(data) => data,
+                    Process::Reject(data) => data,
+                    Process::Resolve(result) => return Process::Resolve(result),
+                }
+            }
+
+            Process::Reject(data)
+        })
+    }
+}
+
+impl<'a, A, R> Processor<'a, A, R> {
+    pub fn new() -> Self {
         Self {
-            provider: self.provider.clone(),
-            observer: self.observer.clone(),
-            decorator: self.decorator.clone(),
+            processors: Default::default(),
         }
+    }
+
+    pub fn add<P>(&mut self, p: P)
+    where
+        P: IProcessor<A, R> + Unpin + Send + 'a,
+    {
+        self.processors.push(BoxedProcessor(Box::new(p)))
+    }
+}
+
+impl<In, Out> Preprocessor<In> for WrappedPreprocessor<'_, In, Out> {
+    type Output = Out;
+    fn prepare<'a>(&'a self, input: In) -> BoxedFuture<'a, Self::Output> {
+        self.0.prepare(input)
+    }
+}
+
+impl<In, Out> Clone for WrappedPreprocessor<'_, In, Out> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
     }
 }

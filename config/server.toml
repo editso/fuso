@@ -1,0 +1,34 @@
+crypto = [ "rsa" ]
+compress = ["lz4"]
+features = ["kcp", "proxy", "multiprocess"]
+
+ 
+[auth]
+type = "secret"
+secret = "fasedfhkasjdfh"
+
+[manager]
+bind = "127.0.0.1"
+port = 8888
+context = "/api"
+auth = { type = "secret", secret = "secret" }
+
+[[listen]]
+type = "kcp"
+port = 6666
+bind = "0.0.0.0"
+
+
+[[listen]]
+type = "tcp"
+port = 8888
+bind = "127.0.0.1"
+crypto = [ "rsa" ]
+auth = { type = "secret", secret = "ffsdfsdfjkl" }
+compress = ["lz4"]
+
+
+[[listen]]
+type = "tcp"
+port = 8880
+bind = "127.0.0.1"

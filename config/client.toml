@@ -1,0 +1,48 @@
+features = ["kcp", "socks5"]
+
+[server]
+addr = ["127.0.0.1"]
+ports = [8080]
+retries = -1
+crypto = ["rsa"]
+compress = ["lz4"]
+heartbeat_interval = 30000
+auth = { type = "secret", secret = "12345678" }
+
+[ssh1]
+type = "forward"
+boot = "fork"
+exposes = [8080]
+channel = 6777
+restart = "always"
+target = { type = "static", port = 2222, addr = ["127.0.0.1"] }
+keep_alive = { interval = 100 }
+
+[ssh2]
+type = "forward"
+boot = "fork"
+exposes = [8080]
+channel = 6777
+restart = "always"
+target = { type = "static", port = 2222, addr = ["127.0.0.1"] }
+keep_alive = { interval = 100 }
+
+[bridge1]
+type = "bridge"
+bind = "0.0.0.0"
+port = 9999
+
+[proxy1]
+type = "proxy"
+bind = "0.0.0.0"
+port = 8080
+crypto = ["rsa", "aes"]
+target = { type = "static", addr = ["baidu.com"], port = 443 }
+rewrite = { with = "http_header", host = "https://baidu.com" }
+
+[proxy2]
+type = "proxy"
+bind = "0.0.0.0"
+port = 7890
+crypto = ["rsa", "aes"]
+target = { type = "dynamic" }
