@@ -1,0 +1,5 @@
+
+[client_1.shell_1]
+target = "executable"
+channel = "8080/kcp"
+web = { addr = "127.0.0.1", port = "8888" }

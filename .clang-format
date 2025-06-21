@@ -1,0 +1,28 @@
+Language: Cpp
+BasedOnStyle: LLVM
+SortIncludes: false
+ColumnLimit: 100
+IndentWidth: 2
+PointerAlignment: Right
+AlignTrailingComments: true
+MaxEmptyLinesToKeep: 2
+SpaceBeforeAssignmentOperators: true
+DerivePointerAlignment: true
+AlignConsecutiveMacros: true
+AlignConsecutiveAssignments: true
+AlignConsecutiveDeclarations:   true
+AllowShortBlocksOnASingleLine: Empty
+AllowShortFunctionsOnASingleLine: Empty
+# AllowShortFunctionsOnASingleLine: SFS_None
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: true
+AlignAfterOpenBracket: Align
+# AllowShortIfStatementsOnASingleLine: true
+IndentCaseLabels: true
+# AlignArrayOfStructures: Left
+# ArrayInitializerAlignmentStyle: Left
+# TrailingCommentsAlignmentKinds: TCAS_Always
+AllowShortCaseLabelsOnASingleLine: false
+AlignEscapedNewlines: Left
+FixNamespaceComments: true
+# AlwaysBreakAfterDefinitionReturnType: DRTBS_None
