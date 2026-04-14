@@ -79,7 +79,7 @@ version = "0.1.2"
 optional = true
 
 [dependencies.rand]
-version = "0.8.5"
+version = "0.9.3"
 optional = true
 
 [dependencies.serde_json]
